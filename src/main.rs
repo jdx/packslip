@@ -1,14 +1,14 @@
-//! The `packslip` binary: keygen, create, verify, schema.
+//! The `packslip` binary: create, verify, show, releases, keygen, schema.
 
 use std::path::{Path, PathBuf};
 
 use eyre::{Context as _, Result, bail};
 use packslip::cli::{BinInfo, Version};
-use packslip::create::{ArtifactInput, Request};
+use packslip::create::{ArtifactInput, ListRequest, ListedRelease, Request};
 use packslip::minisign::{PublicKey, SecretKey, key_id_hex};
-use packslip::model::{Identity, Scheme, Source, Statement};
-use packslip::sigstore;
-use packslip::verify::{Signature, Trust};
+use packslip::model::{RELEASES_PREDICATE_TYPE, ReleaseListStatement, Source, Statement};
+use packslip::sigstore::{self, Policy, Signer, Trust};
+use packslip::verify::Options;
 use usage_rs::RunWith;
 
 const BIN: BinInfo = BinInfo {
@@ -16,11 +16,14 @@ const BIN: BinInfo = BinInfo {
     version: env!("CARGO_PKG_VERSION"),
 };
 
+/// The file a release ships.
+const BUNDLE_NAME: &str = "packslip.sigstore.json";
+
 /// A signed release manifest: what shipped, and how to verify it
 ///
 /// A vendor runs `packslip create` in its release job to publish one signed
 /// document listing every artifact. Consumers verify it with `packslip
-/// verify` against a pinned identity. See https://packslip.dev.
+/// verify` against a pinned identity or key. See https://packslip.dev.
 #[derive(usage_rs::Cli)]
 #[usage(
     name = "packslip",
@@ -39,16 +42,18 @@ struct Cli {
 enum Commands {
     Create(Box<Create>),
     Keygen(Keygen),
+    Releases(Box<Releases>),
     Schema(Schema),
+    Show(Show),
     Verify(Verify),
     Version(Version),
 }
 
-/// Generate a minisign key pair
+/// Generate an Ed25519 key pair for the sigstore-key scheme
 ///
-/// Only needed for the minisign scheme. A CI job with an OIDC identity signs
-/// keylessly and needs no key at all. Writes the secret seed to the given
-/// path (mode 0600) and a minisign-format public key beside it with a .pub
+/// Only needed outside a CI job: with an OIDC identity, `create` signs
+/// keylessly and needs no key. Writes the secret seed to the given path
+/// (mode 0600) and a minisign-format public key beside it with a .pub
 /// extension.
 #[derive(Debug, usage_rs::Args)]
 struct Keygen {
@@ -107,25 +112,64 @@ impl RunWith<BinInfo> for Keygen {
     }
 }
 
-/// Print the JSON schema of the document
+/// Print the JSON schema of the release statement, or of the release list
 #[derive(Debug, usage_rs::Args)]
-struct Schema {}
+struct Schema {
+    /// The releases/v1 list instead of the release/v1 statement
+    #[usage(long)]
+    releases: bool,
+}
 
 impl RunWith<BinInfo> for Schema {
     type Output = Result<()>;
 
     fn run_with(self, _: BinInfo) -> Self::Output {
-        println!("{}", serde_json::to_string_pretty(&Statement::schema())?);
+        let schema = if self.releases {
+            ReleaseListStatement::schema()
+        } else {
+            Statement::schema()
+        };
+        println!("{}", serde_json::to_string_pretty(&schema)?);
         Ok(())
     }
 }
 
-/// How `create` signs: `oidc` (keyless, with the CI job's identity through
-/// sigstore) or `minisign` (a long-lived key given with --key).
+/// Print the statement inside a bundle, without verifying it
+#[derive(Debug, usage_rs::Args)]
+struct Show {
+    /// The packslip.sigstore.json (or release list) to read
+    #[usage(value_hint = usage_rs::ValueHint::FilePath)]
+    bundle: PathBuf,
+    /// The exact signed bytes instead of pretty JSON
+    #[usage(long)]
+    raw: bool,
+}
+
+impl RunWith<BinInfo> for Show {
+    type Output = Result<()>;
+
+    fn run_with(self, _: BinInfo) -> Self::Output {
+        let text = std::fs::read_to_string(&self.bundle)
+            .wrap_err_with(|| format!("reading {}", self.bundle.display()))?;
+        let payload = sigstore::peek_statement(&text)?;
+        if self.raw {
+            use std::io::Write as _;
+            std::io::stdout().write_all(&payload)?;
+            println!();
+        } else {
+            let value: serde_json::Value = serde_json::from_slice(&payload)?;
+            println!("{}", serde_json::to_string_pretty(&value)?);
+        }
+        Ok(())
+    }
+}
+
+/// How to sign: `oidc` (keyless, with the CI job's identity) or `key` (an
+/// Ed25519 key given with --key).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SignWith {
     Oidc,
-    Minisign,
+    Key,
 }
 
 impl std::str::FromStr for SignWith {
@@ -133,9 +177,40 @@ impl std::str::FromStr for SignWith {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "oidc" | "sigstore" | "sigstore-oidc" => Ok(SignWith::Oidc),
-            "minisign" => Ok(SignWith::Minisign),
-            other => Err(format!("--sign must be oidc or minisign, got {other:?}")),
+            "oidc" | "sigstore-oidc" => Ok(SignWith::Oidc),
+            "key" | "sigstore-key" => Ok(SignWith::Key),
+            other => Err(format!("--sign must be oidc or key, got {other:?}")),
+        }
+    }
+}
+
+/// Resolve who signs from the shared signing flags.
+fn signer(key: &Option<PathBuf>, sign: Option<SignWith>, no_log: bool) -> Result<Signer> {
+    let sign_with = sign.unwrap_or(if key.is_some() {
+        SignWith::Key
+    } else {
+        SignWith::Oidc
+    });
+    match sign_with {
+        SignWith::Key => {
+            let Some(path) = key else {
+                bail!("--sign key needs --key");
+            };
+            let key_text = std::fs::read_to_string(path)
+                .wrap_err_with(|| format!("reading {}", path.display()))?;
+            Ok(Signer::Key {
+                key: SecretKey::parse(&key_text)?,
+                log: !no_log,
+            })
+        }
+        SignWith::Oidc => {
+            if key.is_some() {
+                bail!("--key is for --sign key");
+            }
+            if no_log {
+                bail!("keyless signatures are always logged; --no-log is for --key");
+            }
+            Ok(Signer::Oidc(sigstore::ambient_identity()?))
         }
     }
 }
@@ -143,11 +218,10 @@ impl std::str::FromStr for SignWith {
 /// Create and sign a packslip for a release
 ///
 /// Digests every artifact, infers os/arch/libc/format from file names
-/// (override with name:os/arch[/libc]), and writes packslip.json plus its
-/// signature into --out. Inside a CI job the document is signed keylessly
-/// with the job's identity and the signature is packslip.sigstore.json.
-/// With --key it is signed with a minisign key and the signature is
-/// packslip.json.minisig.
+/// (override with name:os/arch[/libc]), and writes packslip.sigstore.json
+/// into --out. Inside a CI job the document is signed keylessly with the
+/// job's identity. With --key it is signed with an Ed25519 key from
+/// `packslip keygen`. Either way the signature is logged to Rekor.
 #[derive(Debug, usage_rs::Args)]
 struct Create {
     /// The project's name: a host path such as github.com/owner/repo
@@ -159,12 +233,16 @@ struct Create {
     /// Artifact files, optionally as path:os/arch[/libc]
     #[usage(required = true)]
     artifacts: Vec<String>,
-    /// Sign with a minisign secret key from `packslip keygen`
+    /// Sign with this secret key instead of a CI identity
     #[usage(short = 'k', long, value_hint = usage_rs::ValueHint::FilePath)]
     key: Option<PathBuf>,
-    /// How to sign; defaults to minisign when --key is given, else oidc
+    /// How to sign; defaults to key when --key is given, else oidc
     #[usage(long)]
     sign: Option<SignWith>,
+    /// With --key: do not record the signature in Rekor. Consumers must
+    /// then opt in with --allow-unlogged
+    #[usage(long)]
+    no_log: bool,
     /// Directory to write into
     #[usage(short = 'o', long, default = ".")]
     out: PathBuf,
@@ -204,43 +282,7 @@ impl RunWith<BinInfo> for Create {
         if self.source_repo.is_none() && (self.commit.is_some() || self.tag.is_some()) {
             bail!("--commit and --tag require --source-repo");
         }
-        let sign_with = self.sign.unwrap_or(if self.key.is_some() {
-            SignWith::Minisign
-        } else {
-            SignWith::Oidc
-        });
-        enum Signer {
-            Minisign(SecretKey),
-            Oidc(sigstore::OidcIdentity),
-        }
-        let (signer, identity) = match sign_with {
-            SignWith::Minisign => {
-                let Some(path) = &self.key else {
-                    bail!("--sign minisign needs --key");
-                };
-                let key_text = std::fs::read_to_string(path)
-                    .wrap_err_with(|| format!("reading {}", path.display()))?;
-                let key = SecretKey::parse(&key_text)?;
-                let identity = Identity {
-                    scheme: Scheme::Minisign,
-                    key_id: key_id_hex(&key.public_key().key_id),
-                    issuer: None,
-                };
-                (Signer::Minisign(key), identity)
-            }
-            SignWith::Oidc => {
-                if self.key.is_some() {
-                    bail!("--key is for --sign minisign");
-                }
-                let oidc = sigstore::ambient_identity()?;
-                let identity = Identity {
-                    scheme: Scheme::SigstoreOidc,
-                    key_id: oidc.identity.clone(),
-                    issuer: Some(oidc.issuer.clone()),
-                };
-                (Signer::Oidc(oidc), identity)
-            }
-        };
+        let signer = signer(&self.key, self.sign, self.no_log)?;
         let parsed: Vec<ArtifactSpec> = self.artifacts.iter().map(|s| parse_spec(s)).collect();
         let artifacts: Vec<ArtifactInput<'_>> = parsed
             .iter()
@@ -268,30 +310,20 @@ impl RunWith<BinInfo> for Create {
             url_base: self.url_base.as_deref(),
             sbom: self.sbom.as_deref(),
             supersedes: self.supersedes.as_deref(),
-            identity,
+            identity: signer.identity(),
         })?;
-        let (signature_path, signature) = match signer {
-            Signer::Minisign(key) => (
-                self.out.join("packslip.json.minisig"),
-                packslip::create::sign_minisign(&created, &key),
-            ),
-            Signer::Oidc(oidc) => (
-                self.out.join("packslip.sigstore.json"),
-                sigstore::sign(oidc, &created.document)?,
-            ),
-        };
+        let identity = created.statement.predicate.identity.clone();
+        let bundle = sigstore::sign(signer, &created.document)?;
         std::fs::create_dir_all(&self.out)
             .wrap_err_with(|| format!("creating {}", self.out.display()))?;
-        let document = self.out.join("packslip.json");
-        std::fs::write(&document, &created.document)?;
-        std::fs::write(&signature_path, &signature)?;
+        let path = self.out.join(BUNDLE_NAME);
+        std::fs::write(&path, &bundle)?;
         println!(
-            "wrote {} and {} ({} artifact(s), signed by {}, level {})",
-            document.display(),
-            signature_path.display(),
+            "wrote {} ({} artifact(s), signed by {}{})",
+            path.display(),
             created.statement.predicate.artifacts.len(),
-            created.statement.predicate.identity.key_id,
-            created.statement.declared_level()
+            identity.key_id,
+            if self.no_log { ", unlogged" } else { "" }
         );
         Ok(())
     }
@@ -338,35 +370,135 @@ fn valid_platform(platform: &str) -> bool {
         })
 }
 
-/// Verify a packslip against a pinned identity
+/// Create and sign a project's release list
 ///
-/// Checks the signature, the document, and the digest and size of every
-/// artifact file given. Exits 1 on any failure. A minisign document is
-/// checked against --pubkey. A sigstore document is checked against
-/// --identity and --issuer, or, for a project on github.com or gitlab.com,
-/// against the repository the project name says signed it.
+/// For a project on its own domain: lists released packslips with their
+/// digests so consumers can discover releases, with an expiry and a
+/// sequence number so they notice a stale or truncated list. Publish the
+/// result at https://<host>/.well-known/packslip/<path>.json.
+#[derive(Debug, usage_rs::Args)]
+struct Releases {
+    /// The project's name, which every listed packslip must carry
+    #[usage(long)]
+    project: String,
+    /// Increases with every list published
+    #[usage(long)]
+    sequence: u64,
+    /// How long the list stays current: 30d, 12h, 2w
+    #[usage(long, default = "30d")]
+    valid_for: String,
+    /// RFC 3339 generation time; defaults to now
+    #[usage(long)]
+    generated_at: Option<String>,
+    /// A released packslip as URL=PATH: where consumers fetch it, and the
+    /// local copy to read (repeatable)
+    #[usage(long, required = true)]
+    release: Vec<String>,
+    /// Sign with this secret key instead of a CI identity
+    #[usage(short = 'k', long, value_hint = usage_rs::ValueHint::FilePath)]
+    key: Option<PathBuf>,
+    /// How to sign; defaults to key when --key is given, else oidc
+    #[usage(long)]
+    sign: Option<SignWith>,
+    /// With --key: do not record the signature in Rekor
+    #[usage(long)]
+    no_log: bool,
+    /// Where to write the list
+    #[usage(short = 'o', long, default = "packslip-releases.sigstore.json")]
+    out: PathBuf,
+}
+
+impl RunWith<BinInfo> for Releases {
+    type Output = Result<()>;
+
+    fn run_with(self, _: BinInfo) -> Self::Output {
+        let signer = signer(&self.key, self.sign, self.no_log)?;
+        let mut pairs = Vec::new();
+        for spec in &self.release {
+            let Some((url, path)) = spec.split_once('=') else {
+                bail!("--release wants URL=PATH, got {spec:?}");
+            };
+            pairs.push((url.to_string(), PathBuf::from(path)));
+        }
+        let releases = pairs
+            .iter()
+            .map(|(url, path)| ListedRelease {
+                url,
+                bundle_path: path,
+            })
+            .collect();
+        let created = packslip::create::create_release_list(&ListRequest {
+            project: &self.project,
+            generated_at: self.generated_at.as_deref(),
+            valid_for: parse_duration(&self.valid_for)?,
+            sequence: self.sequence,
+            releases,
+            identity: signer.identity(),
+        })?;
+        let bundle = sigstore::sign(signer, &created.document)?;
+        if let Some(parent) = self.out.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&self.out, &bundle)?;
+        println!(
+            "wrote {} ({} release(s), sequence {}, expires {})",
+            self.out.display(),
+            created.statement.predicate.releases.len(),
+            created.statement.predicate.sequence,
+            created.statement.predicate.expires_at
+        );
+        Ok(())
+    }
+}
+
+/// `30d`, `12h`, `2w`, `90m`, `45s`.
+fn parse_duration(s: &str) -> Result<std::time::Duration> {
+    let s = s.trim();
+    let split = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
+    let (number, unit) = s.split_at(split);
+    let number: u64 = number.parse().wrap_err_with(|| format!("duration {s:?}"))?;
+    let seconds = match unit {
+        "s" => 1,
+        "m" => 60,
+        "h" => 3600,
+        "d" => 86_400,
+        "w" => 7 * 86_400,
+        _ => bail!("duration {s:?}: expected a unit of s, m, h, d or w"),
+    };
+    Ok(std::time::Duration::from_secs(number * seconds))
+}
+
+/// Verify a packslip, or a release list, against a pinned identity or key
+///
+/// Checks the bundle's signature and log entry, the statement, and the
+/// digest and size of every artifact file given. Exits 1 on any failure.
+/// A keyless document is checked against --identity, --identity-prefix,
+/// and --issuer, or, for a project on github.com or gitlab.com, against
+/// the repository the project name says signed it. A key-signed document
+/// is checked against --pubkey.
 #[derive(Debug, usage_rs::Args)]
 struct Verify {
-    /// The packslip.json to verify
+    /// The packslip.sigstore.json to verify
     #[usage(value_hint = usage_rs::ValueHint::FilePath)]
-    document: PathBuf,
-    /// The minisign public key file, or its base64 line
+    bundle: PathBuf,
+    /// The pinned public key file, or its base64 line
     #[usage(short = 'p', long)]
     pubkey: Option<String>,
-    /// The signature file; defaults to <document>.minisig or
-    /// packslip.sigstore.json beside the document
-    #[usage(short = 's', long)]
-    signature: Option<PathBuf>,
-    /// The exact certificate identity a sigstore signer must have
+    /// The exact certificate identity a keyless signer must have
     #[usage(long)]
     identity: Option<String>,
     /// A prefix the certificate identity must start with, such as
     /// https://github.com/owner/repo/
     #[usage(long)]
     identity_prefix: Option<String>,
-    /// The OIDC issuer a sigstore signer must have
+    /// The OIDC issuer a keyless signer must have
     #[usage(long)]
     issuer: Option<String>,
+    /// Accept a bundle without a transparency log entry
+    #[usage(long)]
+    allow_unlogged: bool,
     /// A sigstore trusted_root.json to use instead of the embedded one
     #[usage(long, value_hint = usage_rs::ValueHint::FilePath)]
     trusted_root: Option<PathBuf>,
@@ -378,90 +510,130 @@ struct Verify {
     json: bool,
 }
 
+/// An owned pin, so a `Trust` can borrow it.
+enum Pin {
+    Key(PublicKey),
+    Identity(Policy),
+}
+
+impl Pin {
+    fn as_trust(&self) -> Trust<'_> {
+        match self {
+            Pin::Key(key) => Trust::Key(key),
+            Pin::Identity(policy) => Trust::Identity(policy),
+        }
+    }
+}
+
 impl RunWith<BinInfo> for Verify {
     type Output = Result<()>;
 
     fn run_with(self, _: BinInfo) -> Self::Output {
-        let document = std::fs::read(&self.document)
-            .wrap_err_with(|| format!("reading {}", self.document.display()))?;
-        let statement: Statement = serde_json::from_slice(&document)
-            .wrap_err_with(|| format!("parsing {}", self.document.display()))?;
-        let scheme = statement.predicate.identity.scheme;
-        let signature_path = self
-            .signature
-            .clone()
-            .unwrap_or_else(|| default_signature_path(&self.document, scheme));
-        let signature_text = std::fs::read_to_string(&signature_path)
-            .wrap_err_with(|| format!("reading {}", signature_path.display()))?;
-        let artifacts: Vec<&Path> = self.artifact.iter().map(PathBuf::as_path).collect();
+        let text = std::fs::read_to_string(&self.bundle)
+            .wrap_err_with(|| format!("reading {}", self.bundle.display()))?;
+        let peeked: serde_json::Value = serde_json::from_slice(&sigstore::peek_statement(&text)?)
+            .wrap_err("the bundle's payload is not JSON")?;
+        let project = peeked["predicate"]["project"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let is_list = peeked["predicateType"] == RELEASES_PREDICATE_TYPE;
 
-        let pubkey;
-        let policy;
-        let trusted_root;
-        let (signature, trust) = match scheme {
-            Scheme::Minisign => {
-                let Some(text) = &self.pubkey else {
-                    bail!("the document is minisign-signed; pass --pubkey");
-                };
+        let pin = match &self.pubkey {
+            Some(text) => {
+                if self.identity.is_some()
+                    || self.identity_prefix.is_some()
+                    || self.issuer.is_some()
+                {
+                    bail!(
+                        "--pubkey pins a key; the identity flags pin a certificate. Pass one kind"
+                    );
+                }
                 let pubkey_text = if Path::new(text).is_file() {
                     std::fs::read_to_string(text)?
                 } else {
                     text.clone()
                 };
-                pubkey = PublicKey::parse(&pubkey_text)?;
-                (
-                    Signature::Minisign(&signature_text),
-                    Trust::Minisign(&pubkey),
-                )
+                Pin::Key(PublicKey::parse(&pubkey_text)?)
             }
-            Scheme::SigstoreOidc | Scheme::SigstoreKey => {
-                if self.pubkey.is_some() {
-                    bail!("the document is sigstore-signed; --pubkey does not apply");
-                }
-                let explicit = sigstore::Policy {
+            None => {
+                let explicit = Policy {
                     issuer: self.issuer.clone(),
                     identity: self.identity.clone(),
                     identity_prefix: self.identity_prefix.clone(),
                 };
-                policy = if explicit.is_empty() {
-                    sigstore::Policy::for_project(&statement.predicate.project).ok_or(
-                        sigstore::Error::NoPolicy(statement.predicate.project.clone()),
-                    )?
+                Pin::Identity(if explicit.is_empty() {
+                    Policy::for_project(&project).ok_or(sigstore::Error::NoPolicy(project))?
                 } else {
                     explicit
-                };
-                let root_json = match &self.trusted_root {
-                    Some(path) => Some(
-                        std::fs::read_to_string(path)
-                            .wrap_err_with(|| format!("reading {}", path.display()))?,
-                    ),
-                    None => None,
-                };
-                trusted_root = sigstore::trusted_root(root_json.as_deref())?;
-                (
-                    Signature::Sigstore(&signature_text),
-                    Trust::Sigstore {
-                        policy: &policy,
-                        trusted_root: &trusted_root,
-                    },
-                )
+                })
             }
         };
-        match packslip::verify(&document, signature, &trust, &artifacts) {
+        let root_json = match &self.trusted_root {
+            Some(path) => Some(
+                std::fs::read_to_string(path)
+                    .wrap_err_with(|| format!("reading {}", path.display()))?,
+            ),
+            None => None,
+        };
+        let trusted_root = sigstore::trusted_root(root_json.as_deref())?;
+        let options = Options {
+            require_log: !self.allow_unlogged,
+            trusted_root: &trusted_root,
+        };
+        let artifacts: Vec<&Path> = self.artifact.iter().map(PathBuf::as_path).collect();
+
+        if is_list {
+            if !artifacts.is_empty() {
+                bail!("a release list has no artifacts to check");
+            }
+            return match packslip::verify_release_list(&text, &pin.as_trust(), options) {
+                Ok(verified) => {
+                    let list = &verified.list.predicate;
+                    if self.json {
+                        println!("{}", serde_json::to_string_pretty(&verified.list)?);
+                    } else {
+                        println!(
+                            "ok: release list for {} sequence {} expires {} signed by {} ({}) listing {} release(s)",
+                            list.project,
+                            list.sequence,
+                            list.expires_at,
+                            verified.key_id,
+                            verified.scheme,
+                            list.releases.len()
+                        );
+                    }
+                    Ok(())
+                }
+                Err(err) => {
+                    eprintln!("verification failed: {err}");
+                    std::process::exit(1)
+                }
+            };
+        }
+        match packslip::verify(&text, &pin.as_trust(), options, &artifacts) {
             Ok(verified) => {
                 if self.json {
                     println!("{}", serde_json::to_string_pretty(&verified)?);
                 } else {
                     println!(
-                        "ok: {} {} published {} signed by {} ({}) level {} ({} of {} artifact(s) checked)",
+                        "ok: {} {} published {} signed by {} ({}){} ({} of {} artifact(s) checked{})",
                         verified.project,
                         verified.version,
                         verified.published_at,
                         verified.key_id,
                         verified.scheme,
-                        verified.level,
+                        match &verified.logged_at {
+                            Some(at) => format!(" logged {at}"),
+                            None => " unlogged".to_string(),
+                        },
                         verified.checked_artifacts.len(),
-                        verified.artifact_count
+                        verified.artifact_count,
+                        if verified.provenance_linked {
+                            ", provenance linked"
+                        } else {
+                            ""
+                        }
                     );
                 }
                 Ok(())
@@ -470,25 +642,6 @@ impl RunWith<BinInfo> for Verify {
                 eprintln!("verification failed: {err}");
                 std::process::exit(1)
             }
-        }
-    }
-}
-
-/// `packslip.json.minisig`, or `packslip.sigstore.json` beside the document.
-fn default_signature_path(document: &Path, scheme: Scheme) -> PathBuf {
-    match scheme {
-        Scheme::Minisign => {
-            let mut name = document.as_os_str().to_owned();
-            name.push(".minisig");
-            PathBuf::from(name)
-        }
-        Scheme::SigstoreOidc | Scheme::SigstoreKey => {
-            let stem = document
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(|n| n.strip_suffix(".json").unwrap_or(n))
-                .unwrap_or("packslip");
-            document.with_file_name(format!("{stem}.sigstore.json"))
         }
     }
 }
@@ -524,14 +677,16 @@ mod tests {
     }
 
     #[test]
-    fn signature_defaults() {
+    fn durations() {
         assert_eq!(
-            default_signature_path(Path::new("dist/packslip.json"), Scheme::Minisign),
-            PathBuf::from("dist/packslip.json.minisig")
+            parse_duration("30d").unwrap(),
+            std::time::Duration::from_secs(30 * 86_400)
         );
         assert_eq!(
-            default_signature_path(Path::new("dist/packslip.json"), Scheme::SigstoreOidc),
-            PathBuf::from("dist/packslip.sigstore.json")
+            parse_duration("2w").unwrap(),
+            std::time::Duration::from_secs(14 * 86_400)
         );
+        assert!(parse_duration("3x").is_err());
+        assert!(parse_duration("").is_err());
     }
 }

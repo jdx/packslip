@@ -30,10 +30,9 @@ jobs:
       - run: cargo build --all-features
       - run: cargo test --all-features
 
-  # The keyless path end to end: sign with this job's identity, verify with
-  # the policy the project name implies. Only on main, where the id-token
-  # permission is available.
-  keyless:
+  # Both schemes end to end against the public log. Only on main, where the
+  # id-token permission is available.
+  signing:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
@@ -44,7 +43,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release
-      - name: Sign and verify
+      - name: Keyless, with this job's identity
         run: |
           set -euo pipefail
           mkdir -p dist
@@ -57,13 +56,37 @@ jobs:
             --url-base "https://example.invalid/${GITHUB_REPOSITORY}/0.0.0" \
             --bin tool \
             dist/tool-v0.0.0-linux-x64.tar.xz dist/tool-v0.0.0-darwin-arm64.tar.xz
-          cat dist/packslip.json | python3 -m json.tool
-          ./target/release/packslip verify dist/packslip.json \
+          ./target/release/packslip show dist/packslip.sigstore.json
+          ./target/release/packslip verify dist/packslip.sigstore.json \
             --artifact dist/tool-v0.0.0-linux-x64.tar.xz --json
           # A wrong repository must be refused.
-          if ./target/release/packslip verify dist/packslip.json \
+          if ./target/release/packslip verify dist/packslip.sigstore.json \
                --identity-prefix "https://github.com/someone-else/repo/" \
                --issuer https://token.actions.githubusercontent.com; then
             echo "verification accepted the wrong identity" >&2
+            exit 1
+          fi
+      - name: With a key, logged to Rekor, plus a release list
+        run: |
+          set -euo pipefail
+          mkdir -p keyed
+          ./target/release/packslip keygen -o keyed/release.key
+          ./target/release/packslip create \
+            --project tool.example.com \
+            --version 0.0.0 \
+            --key keyed/release.key \
+            --out keyed \
+            dist/tool-v0.0.0-linux-x64.tar.xz
+          ./target/release/packslip verify keyed/packslip.sigstore.json \
+            --pubkey keyed/release.pub --artifact dist/tool-v0.0.0-linux-x64.tar.xz
+          ./target/release/packslip releases \
+            --project tool.example.com --sequence 1 --valid-for 1d \
+            --release "https://tool.example.com/0.0.0/packslip.sigstore.json=keyed/packslip.sigstore.json" \
+            --key keyed/release.key --out keyed/releases.sigstore.json
+          ./target/release/packslip verify keyed/releases.sigstore.json --pubkey keyed/release.pub
+          # The wrong key must be refused.
+          ./target/release/packslip keygen -o keyed/other.key
+          if ./target/release/packslip verify keyed/packslip.sigstore.json --pubkey keyed/other.pub; then
+            echo "verification accepted the wrong key" >&2
             exit 1
           fi

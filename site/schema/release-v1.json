@@ -37,7 +37,7 @@
           ]
         },
         "provenance": {
-          "description": "URLs of build provenance statements for this artifact.",
+          "description": "URLs of build provenance statements (SLSA) for this artifact.",
           "items": {
             "type": "string"
           },
@@ -77,14 +77,14 @@
       "description": "How the document is signed, so a consumer can check what it pinned\nagainst what it received.",
       "properties": {
         "issuer": {
-          "description": "For the sigstore schemes, the OIDC issuer that vouched for the\nidentity, such as `https://token.actions.githubusercontent.com`.",
+          "description": "For `sigstore-oidc`, the OIDC issuer that vouched for the identity,\nsuch as `https://token.actions.githubusercontent.com`.",
           "type": [
             "string",
             "null"
           ]
         },
         "key_id": {
-          "description": "For `minisign`, the key id in uppercase hex. For the sigstore\nschemes, the certificate's subject identity: the workflow URI for a\nCI identity, or the email for a human one.",
+          "description": "For `sigstore-oidc`, the certificate's subject identity: the\nworkflow URI for a CI identity, or the email for a human one. For\n`sigstore-key`, the key id in uppercase hex.",
           "type": "string"
         },
         "scheme": {
@@ -155,18 +155,13 @@
     "Scheme": {
       "oneOf": [
         {
-          "const": "minisign",
-          "description": "A detached minisign signature over the document bytes.",
+          "const": "sigstore-oidc",
+          "description": "A sigstore bundle signed keylessly with a workload or human OIDC\nidentity, certified by Fulcio and logged to Rekor.",
           "type": "string"
         },
         {
           "const": "sigstore-key",
-          "description": "A sigstore bundle signed with a long-lived key.",
-          "type": "string"
-        },
-        {
-          "const": "sigstore-oidc",
-          "description": "A sigstore bundle signed keylessly with a workload or human OIDC\nidentity, certified by Fulcio and logged to Rekor.",
+          "description": "A sigstore bundle signed with a long-lived Ed25519 key, logged to\nRekor.",
           "type": "string"
         }
       ]
@@ -211,7 +206,7 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "The whole document.",
+  "description": "An in-toto statement carrying predicate `P`.",
   "properties": {
     "_type": {
       "type": "string"
@@ -223,7 +218,7 @@
       "type": "string"
     },
     "subject": {
-      "description": "One entry per artifact, name and digests. Mirrors `predicate.artifacts`.",
+      "description": "What the predicate is about, by name and digest.",
       "items": {
         "$ref": "#/$defs/Subject"
       },
@@ -236,6 +231,6 @@
     "predicateType",
     "predicate"
   ],
-  "title": "Statement",
+  "title": "Envelope",
   "type": "object"
 }

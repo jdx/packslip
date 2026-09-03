@@ -1,23 +1,31 @@
-//! The packslip document: an in-toto statement whose predicate says what a
-//! release shipped and how to verify it. See `docs/spec/packslip.md`.
+//! The packslip documents: in-toto statements whose predicates say what a
+//! release shipped (`release/v1`) and which releases a project has
+//! (`releases/v1`). See `docs/spec/packslip.md`.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub const STATEMENT_TYPE: &str = "https://in-toto.io/Statement/v1";
 pub const PREDICATE_TYPE: &str = "https://packslip.dev/release/v1";
+pub const RELEASES_PREDICATE_TYPE: &str = "https://packslip.dev/releases/v1";
 
-/// The whole document.
+/// An in-toto statement carrying predicate `P`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct Statement {
+pub struct Envelope<P> {
     #[serde(rename = "_type")]
     pub kind: String,
-    /// One entry per artifact, name and digests. Mirrors `predicate.artifacts`.
+    /// What the predicate is about, by name and digest.
     pub subject: Vec<Subject>,
     #[serde(rename = "predicateType")]
     pub predicate_type: String,
-    pub predicate: Predicate,
+    pub predicate: P,
 }
+
+/// A release: the packslip proper.
+pub type Statement = Envelope<Predicate>;
+
+/// A project's recent releases, for discovery.
+pub type ReleaseListStatement = Envelope<ReleaseList>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Subject {
@@ -80,7 +88,7 @@ pub struct Artifact {
     /// consumer puts these on PATH.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bin: Vec<String>,
-    /// URLs of build provenance statements for this artifact.
+    /// URLs of build provenance statements (SLSA) for this artifact.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub provenance: Vec<String>,
 }
@@ -90,12 +98,12 @@ pub struct Artifact {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Identity {
     pub scheme: Scheme,
-    /// For `minisign`, the key id in uppercase hex. For the sigstore
-    /// schemes, the certificate's subject identity: the workflow URI for a
-    /// CI identity, or the email for a human one.
+    /// For `sigstore-oidc`, the certificate's subject identity: the
+    /// workflow URI for a CI identity, or the email for a human one. For
+    /// `sigstore-key`, the key id in uppercase hex.
     pub key_id: String,
-    /// For the sigstore schemes, the OIDC issuer that vouched for the
-    /// identity, such as `https://token.actions.githubusercontent.com`.
+    /// For `sigstore-oidc`, the OIDC issuer that vouched for the identity,
+    /// such as `https://token.actions.githubusercontent.com`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issuer: Option<String>,
 }
@@ -103,53 +111,49 @@ pub struct Identity {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum Scheme {
-    /// A detached minisign signature over the document bytes.
-    Minisign,
-    /// A sigstore bundle signed with a long-lived key.
-    SigstoreKey,
     /// A sigstore bundle signed keylessly with a workload or human OIDC
     /// identity, certified by Fulcio and logged to Rekor.
     SigstoreOidc,
+    /// A sigstore bundle signed with a long-lived Ed25519 key, logged to
+    /// Rekor.
+    SigstoreKey,
 }
 
 impl std::fmt::Display for Scheme {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Scheme::Minisign => "minisign",
-            Scheme::SigstoreKey => "sigstore-key",
             Scheme::SigstoreOidc => "sigstore-oidc",
+            Scheme::SigstoreKey => "sigstore-key",
         })
     }
 }
 
-/// How much a consumer may conclude from a verified packslip.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
-)]
-#[serde(rename_all = "kebab-case")]
-pub enum Level {
-    /// Checksums only, no signature.
-    L0,
-    /// Signed checksums or artifact signatures.
-    L1,
-    /// A signed packslip.
-    L2,
-    /// L2 plus per-artifact build provenance.
-    L3,
-    /// L3 plus reproducible or independently verified builds.
-    L4,
+/// The `releases/v1` predicate: which releases a project has, so a
+/// consumer can find them without a registry, and cannot be shown a stale
+/// or truncated view without noticing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ReleaseList {
+    pub project: String,
+    /// When the list was produced, RFC 3339 UTC.
+    pub generated_at: String,
+    /// After this the list is stale and a consumer refuses it, RFC 3339 UTC.
+    pub expires_at: String,
+    /// Increases with every list published; a consumer refuses a lower one
+    /// than it has seen.
+    pub sequence: u64,
+    pub identity: Identity,
+    /// Newest first is conventional but not required.
+    pub releases: Vec<ReleaseRef>,
 }
 
-impl std::fmt::Display for Level {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Level::L0 => "L0",
-            Level::L1 => "L1",
-            Level::L2 => "L2",
-            Level::L3 => "L3",
-            Level::L4 => "L4",
-        })
-    }
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ReleaseRef {
+    pub version: String,
+    /// RFC 3339 UTC, copied from the release's packslip.
+    pub published_at: String,
+    /// URL of the release's `packslip.sigstore.json`. The statement's
+    /// subject of the same name carries that file's digest.
+    pub packslip: String,
 }
 
 /// Why a document is malformed.
@@ -157,16 +161,19 @@ impl std::fmt::Display for Level {
 pub enum InvalidDocument {
     #[error("_type must be {STATEMENT_TYPE}, got {0:?}")]
     Kind(String),
-    #[error("predicateType must be {PREDICATE_TYPE}, got {0:?}")]
-    PredicateType(String),
+    #[error("predicateType must be {expected}, got {actual:?}")]
+    PredicateType {
+        expected: &'static str,
+        actual: String,
+    },
     #[error(
         "project must be a host path such as github.com/owner/repo or tool.example.com, got {0:?}"
     )]
     Project(String),
     #[error("version must not be empty")]
     Version,
-    #[error("published_at must be RFC 3339, got {0:?}")]
-    PublishedAt(String),
+    #[error("{field} must be RFC 3339, got {value:?}")]
+    Timestamp { field: &'static str, value: String },
     #[error("artifact {0:?} appears more than once")]
     DuplicateArtifact(String),
     #[error("subject {0:?} appears more than once")]
@@ -179,17 +186,76 @@ pub enum InvalidDocument {
     Sha256(String),
     #[error("at least one artifact is required")]
     NoArtifacts,
+    #[error("at least one release is required")]
+    NoReleases,
+    #[error("release {0:?} appears more than once")]
+    DuplicateRelease(String),
+    #[error("release {0:?} has no subject carrying its packslip digest")]
+    OrphanRelease(String),
+    #[error("expires_at is not after generated_at")]
+    Expiry,
+}
+
+fn check_timestamp(field: &'static str, value: &str) -> Result<jiff::Timestamp, InvalidDocument> {
+    value.parse().map_err(|_| InvalidDocument::Timestamp {
+        field,
+        value: value.to_string(),
+    })
+}
+
+fn check_sha256(name: &str, hex: &str) -> Result<(), InvalidDocument> {
+    if hex.len() != 64
+        || !hex
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    {
+        return Err(InvalidDocument::Sha256(name.to_string()));
+    }
+    Ok(())
+}
+
+impl<P> Envelope<P> {
+    fn check_envelope(&self, predicate_type: &'static str) -> Result<(), InvalidDocument> {
+        if self.kind != STATEMENT_TYPE {
+            return Err(InvalidDocument::Kind(self.kind.clone()));
+        }
+        if self.predicate_type != predicate_type {
+            return Err(InvalidDocument::PredicateType {
+                expected: predicate_type,
+                actual: self.predicate_type.clone(),
+            });
+        }
+        let mut subjects = std::collections::BTreeSet::new();
+        for subject in &self.subject {
+            if !subjects.insert(subject.name.as_str()) {
+                return Err(InvalidDocument::DuplicateSubject(subject.name.clone()));
+            }
+            check_sha256(&subject.name, &subject.digest.sha256)?;
+        }
+        Ok(())
+    }
+
+    /// The digest recorded for `name`.
+    pub fn digest_of(&self, name: &str) -> Option<&str> {
+        self.subject
+            .iter()
+            .find(|s| s.name == name)
+            .map(|s| s.digest.sha256.as_str())
+    }
+
+    /// The bytes as `create` writes them into the signed payload.
+    pub fn canonical_bytes(&self) -> Vec<u8>
+    where
+        P: Serialize,
+    {
+        serde_json::to_vec(self).expect("a statement serialises")
+    }
 }
 
 impl Statement {
     /// Structural validation beyond what serde enforces.
     pub fn validate(&self) -> Result<(), InvalidDocument> {
-        if self.kind != STATEMENT_TYPE {
-            return Err(InvalidDocument::Kind(self.kind.clone()));
-        }
-        if self.predicate_type != PREDICATE_TYPE {
-            return Err(InvalidDocument::PredicateType(self.predicate_type.clone()));
-        }
+        self.check_envelope(PREDICATE_TYPE)?;
         let p = &self.predicate;
         if !valid_project(&p.project) {
             return Err(InvalidDocument::Project(p.project.clone()));
@@ -197,9 +263,7 @@ impl Statement {
         if p.version.is_empty() {
             return Err(InvalidDocument::Version);
         }
-        if jiff::Timestamp::from_str_checked(&p.published_at).is_err() {
-            return Err(InvalidDocument::PublishedAt(p.published_at.clone()));
-        }
+        check_timestamp("published_at", &p.published_at)?;
         if p.artifacts.is_empty() {
             return Err(InvalidDocument::NoArtifacts);
         }
@@ -212,21 +276,9 @@ impl Statement {
                 return Err(InvalidDocument::OrphanArtifact(artifact.name.clone()));
             }
         }
-        let mut subjects = std::collections::BTreeSet::new();
         for subject in &self.subject {
-            if !subjects.insert(subject.name.as_str()) {
-                return Err(InvalidDocument::DuplicateSubject(subject.name.clone()));
-            }
             if !seen.contains(subject.name.as_str()) {
                 return Err(InvalidDocument::OrphanSubject(subject.name.clone()));
-            }
-            let hex = &subject.digest.sha256;
-            if hex.len() != 64
-                || !hex
-                    .bytes()
-                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-            {
-                return Err(InvalidDocument::Sha256(subject.name.clone()));
             }
         }
         Ok(())
@@ -238,39 +290,66 @@ impl Statement {
         project_host(&self.predicate.project)
     }
 
-    /// The digest recorded for `name`.
-    pub fn digest_of(&self, name: &str) -> Option<&str> {
-        self.subject
-            .iter()
-            .find(|s| s.name == name)
-            .map(|s| s.digest.sha256.as_str())
-    }
-
-    /// The level the document itself supports once its signature checks
-    /// out: L3 when every artifact links provenance, else L2. L4 needs
-    /// evidence a consumer gathers elsewhere.
-    pub fn declared_level(&self) -> Level {
-        if self
-            .predicate
+    /// Whether every artifact links build provenance. A consumer that
+    /// verifies those statements can then claim the SLSA build level they
+    /// establish; the packslip itself only says they exist.
+    pub fn provenance_linked(&self) -> bool {
+        self.predicate
             .artifacts
             .iter()
             .all(|a| !a.provenance.is_empty())
-        {
-            Level::L3
-        } else {
-            Level::L2
-        }
-    }
-
-    /// The canonical bytes that are signed: compact JSON with keys in
-    /// serialisation order, exactly as `create` writes the file.
-    pub fn canonical_bytes(&self) -> Vec<u8> {
-        serde_json::to_vec(self).expect("a statement serialises")
     }
 
     /// The JSON schema for the document.
     pub fn schema() -> serde_json::Value {
         serde_json::to_value(schemars::schema_for!(Statement)).expect("schema serialises")
+    }
+}
+
+impl ReleaseListStatement {
+    /// Structural validation beyond what serde enforces.
+    pub fn validate(&self) -> Result<(), InvalidDocument> {
+        self.check_envelope(RELEASES_PREDICATE_TYPE)?;
+        let p = &self.predicate;
+        if !valid_project(&p.project) {
+            return Err(InvalidDocument::Project(p.project.clone()));
+        }
+        let generated = check_timestamp("generated_at", &p.generated_at)?;
+        let expires = check_timestamp("expires_at", &p.expires_at)?;
+        if expires <= generated {
+            return Err(InvalidDocument::Expiry);
+        }
+        if p.releases.is_empty() {
+            return Err(InvalidDocument::NoReleases);
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for release in &p.releases {
+            if release.version.is_empty() {
+                return Err(InvalidDocument::Version);
+            }
+            if !seen.insert(release.version.as_str()) {
+                return Err(InvalidDocument::DuplicateRelease(release.version.clone()));
+            }
+            check_timestamp("published_at", &release.published_at)?;
+            if self.digest_of(&release.packslip).is_none() {
+                return Err(InvalidDocument::OrphanRelease(release.version.clone()));
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether the list is still current at `now`.
+    pub fn is_current(&self, now: jiff::Timestamp) -> bool {
+        self.predicate
+            .expires_at
+            .parse::<jiff::Timestamp>()
+            .is_ok_and(|expires| now < expires)
+    }
+
+    /// The JSON schema for the document.
+    pub fn schema() -> serde_json::Value {
+        serde_json::to_value(schemars::schema_for!(ReleaseListStatement))
+            .expect("schema serialises")
     }
 }
 
@@ -310,16 +389,6 @@ pub fn valid_project(project: &str) -> bool {
         })
 }
 
-trait TimestampExt {
-    fn from_str_checked(s: &str) -> Result<jiff::Timestamp, jiff::Error>;
-}
-
-impl TimestampExt for jiff::Timestamp {
-    fn from_str_checked(s: &str) -> Result<jiff::Timestamp, jiff::Error> {
-        s.parse()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -355,7 +424,7 @@ mod tests {
                     provenance: vec![],
                 }],
                 identity: Identity {
-                    scheme: Scheme::Minisign,
+                    scheme: Scheme::SigstoreKey,
                     key_id: "5A0A0B8B9C6D7E1F".into(),
                     issuer: None,
                 },
@@ -365,16 +434,45 @@ mod tests {
         }
     }
 
+    fn sample_list() -> ReleaseListStatement {
+        ReleaseListStatement {
+            kind: STATEMENT_TYPE.into(),
+            subject: vec![Subject {
+                name: "https://dl.example/2026.9.1/packslip.sigstore.json".into(),
+                digest: Digest {
+                    sha256: "c".repeat(64),
+                },
+            }],
+            predicate_type: RELEASES_PREDICATE_TYPE.into(),
+            predicate: ReleaseList {
+                project: "mise.jdx.dev".into(),
+                generated_at: "2026-09-01T12:00:00Z".into(),
+                expires_at: "2026-10-01T12:00:00Z".into(),
+                sequence: 7,
+                identity: Identity {
+                    scheme: Scheme::SigstoreKey,
+                    key_id: "5A0A0B8B9C6D7E1F".into(),
+                    issuer: None,
+                },
+                releases: vec![ReleaseRef {
+                    version: "2026.9.1".into(),
+                    published_at: "2026-09-01T12:00:00Z".into(),
+                    packslip: "https://dl.example/2026.9.1/packslip.sigstore.json".into(),
+                }],
+            },
+        }
+    }
+
     #[test]
-    fn valid_sample_and_levels() {
+    fn valid_sample_and_provenance() {
         let s = sample();
         s.validate().unwrap();
-        assert_eq!(s.declared_level(), Level::L2);
+        assert!(!s.provenance_linked());
         let mut with_provenance = s.clone();
         with_provenance.predicate.artifacts[0]
             .provenance
             .push("https://x/y.sigstore.json".into());
-        assert_eq!(with_provenance.declared_level(), Level::L3);
+        assert!(with_provenance.provenance_linked());
         assert_eq!(
             s.digest_of("mise-v2026.9.1-linux-x64.tar.xz"),
             Some("a".repeat(64).as_str())
@@ -393,11 +491,20 @@ mod tests {
         s.kind = "x".into();
         assert!(matches!(s.validate(), Err(InvalidDocument::Kind(_))));
         let mut s = sample();
+        s.predicate_type = RELEASES_PREDICATE_TYPE.into();
+        assert!(matches!(
+            s.validate(),
+            Err(InvalidDocument::PredicateType { .. })
+        ));
+        let mut s = sample();
         s.predicate.project = "pkg:github/jdx/mise".into();
         assert!(matches!(s.validate(), Err(InvalidDocument::Project(_))));
         let mut s = sample();
         s.predicate.published_at = "yesterday".into();
-        assert!(matches!(s.validate(), Err(InvalidDocument::PublishedAt(_))));
+        assert!(matches!(
+            s.validate(),
+            Err(InvalidDocument::Timestamp { .. })
+        ));
         let mut s = sample();
         s.subject[0].digest.sha256 = "A".repeat(64);
         assert!(matches!(s.validate(), Err(InvalidDocument::Sha256(_))));
@@ -428,6 +535,36 @@ mod tests {
         s.predicate.artifacts.clear();
         s.subject.clear();
         assert_eq!(s.validate(), Err(InvalidDocument::NoArtifacts));
+    }
+
+    #[test]
+    fn release_lists_validate_and_expire() {
+        let l = sample_list();
+        l.validate().unwrap();
+        assert!(l.is_current("2026-09-15T00:00:00Z".parse().unwrap()));
+        assert!(!l.is_current("2026-10-02T00:00:00Z".parse().unwrap()));
+        let mut bad = sample_list();
+        bad.predicate.expires_at = bad.predicate.generated_at.clone();
+        assert_eq!(bad.validate(), Err(InvalidDocument::Expiry));
+        let mut bad = sample_list();
+        bad.subject.clear();
+        assert!(matches!(
+            bad.validate(),
+            Err(InvalidDocument::OrphanRelease(_))
+        ));
+        let mut bad = sample_list();
+        bad.predicate
+            .releases
+            .push(bad.predicate.releases[0].clone());
+        assert!(matches!(
+            bad.validate(),
+            Err(InvalidDocument::DuplicateRelease(_))
+        ));
+        let mut bad = sample_list();
+        bad.predicate.releases.clear();
+        assert_eq!(bad.validate(), Err(InvalidDocument::NoReleases));
+        let schema = ReleaseListStatement::schema();
+        assert!(schema["properties"]["predicate"].is_object());
     }
 
     #[test]

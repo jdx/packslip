@@ -1,8 +1,8 @@
 name: packslip
 description: >
-  Publish a signed packslip for a release: digest the artifacts, sign the
-  manifest keylessly with this job's OIDC identity, and upload
-  packslip.json and packslip.sigstore.json as release assets.
+  Publish a signed packslip for a release: attest the artifacts' build
+  provenance, digest them, sign the release manifest keylessly with this
+  job's OIDC identity, and upload packslip.sigstore.json as a release asset.
 author: Jeff Dickey <@jdx>
 branding:
   icon: package
@@ -40,30 +40,34 @@ inputs:
     description: URL of an SBOM for the release
     required: false
     default: ""
+  attest:
+    description: >
+      Also attest SLSA build provenance for every artifact with
+      actions/attest-build-provenance and link it from the packslip. Needs
+      the attestations: write permission.
+    required: false
+    default: "true"
   out:
-    description: Directory to write packslip.json and packslip.sigstore.json into
+    description: Directory to write packslip.sigstore.json into
     required: false
     default: packslip
   upload:
-    description: Upload the document and signature to the release
+    description: Upload the packslip to the release
     required: false
     default: "true"
   packslip-version:
     description: The packslip release to run
     required: false
-    default: "0.1.0"
+    default: "0.2.0"
   token:
     description: Token for downloading packslip and uploading assets
     required: false
     default: ${{ github.token }}
 
 outputs:
-  document:
-    description: Path of the written packslip.json
-    value: ${{ steps.create.outputs.document }}
-  signature:
+  bundle:
     description: Path of the written packslip.sigstore.json
-    value: ${{ steps.create.outputs.signature }}
+    value: ${{ steps.create.outputs.bundle }}
 
 runs:
   using: composite
@@ -96,16 +100,44 @@ runs:
         if [ "$ext" = zip ]; then
           (cd "$dir" && unzip -oq "$asset")
         else
-          tar -xJf "$dir/$asset" -C "$dir"
+          tar -xJf "$dir/$asset" -C "$dir" --strip-components=1
         fi
         echo "$dir" >> "$GITHUB_PATH"
         "$dir/packslip" version
+
+    - name: Collect artifacts
+      id: files
+      shell: bash
+      env:
+        IN_ARTIFACTS: ${{ inputs.artifacts }}
+      run: |
+        set -euo pipefail
+        shopt -s nullglob
+        files=()
+        for pattern in $IN_ARTIFACTS; do
+          for f in $pattern; do [ -f "$f" ] && files+=("$f"); done
+        done
+        if [ "${#files[@]}" -eq 0 ]; then
+          echo "no artifacts matched: $IN_ARTIFACTS" >&2
+          exit 1
+        fi
+        printf '%s\n' "${files[@]}" > "${RUNNER_TEMP}/packslip-files"
+        {
+          echo 'files<<EOF'
+          printf '%s\n' "${files[@]}"
+          echo 'EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Attest build provenance
+      if: inputs.attest == 'true'
+      uses: actions/attest-build-provenance@v2
+      with:
+        subject-path: ${{ steps.files.outputs.files }}
 
     - name: Create and sign the packslip
       id: create
       shell: bash
       env:
-        IN_ARTIFACTS: ${{ inputs.artifacts }}
         IN_PROJECT: ${{ inputs.project }}
         IN_VERSION: ${{ inputs.version }}
         IN_TAG: ${{ inputs.tag }}
@@ -113,12 +145,14 @@ runs:
         IN_BIN: ${{ inputs.bin }}
         IN_SUPERSEDES: ${{ inputs.supersedes }}
         IN_SBOM: ${{ inputs.sbom }}
+        IN_ATTEST: ${{ inputs.attest }}
         IN_OUT: ${{ inputs.out }}
         REPO: ${{ github.repository }}
         REF_NAME: ${{ github.ref_name }}
         REF_TYPE: ${{ github.ref_type }}
         SHA: ${{ github.sha }}
         SERVER: ${{ github.server_url }}
+        API: ${{ github.api_url }}
       run: |
         set -euo pipefail
         tag="${IN_TAG:-$REF_NAME}"
@@ -142,25 +176,24 @@ runs:
         for b in $IN_BIN; do args+=(--bin "$b"); done
         [ -n "$IN_SUPERSEDES" ] && args+=(--supersedes "$IN_SUPERSEDES")
         [ -n "$IN_SBOM" ] && args+=(--sbom "$IN_SBOM")
-        shopt -s nullglob
-        files=()
-        for pattern in $IN_ARTIFACTS; do
-          for f in $pattern; do files+=("$f"); done
-        done
-        if [ "${#files[@]}" -eq 0 ]; then
-          echo "no artifacts matched: $IN_ARTIFACTS" >&2
-          exit 1
+        mapfile -t files < "${RUNNER_TEMP}/packslip-files"
+        if [ "$IN_ATTEST" = true ]; then
+          # GitHub serves each artifact's provenance at the attestations API
+          # by subject digest; link one per artifact, in order.
+          for f in "${files[@]}"; do
+            digest=$(sha256sum "$f" | cut -d' ' -f1)
+            args+=(--provenance "${API}/repos/${REPO}/attestations/sha256:${digest}")
+          done
         fi
         packslip "${args[@]}" "${files[@]}"
-        echo "document=${IN_OUT}/packslip.json" >> "$GITHUB_OUTPUT"
-        echo "signature=${IN_OUT}/packslip.sigstore.json" >> "$GITHUB_OUTPUT"
+        echo "bundle=${IN_OUT}/packslip.sigstore.json" >> "$GITHUB_OUTPUT"
         echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
     - name: Verify what was written
       shell: bash
       env:
-        DOC: ${{ steps.create.outputs.document }}
-      run: packslip verify "$DOC"
+        BUNDLE: ${{ steps.create.outputs.bundle }}
+      run: packslip verify "$BUNDLE"
 
     - name: Upload to the release
       if: inputs.upload == 'true'
@@ -168,6 +201,5 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.token }}
         TAG: ${{ steps.create.outputs.tag }}
-        DOC: ${{ steps.create.outputs.document }}
-        SIG: ${{ steps.create.outputs.signature }}
-      run: gh release upload "$TAG" "$DOC" "$SIG" --clobber
+        BUNDLE: ${{ steps.create.outputs.bundle }}
+      run: gh release upload "$TAG" "$BUNDLE" --clobber

@@ -1,31 +1,21 @@
-//! Verifying a packslip: the signature against what the consumer pinned,
-//! then the document structure, then the digests of any artifacts at hand.
+//! Verifying a packslip: the bundle against what the consumer pinned, then
+//! the statement, then the digests of any artifacts at hand. And the same
+//! for a release list.
 
 use std::path::Path;
 
-use crate::minisign::{PublicKey, Sig};
-use crate::model::{InvalidDocument, Level, Scheme, Statement};
-use crate::sigstore;
+use sigstore_trust_root::TrustedRoot;
 
-/// The signature that came with the document.
+use crate::model::{InvalidDocument, ReleaseListStatement, Scheme, Statement};
+use crate::sigstore::{self, SignedBy, Trust};
+
+/// How strict to be.
 #[derive(Debug, Clone, Copy)]
-pub enum Signature<'a> {
-    /// The text of `packslip.json.minisig`.
-    Minisign(&'a str),
-    /// The JSON of `packslip.sigstore.json`.
-    Sigstore(&'a str),
-}
-
-/// What the consumer pinned.
-pub enum Trust<'a> {
-    /// A minisign public key.
-    Minisign(&'a PublicKey),
-    /// An identity policy for a sigstore bundle, and the trusted root to
-    /// verify the bundle against.
-    Sigstore {
-        policy: &'a sigstore::Policy,
-        trusted_root: &'a sigstore_trust_root::TrustedRoot,
-    },
+pub struct Options<'a> {
+    /// Refuse a bundle without a Rekor entry. On by default; a consumer
+    /// turns it off only for a vendor it has agreed to accept unlogged.
+    pub require_log: bool,
+    pub trusted_root: &'a TrustedRoot,
 }
 
 /// What a successful verification established.
@@ -35,117 +25,123 @@ pub struct Verified {
     pub version: String,
     pub published_at: String,
     pub scheme: Scheme,
-    /// Who signed: the minisign key id, or the certificate identity.
+    /// Who signed: the certificate identity, or the key id.
     pub key_id: String,
-    /// The OIDC issuer, for the sigstore schemes.
+    /// The OIDC issuer, for `sigstore-oidc`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub issuer: Option<String>,
-    /// When the transparency log recorded the signature, RFC 3339.
+    /// When the transparency log recorded the signature, RFC 3339. None
+    /// only for an unlogged bundle the consumer chose to accept.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub logged_at: Option<String>,
-    pub level: Level,
+    /// Whether every artifact links build provenance for the consumer to
+    /// verify. The packslip proves the manifest; SLSA provenance, if
+    /// verified, proves the build.
+    pub provenance_linked: bool,
     /// Artifacts whose digests were checked against files.
     pub checked_artifacts: Vec<String>,
     pub artifact_count: usize,
 }
 
+/// What verifying a release list established.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedList {
+    pub list: ReleaseListStatement,
+    pub scheme: Scheme,
+    pub key_id: String,
+    pub issuer: Option<String>,
+    pub logged_at: Option<String>,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("document is not valid JSON: {0}")]
+    #[error("statement is not valid JSON: {0}")]
     Json(#[from] serde_json::Error),
-    #[error("document is invalid: {0}")]
+    #[error("statement is invalid: {0}")]
     Invalid(#[from] InvalidDocument),
-    #[error("document declares identity scheme {0}, which this build cannot verify")]
-    UnsupportedScheme(Scheme),
-    #[error("document declares scheme {declared} but a {given} signature was given")]
+    #[error("statement declares scheme {declared} but the bundle was signed by {actual}")]
     SchemeMismatch {
         declared: Scheme,
-        given: &'static str,
+        actual: &'static str,
     },
-    #[error("document declares signer {declared:?}, the signature is by {actual:?}")]
+    #[error("statement declares signer {declared:?}, the bundle was signed by {actual:?}")]
     DeclaredSignerMismatch { declared: String, actual: String },
-    #[error("document declares issuer {declared:?}, the certificate says {actual:?}")]
+    #[error("statement declares issuer {declared:?}, the certificate says {actual:?}")]
     DeclaredIssuerMismatch { declared: String, actual: String },
-    #[error("the signed statement in the bundle differs from the document file")]
-    PayloadMismatch,
-    #[error("signature: {0}")]
-    Signature(#[from] crate::minisign::Error),
     #[error("{0}")]
     Sigstore(#[from] sigstore::Error),
     #[error("artifact {name}: {why}")]
     Artifact { name: String, why: String },
 }
 
-/// Verify document bytes with their signature against what the consumer
-/// trusts, then check any local artifacts by file name.
-pub fn verify(
-    document: &[u8],
-    signature: Signature<'_>,
-    trust: &Trust<'_>,
-    artifacts: &[&Path],
-) -> Result<Verified, Error> {
-    let statement: Statement = serde_json::from_slice(document)?;
-    statement.validate()?;
-    let identity = &statement.predicate.identity;
-    let (key_id, issuer, logged_at) = match (identity.scheme, signature, trust) {
-        (Scheme::Minisign, Signature::Minisign(sig_text), Trust::Minisign(pubkey)) => {
-            let sig = Sig::parse(sig_text)?;
-            pubkey.verify(document, &sig)?;
-            let actual = crate::minisign::key_id_hex(&pubkey.key_id);
-            if !identity.key_id.eq_ignore_ascii_case(&actual) {
-                return Err(Error::DeclaredSignerMismatch {
-                    declared: identity.key_id.clone(),
-                    actual,
-                });
-            }
-            (actual, None, None)
-        }
+/// Check the statement's own `identity` block against who actually signed.
+fn check_declared(
+    identity: &crate::model::Identity,
+    signed_by: &SignedBy,
+) -> Result<(Scheme, String, Option<String>), Error> {
+    match (identity.scheme, signed_by) {
         (
             Scheme::SigstoreOidc,
-            Signature::Sigstore(bundle),
-            Trust::Sigstore {
-                policy,
-                trusted_root,
+            SignedBy::Identity {
+                identity: actual,
+                issuer,
             },
         ) => {
-            let verified = sigstore::verify(bundle, policy, trusted_root)?;
-            if verified.statement != document {
-                return Err(Error::PayloadMismatch);
-            }
-            if identity.key_id != verified.identity {
+            if identity.key_id != *actual {
                 return Err(Error::DeclaredSignerMismatch {
                     declared: identity.key_id.clone(),
-                    actual: verified.identity,
+                    actual: actual.clone(),
                 });
             }
             if let Some(declared) = &identity.issuer
-                && *declared != verified.issuer
+                && declared != issuer
             {
                 return Err(Error::DeclaredIssuerMismatch {
                     declared: declared.clone(),
-                    actual: verified.issuer,
+                    actual: issuer.clone(),
                 });
             }
-            let logged_at = verified
-                .integrated_time
-                .and_then(|t| jiff::Timestamp::from_second(t).ok())
-                .map(|t| t.to_string());
-            (verified.identity, Some(verified.issuer), logged_at)
+            Ok((Scheme::SigstoreOidc, actual.clone(), Some(issuer.clone())))
         }
-        (Scheme::SigstoreKey, _, _) => return Err(Error::UnsupportedScheme(Scheme::SigstoreKey)),
-        (declared, Signature::Minisign(_), _) => {
-            return Err(Error::SchemeMismatch {
-                declared,
-                given: "minisign",
-            });
+        (Scheme::SigstoreKey, SignedBy::Key { key_id }) => {
+            if !identity.key_id.eq_ignore_ascii_case(key_id) {
+                return Err(Error::DeclaredSignerMismatch {
+                    declared: identity.key_id.clone(),
+                    actual: key_id.clone(),
+                });
+            }
+            Ok((Scheme::SigstoreKey, key_id.clone(), None))
         }
-        (declared, Signature::Sigstore(_), _) => {
-            return Err(Error::SchemeMismatch {
-                declared,
-                given: "sigstore",
-            });
-        }
-    };
+        (declared, SignedBy::Identity { .. }) => Err(Error::SchemeMismatch {
+            declared,
+            actual: "an OIDC identity",
+        }),
+        (declared, SignedBy::Key { .. }) => Err(Error::SchemeMismatch {
+            declared,
+            actual: "a key",
+        }),
+    }
+}
+
+fn logged_at(integrated_time: Option<i64>) -> Option<String> {
+    integrated_time
+        .and_then(|t| jiff::Timestamp::from_second(t).ok())
+        .map(|t| t.to_string())
+}
+
+/// Verify a packslip bundle against what the consumer trusts, then check
+/// any local artifacts by file name.
+pub fn verify(
+    bundle: &str,
+    trust: &Trust<'_>,
+    options: Options<'_>,
+    artifacts: &[&Path],
+) -> Result<Verified, Error> {
+    let verified = sigstore::verify(bundle, trust, options.require_log, options.trusted_root)?;
+    let statement: Statement = serde_json::from_slice(&verified.statement)?;
+    statement.validate()?;
+    let (scheme, key_id, issuer) =
+        check_declared(&statement.predicate.identity, &verified.signed_by)?;
     let mut checked = Vec::new();
     for path in artifacts {
         let name = path
@@ -189,27 +185,32 @@ pub fn verify(
         project: statement.predicate.project.clone(),
         version: statement.predicate.version.clone(),
         published_at: statement.predicate.published_at.clone(),
-        scheme: identity.scheme,
+        scheme,
         key_id,
         issuer,
-        logged_at,
-        level: statement.declared_level(),
+        logged_at: logged_at(verified.integrated_time),
+        provenance_linked: statement.provenance_linked(),
         checked_artifacts: checked,
         artifact_count: statement.predicate.artifacts.len(),
     })
 }
 
-/// The minisign convenience: document, `.minisig` text, pinned key.
-pub fn verify_minisign(
-    document: &[u8],
-    signature: &str,
-    pubkey: &PublicKey,
-    artifacts: &[&Path],
-) -> Result<Verified, Error> {
-    verify(
-        document,
-        Signature::Minisign(signature),
-        &Trust::Minisign(pubkey),
-        artifacts,
-    )
+/// Verify a release-list bundle against what the consumer trusts. The
+/// caller checks expiry and sequence against what it has seen.
+pub fn verify_release_list(
+    bundle: &str,
+    trust: &Trust<'_>,
+    options: Options<'_>,
+) -> Result<VerifiedList, Error> {
+    let verified = sigstore::verify(bundle, trust, options.require_log, options.trusted_root)?;
+    let list: ReleaseListStatement = serde_json::from_slice(&verified.statement)?;
+    list.validate()?;
+    let (scheme, key_id, issuer) = check_declared(&list.predicate.identity, &verified.signed_by)?;
+    Ok(VerifiedList {
+        list,
+        scheme,
+        key_id,
+        issuer,
+        logged_at: logged_at(verified.integrated_time),
+    })
 }

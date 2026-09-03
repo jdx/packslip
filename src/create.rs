@@ -1,12 +1,11 @@
-//! Creating a packslip from release artifacts: digests, sizes, platform
-//! inference from file names, and the canonical bytes to sign.
+//! Creating the statements: a release from its artifact files, and a
+//! release list from released packslips. Signing is `sigstore::sign`.
 
 use std::path::Path;
 
-use crate::minisign::SecretKey;
 use crate::model::{
-    Artifact, Digest, Identity, PREDICATE_TYPE, Predicate, STATEMENT_TYPE, Source, Statement,
-    Subject,
+    Artifact, Digest, Envelope, Identity, PREDICATE_TYPE, Predicate, RELEASES_PREDICATE_TYPE,
+    ReleaseList, ReleaseListStatement, ReleaseRef, STATEMENT_TYPE, Source, Statement, Subject,
 };
 
 /// What `create` needs.
@@ -36,9 +35,10 @@ pub struct ArtifactInput<'a> {
     pub provenance: Vec<String>,
 }
 
-/// The document, ready to sign.
+/// The statement, ready to sign.
+#[derive(Debug)]
 pub struct Created {
-    /// The canonical bytes: what `packslip.json` holds and what is signed.
+    /// The payload bytes that get signed.
     pub document: Vec<u8>,
     pub statement: Statement,
 }
@@ -53,6 +53,8 @@ pub enum Error {
     },
     #[error("{0}")]
     Invalid(#[from] crate::model::InvalidDocument),
+    #[error("{path}: not a packslip bundle: {why}")]
+    NotAPackslip { path: String, why: String },
 }
 
 /// The `(os, arch, libc, format)` a file name implies.
@@ -123,7 +125,7 @@ pub fn infer_platform(name: &str) -> Platform {
     (os, arch, libc, format)
 }
 
-/// Build and validate the document.
+/// Build and validate the release statement.
 pub fn create(request: &Request<'_>) -> Result<Created, Error> {
     let mut subject = Vec::new();
     let mut artifacts = Vec::new();
@@ -202,33 +204,122 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
     })
 }
 
-/// The minisign trusted comment: enough to tell signatures apart in a
-/// directory listing.
-pub fn trusted_comment(statement: &Statement) -> String {
-    format!(
-        "packslip {} {} published_at:{}",
-        statement.predicate.project, statement.predicate.version, statement.predicate.published_at
-    )
+/// One released packslip to list: where consumers fetch it, and the local
+/// copy to digest and read the version from.
+pub struct ListedRelease<'a> {
+    pub url: &'a str,
+    pub bundle_path: &'a Path,
 }
 
-/// Sign the document with a minisign key; the text of `packslip.json.minisig`.
-pub fn sign_minisign(created: &Created, key: &SecretKey) -> String {
-    key.sign(&created.document, &trusted_comment(&created.statement))
-        .to_file()
+/// What `create_release_list` needs.
+pub struct ListRequest<'a> {
+    pub project: &'a str,
+    pub generated_at: Option<&'a str>,
+    /// How long the list stays current.
+    pub valid_for: std::time::Duration,
+    pub sequence: u64,
+    pub releases: Vec<ListedRelease<'a>>,
+    pub identity: Identity,
+}
+
+/// The release list, ready to sign.
+#[derive(Debug)]
+pub struct CreatedList {
+    pub document: Vec<u8>,
+    pub statement: ReleaseListStatement,
+}
+
+/// Build and validate the release list from released bundles. The bundles
+/// are read, not verified: the list's signer vouches for them.
+pub fn create_release_list(request: &ListRequest<'_>) -> Result<CreatedList, Error> {
+    let generated: jiff::Timestamp = match request.generated_at {
+        Some(text) => text.parse().map_err(|_| {
+            Error::Invalid(crate::model::InvalidDocument::Timestamp {
+                field: "generated_at",
+                value: text.to_string(),
+            })
+        })?,
+        None => jiff::Timestamp::now(),
+    };
+    let expires = generated
+        .checked_add(
+            jiff::SignedDuration::try_from(request.valid_for)
+                .map_err(|_| Error::Invalid(crate::model::InvalidDocument::Expiry))?,
+        )
+        .map_err(|_| Error::Invalid(crate::model::InvalidDocument::Expiry))?;
+    let mut subject = Vec::new();
+    let mut releases = Vec::new();
+    for listed in &request.releases {
+        let (sha256, _) = crate::digest_file(listed.bundle_path).map_err(|source| Error::Io {
+            path: listed.bundle_path.display().to_string(),
+            source,
+        })?;
+        let text = std::fs::read_to_string(listed.bundle_path).map_err(|source| Error::Io {
+            path: listed.bundle_path.display().to_string(),
+            source,
+        })?;
+        let payload = crate::sigstore::peek_statement(&text).map_err(|e| Error::NotAPackslip {
+            path: listed.bundle_path.display().to_string(),
+            why: e.to_string(),
+        })?;
+        let statement: Statement =
+            serde_json::from_slice(&payload).map_err(|e| Error::NotAPackslip {
+                path: listed.bundle_path.display().to_string(),
+                why: e.to_string(),
+            })?;
+        if statement.predicate.project != request.project {
+            return Err(Error::NotAPackslip {
+                path: listed.bundle_path.display().to_string(),
+                why: format!(
+                    "it is for {}, the list is for {}",
+                    statement.predicate.project, request.project
+                ),
+            });
+        }
+        subject.push(Subject {
+            name: listed.url.to_string(),
+            digest: Digest { sha256 },
+        });
+        releases.push(ReleaseRef {
+            version: statement.predicate.version,
+            published_at: statement.predicate.published_at,
+            packslip: listed.url.to_string(),
+        });
+    }
+    let statement = Envelope {
+        kind: STATEMENT_TYPE.into(),
+        subject,
+        predicate_type: RELEASES_PREDICATE_TYPE.into(),
+        predicate: ReleaseList {
+            project: request.project.into(),
+            generated_at: generated.to_string(),
+            expires_at: expires.to_string(),
+            sequence: request.sequence,
+            identity: request.identity.clone(),
+            releases,
+        },
+    };
+    statement.validate()?;
+    let document = statement.canonical_bytes();
+    Ok(CreatedList {
+        document,
+        statement,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::minisign::key_id_hex;
+    use crate::minisign::SecretKey;
     use crate::model::Scheme;
+    use crate::sigstore::{Signer, Trust};
 
-    fn minisign_identity(key: &SecretKey) -> Identity {
-        Identity {
-            scheme: Scheme::Minisign,
-            key_id: key_id_hex(&key.public_key().key_id),
-            issuer: None,
+    fn key_identity(key: &SecretKey) -> Identity {
+        Signer::Key {
+            key: key.clone(),
+            log: false,
         }
+        .identity()
     }
 
     #[test]
@@ -269,7 +360,7 @@ mod tests {
     }
 
     #[test]
-    fn create_then_verify_round_trip() {
+    fn create_sign_verify_and_list() {
         let dir = tempfile::tempdir().unwrap();
         let a = dir.path().join("tool-v1.0.0-linux-x64.tar.xz");
         let b = dir.path().join("tool-v1.0.0-darwin-arm64.tar.xz");
@@ -278,17 +369,6 @@ mod tests {
         std::fs::write(&b, b"darwin bytes").unwrap();
         std::fs::write(&w, b"windows bytes").unwrap();
         let key = SecretKey::from_seed([1u8; 32]);
-        let base = Request {
-            project: "github.com/example/tool",
-            version: "1.0.0",
-            published_at: Some("2026-09-01T00:00:00Z"),
-            source: None,
-            artifacts: Vec::new(),
-            url_base: None,
-            sbom: None,
-            supersedes: None,
-            identity: minisign_identity(&key),
-        };
         let input = |path, os, bin: &[&str], provenance: &[&str]| ArtifactInput {
             path,
             os,
@@ -297,13 +377,19 @@ mod tests {
             bin: bin.iter().map(|s| s.to_string()).collect(),
             provenance: provenance.iter().map(|s| s.to_string()).collect(),
         };
-        let created = create(&Request {
-            source: Some(Source {
-                repo: "https://github.com/example/tool".into(),
-                commit: None,
-                tag: Some("v1.0.0".into()),
-            }),
-            artifacts: vec![
+        let request = |artifacts, source, url_base, supersedes| Request {
+            project: "tool.example.com",
+            version: "1.0.0",
+            published_at: Some("2026-09-01T00:00:00Z"),
+            source,
+            artifacts,
+            url_base,
+            sbom: None,
+            supersedes,
+            identity: key_identity(&key),
+        };
+        let created = create(&request(
+            vec![
                 input(
                     &a,
                     None,
@@ -313,10 +399,14 @@ mod tests {
                 input(&b, None, &["tool"], &[]),
                 input(&w, None, &["tool"], &[]),
             ],
-            url_base: Some("https://github.com/example/tool/releases/download/v1.0.0/"),
-            supersedes: Some("0.9.0"),
-            ..base
-        })
+            Some(Source {
+                repo: "https://github.com/example/tool".into(),
+                commit: None,
+                tag: Some("v1.0.0".into()),
+            }),
+            Some("https://github.com/example/tool/releases/download/v1.0.0/"),
+            Some("0.9.0"),
+        ))
         .unwrap();
         let arts = &created.statement.predicate.artifacts;
         assert_eq!(
@@ -328,61 +418,47 @@ mod tests {
         assert_eq!(arts[0].size, 11);
         assert_eq!(arts[0].bin, ["tool"]);
         assert_eq!(arts[2].bin, ["tool.exe"], "windows gets .exe");
-        assert_eq!(
-            created.statement.declared_level(),
-            crate::Level::L2,
-            "one artifact lacks provenance"
-        );
+        assert!(!created.statement.provenance_linked());
 
-        let key2 = SecretKey::from_seed([1u8; 32]);
-        let overridden = create(&Request {
-            artifacts: vec![input(&a, Some("darwin"), &[], &[])],
-            identity: minisign_identity(&key2),
-            ..Request {
-                project: "github.com/example/tool",
-                version: "1.0.0",
-                published_at: Some("2026-09-01T00:00:00Z"),
-                source: None,
-                artifacts: Vec::new(),
-                url_base: None,
-                sbom: None,
-                supersedes: None,
-                identity: minisign_identity(&key2),
-            }
-        })
+        let overridden = create(&request(
+            vec![input(&a, Some("darwin"), &[], &[])],
+            None,
+            None,
+            None,
+        ))
         .unwrap();
         assert_eq!(overridden.statement.predicate.artifacts[0].libc, None);
-        let overridden = create(&Request {
-            artifacts: vec![input(&b, Some("linux"), &[], &[])],
-            identity: minisign_identity(&key2),
-            ..Request {
-                project: "github.com/example/tool",
-                version: "1.0.0",
-                published_at: Some("2026-09-01T00:00:00Z"),
-                source: None,
-                artifacts: Vec::new(),
-                url_base: None,
-                sbom: None,
-                supersedes: None,
-                identity: minisign_identity(&key2),
-            }
-        })
+        let overridden = create(&request(
+            vec![input(&b, Some("linux"), &[], &[])],
+            None,
+            None,
+            None,
+        ))
         .unwrap();
         assert_eq!(
             overridden.statement.predicate.artifacts[0].libc.as_deref(),
             Some("gnu")
         );
 
-        let signature = sign_minisign(&created, &key);
-        let verified = crate::verify::verify_minisign(
+        // Sign with the key, unlogged, and verify with the key.
+        let root = crate::sigstore::trusted_root(None).unwrap();
+        let options = crate::verify::Options {
+            require_log: false,
+            trusted_root: &root,
+        };
+        let bundle = crate::sigstore::sign(
+            Signer::Key {
+                key: key.clone(),
+                log: false,
+            },
             &created.document,
-            &signature,
-            &key.public_key(),
-            &[&a, &b],
         )
         .unwrap();
+        let public = key.public_key();
+        let verified =
+            crate::verify::verify(&bundle, &Trust::Key(&public), options, &[&a, &b]).unwrap();
         assert_eq!(verified.version, "1.0.0");
-        assert_eq!(verified.scheme, Scheme::Minisign);
+        assert_eq!(verified.scheme, Scheme::SigstoreKey);
         assert_eq!(
             verified.checked_artifacts,
             [
@@ -390,44 +466,90 @@ mod tests {
                 "tool-v1.0.0-darwin-arm64.tar.xz"
             ]
         );
-        assert_eq!(verified.level, crate::Level::L2);
+        assert!(!verified.provenance_linked);
+        assert_eq!(verified.logged_at, None);
 
-        // Tampering with the document, the artifact, or the key fails.
-        let mut tampered = created.document.clone();
-        let last = tampered.len() - 2;
-        tampered[last] = b' ';
-        assert!(
-            crate::verify::verify_minisign(&tampered, &signature, &key.public_key(), &[]).is_err()
-        );
+        // A modified artifact, a wrong key, an unlisted file, and a
+        // statement declaring a different signer all fail.
         std::fs::write(&a, b"other bytes").unwrap();
-        let err =
-            crate::verify::verify_minisign(&created.document, &signature, &key.public_key(), &[&a])
-                .unwrap_err();
+        let err = crate::verify::verify(&bundle, &Trust::Key(&public), options, &[&a]).unwrap_err();
         assert!(err.to_string().contains("sha256 is"), "{err}");
-        let other = SecretKey::from_seed([2u8; 32]).public_key();
+        let other = SecretKey::from_seed([2u8; 32]);
         assert!(
-            crate::verify::verify_minisign(&created.document, &signature, &other, &[]).is_err()
+            crate::verify::verify(&bundle, &Trust::Key(&other.public_key()), options, &[]).is_err()
         );
         let unknown = dir.path().join("unknown.tar.gz");
         std::fs::write(&unknown, b"").unwrap();
-        let err = crate::verify::verify_minisign(
-            &created.document,
-            &signature,
-            &key.public_key(),
-            &[&unknown],
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("not listed"), "{err}");
-
-        // A minisign signature for a document that declares sigstore is refused.
-        let mut wrong_scheme = created.statement.clone();
-        wrong_scheme.predicate.identity.scheme = Scheme::SigstoreOidc;
-        let bytes = wrong_scheme.canonical_bytes();
         let err =
-            crate::verify::verify_minisign(&bytes, &signature, &key.public_key(), &[]).unwrap_err();
+            crate::verify::verify(&bundle, &Trust::Key(&public), options, &[&unknown]).unwrap_err();
+        assert!(err.to_string().contains("not listed"), "{err}");
+        let mut lying = created.statement.clone();
+        lying.predicate.identity = key_identity(&other);
+        let lying_bundle = crate::sigstore::sign(
+            Signer::Key {
+                key: key.clone(),
+                log: false,
+            },
+            &lying.canonical_bytes(),
+        )
+        .unwrap();
+        let err =
+            crate::verify::verify(&lying_bundle, &Trust::Key(&public), options, &[]).unwrap_err();
         assert!(
-            matches!(err, crate::verify::Error::SchemeMismatch { .. }),
+            matches!(err, crate::verify::Error::DeclaredSignerMismatch { .. }),
             "{err}"
         );
+
+        // A release list over that bundle.
+        let bundle_path = dir.path().join("packslip.sigstore.json");
+        std::fs::write(&bundle_path, &bundle).unwrap();
+        let list = create_release_list(&ListRequest {
+            project: "tool.example.com",
+            generated_at: Some("2026-09-01T01:00:00Z"),
+            valid_for: std::time::Duration::from_secs(30 * 86_400),
+            sequence: 3,
+            releases: vec![ListedRelease {
+                url: "https://dl.example.com/1.0.0/packslip.sigstore.json",
+                bundle_path: &bundle_path,
+            }],
+            identity: key_identity(&key),
+        })
+        .unwrap();
+        assert_eq!(list.statement.predicate.expires_at, "2026-10-01T01:00:00Z");
+        assert_eq!(list.statement.predicate.releases[0].version, "1.0.0");
+        assert_eq!(
+            list.statement.subject[0].name,
+            "https://dl.example.com/1.0.0/packslip.sigstore.json"
+        );
+        let list_bundle = crate::sigstore::sign(
+            Signer::Key {
+                key: key.clone(),
+                log: false,
+            },
+            &list.document,
+        )
+        .unwrap();
+        let verified_list =
+            crate::verify::verify_release_list(&list_bundle, &Trust::Key(&public), options)
+                .unwrap();
+        assert_eq!(verified_list.list.predicate.sequence, 3);
+        assert!(
+            verified_list
+                .list
+                .is_current("2026-09-15T00:00:00Z".parse().unwrap())
+        );
+        let err = create_release_list(&ListRequest {
+            project: "other.example.com",
+            generated_at: None,
+            valid_for: std::time::Duration::from_secs(60),
+            sequence: 1,
+            releases: vec![ListedRelease {
+                url: "https://x/packslip.sigstore.json",
+                bundle_path: &bundle_path,
+            }],
+            identity: key_identity(&key),
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("the list is for"), "{err}");
     }
 }

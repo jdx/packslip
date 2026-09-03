@@ -1,0 +1,159 @@
+{
+  "$defs": {
+    "Digest": {
+      "properties": {
+        "sha256": {
+          "description": "Lowercase hex.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sha256"
+      ],
+      "type": "object"
+    },
+    "Identity": {
+      "description": "How the document is signed, so a consumer can check what it pinned\nagainst what it received.",
+      "properties": {
+        "issuer": {
+          "description": "For `sigstore-oidc`, the OIDC issuer that vouched for the identity,\nsuch as `https://token.actions.githubusercontent.com`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "key_id": {
+          "description": "For `sigstore-oidc`, the certificate's subject identity: the\nworkflow URI for a CI identity, or the email for a human one. For\n`sigstore-key`, the key id in uppercase hex.",
+          "type": "string"
+        },
+        "scheme": {
+          "$ref": "#/$defs/Scheme"
+        }
+      },
+      "required": [
+        "scheme",
+        "key_id"
+      ],
+      "type": "object"
+    },
+    "ReleaseList": {
+      "description": "The `releases/v1` predicate: which releases a project has, so a\nconsumer can find them without a registry, and cannot be shown a stale\nor truncated view without noticing.",
+      "properties": {
+        "expires_at": {
+          "description": "After this the list is stale and a consumer refuses it, RFC 3339 UTC.",
+          "type": "string"
+        },
+        "generated_at": {
+          "description": "When the list was produced, RFC 3339 UTC.",
+          "type": "string"
+        },
+        "identity": {
+          "$ref": "#/$defs/Identity"
+        },
+        "project": {
+          "type": "string"
+        },
+        "releases": {
+          "description": "Newest first is conventional but not required.",
+          "items": {
+            "$ref": "#/$defs/ReleaseRef"
+          },
+          "type": "array"
+        },
+        "sequence": {
+          "description": "Increases with every list published; a consumer refuses a lower one\nthan it has seen.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "project",
+        "generated_at",
+        "expires_at",
+        "sequence",
+        "identity",
+        "releases"
+      ],
+      "type": "object"
+    },
+    "ReleaseRef": {
+      "properties": {
+        "packslip": {
+          "description": "URL of the release's `packslip.sigstore.json`. The statement's\nsubject of the same name carries that file's digest.",
+          "type": "string"
+        },
+        "published_at": {
+          "description": "RFC 3339 UTC, copied from the release's packslip.",
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "published_at",
+        "packslip"
+      ],
+      "type": "object"
+    },
+    "Scheme": {
+      "oneOf": [
+        {
+          "const": "sigstore-oidc",
+          "description": "A sigstore bundle signed keylessly with a workload or human OIDC\nidentity, certified by Fulcio and logged to Rekor.",
+          "type": "string"
+        },
+        {
+          "const": "sigstore-key",
+          "description": "A sigstore bundle signed with a long-lived Ed25519 key, logged to\nRekor.",
+          "type": "string"
+        }
+      ]
+    },
+    "Subject": {
+      "properties": {
+        "digest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "digest"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "An in-toto statement carrying predicate `P`.",
+  "properties": {
+    "_type": {
+      "type": "string"
+    },
+    "predicate": {
+      "$ref": "#/$defs/ReleaseList"
+    },
+    "predicateType": {
+      "type": "string"
+    },
+    "subject": {
+      "description": "What the predicate is about, by name and digest.",
+      "items": {
+        "$ref": "#/$defs/Subject"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "_type",
+    "subject",
+    "predicateType",
+    "predicate"
+  ],
+  "title": "Envelope",
+  "type": "object"
+}
