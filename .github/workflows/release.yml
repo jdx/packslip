@@ -1,0 +1,113 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+            asset: linux-x64
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            asset: linux-arm64
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            asset: darwin-arm64
+          - target: x86_64-apple-darwin
+            runner: macos-latest
+            asset: darwin-x64
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            asset: windows-x64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          name="packslip-v${version}-${{ matrix.asset }}"
+          mkdir -p "dist/$name"
+          if [[ "${{ matrix.target }}" == *windows* ]]; then
+            cp "target/${{ matrix.target }}/release/packslip.exe" "dist/$name/"
+            (cd dist && 7z a -bd "$name.zip" "$name" >/dev/null)
+          else
+            cp "target/${{ matrix.target }}/release/packslip" "dist/$name/"
+            tar -C dist -cJf "dist/$name.tar.xz" "$name"
+          fi
+          rm -r "dist/$name"
+          ls -la dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Attest the archives
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes dist/*
+      # Dogfood: the binary just built signs its own release manifest with
+      # this job's identity, then verifies it under the policy the project
+      # name github.com/jdx/packslip implies.
+      - name: Publish this release's packslip
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p bin
+          tar -xJf "dist/packslip-v${version}-linux-x64.tar.xz" --strip-components=1 -C bin
+          bin/packslip create \
+            --project "github.com/${GITHUB_REPOSITORY}" \
+            --version "$version" \
+            --out packslip \
+            --url-base "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}" \
+            --source-repo "https://github.com/${GITHUB_REPOSITORY}" \
+            --tag "$GITHUB_REF_NAME" \
+            --commit "$GITHUB_SHA" \
+            --bin "packslip-v${version}-linux-x64/packslip" \
+            dist/*
+          bin/packslip verify packslip/packslip.json --artifact dist/packslip-v${version}-linux-x64.tar.xz
+          gh release upload "$GITHUB_REF_NAME" packslip/packslip.json packslip/packslip.sigstore.json --clobber

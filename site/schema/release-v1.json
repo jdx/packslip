@@ -8,6 +8,13 @@
             "null"
           ]
         },
+        "bin": {
+          "description": "Executables inside the artifact, as paths relative to the archive\nroot, or the artifact's own name when it is a bare executable. A\nconsumer puts these on PATH.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "format": {
           "type": [
             "string",
@@ -67,10 +74,17 @@
       "type": "object"
     },
     "Identity": {
-      "description": "How the document is signed, so a consumer can pin one identity.",
+      "description": "How the document is signed, so a consumer can check what it pinned\nagainst what it received.",
       "properties": {
+        "issuer": {
+          "description": "For the sigstore schemes, the OIDC issuer that vouched for the\nidentity, such as `https://token.actions.githubusercontent.com`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "key_id": {
-          "description": "The key id (minisign) or certificate identity (OIDC).",
+          "description": "For `minisign`, the key id in uppercase hex. For the sigstore\nschemes, the certificate's subject identity: the workflow URI for a\nCI identity, or the email for a human one.",
           "type": "string"
         },
         "scheme": {
@@ -95,7 +109,7 @@
           "$ref": "#/$defs/Identity"
         },
         "project": {
-          "description": "A package URL for the project, such as `pkg:github/jdx/mise`.",
+          "description": "The project's name: a host path such as `github.com/jdx/mise` or\n`mise.jdx.dev`, the way Go names modules. The host is where a\nconsumer discovers releases and, for forge hosts, what identity is\nexpected to have signed them.",
           "type": "string"
         },
         "published_at": {
@@ -152,7 +166,7 @@
         },
         {
           "const": "sigstore-oidc",
-          "description": "A sigstore bundle signed with a workload identity.",
+          "description": "A sigstore bundle signed keylessly with a workload or human OIDC\nidentity, certified by Fulcio and logged to Rekor.",
           "type": "string"
         }
       ]

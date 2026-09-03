@@ -1,0 +1,69 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-features --all-targets -- -D warnings
+      - run: cargo build --all-features
+      - run: cargo test --all-features
+
+  # The keyless path end to end: sign with this job's identity, verify with
+  # the policy the project name implies. Only on main, where the id-token
+  # permission is available.
+  keyless:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release
+      - name: Sign and verify
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          printf 'linux\n' > dist/tool-v0.0.0-linux-x64.tar.xz
+          printf 'darwin\n' > dist/tool-v0.0.0-darwin-arm64.tar.xz
+          ./target/release/packslip create \
+            --project "github.com/${GITHUB_REPOSITORY}" \
+            --version 0.0.0 \
+            --out dist \
+            --url-base "https://example.invalid/${GITHUB_REPOSITORY}/0.0.0" \
+            --bin tool \
+            dist/tool-v0.0.0-linux-x64.tar.xz dist/tool-v0.0.0-darwin-arm64.tar.xz
+          cat dist/packslip.json | python3 -m json.tool
+          ./target/release/packslip verify dist/packslip.json \
+            --artifact dist/tool-v0.0.0-linux-x64.tar.xz --json
+          # A wrong repository must be refused.
+          if ./target/release/packslip verify dist/packslip.json \
+               --identity-prefix "https://github.com/someone-else/repo/" \
+               --issuer https://token.actions.githubusercontent.com; then
+            echo "verification accepted the wrong identity" >&2
+            exit 1
+          fi

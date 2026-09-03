@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>packslip release/v1 — specification</title>
+<meta name="description" content="The packslip release/v1 predicate: an in-toto statement describing a vendor release, its artifacts, and how to verify them.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header class="wrap top">
+  <a class="brand" href="/">
+    <svg viewBox="0 0 64 64" aria-hidden="true"><rect x="10" y="6" width="44" height="52" rx="4" fill="none" stroke="currentColor" stroke-width="3"/><path d="M18 20h28M18 30h28M18 40h18" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><circle cx="44" cy="44" r="9" fill="#b8321f"/><path d="M39.5 44l3 3 6-6" stroke="#fff" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    packslip
+  </a>
+  <nav>
+    <a href="/">Overview</a>
+    <a href="/schema/release-v1.json">JSON schema</a>
+    <a href="https://github.com/jdx/packslip">GitHub</a>
+  </nav>
+</header>
+
+<main class="wrap doc">
+
+<aside class="toc">
+  <div class="toc-title">Contents</div>
+  <ol>
+    <li><a href="#goal">Goal</a></li>
+    <li><a href="#names">Names</a></li>
+    <li><a href="#document">Document</a></li>
+    <li><a href="#fields">Field reference</a></li>
+    <li><a href="#signing">Signing</a></li>
+    <li><a href="#discovery">Discovery</a></li>
+    <li><a href="#consumer-rules">Consumer rules</a></li>
+    <li><a href="#levels">Evidence levels</a></li>
+    <li><a href="#tooling">Tooling</a></li>
+  </ol>
+</aside>
+
+<article class="prose" style="max-width:none">
+  <span class="eyebrow">Specification</span>
+  <h1>packslip: a signed release manifest</h1>
+  <p class="meta">Version 1, draft. Predicate type <code>https://packslip.dev/release/v1</code>. The canonical text is <a href="https://github.com/jdx/packslip/blob/main/docs/spec/packslip.md"><code>docs/spec/packslip.md</code></a> in jdx/packslip; this page renders it with a field reference added. Machine-readable schema: <a href="/schema/release-v1.json"><code>/schema/release-v1.json</code></a>.</p>
+
+  <h2 id="goal">Goal</h2>
+  <p>A vendor publishes one signed, machine-readable document per release that says what the artifacts are and how to verify them. Any consumer (mise, omapac and the Omarchy Package Repository, aqua, Homebrew, a corporate mirror) verifies it with a single pinned identity and gets checksums, platform mapping, executables, provenance links, and an evidence level, without per-vendor logic and without a registry entry. The name is neutral on purpose: a packing slip is the paper in the box listing exactly what shipped.</p>
+
+  <h2 id="names">Names</h2>
+  <p>A project is named the way Go names a module: a host, optionally followed by a path. <code>github.com/jdx/mise</code>, <code>gitlab.com/group/tool</code>, <code>mise.jdx.dev</code>. No scheme, lowercase host with at least one dot, no empty or dot segments, no trailing slash.</p>
+  <p>The name is the location and, on a forge, the identity:</p>
+  <ul>
+    <li><code>github.com/&lt;owner&gt;/&lt;repo&gt;</code>: releases and their packslips are GitHub release assets, and the packslip is expected to be signed by a workflow of that repository through GitHub's OIDC issuer (<code>https://token.actions.githubusercontent.com</code>).</li>
+    <li><code>gitlab.com/&lt;path&gt;</code>: likewise, signed by a pipeline of that project through <code>https://gitlab.com</code>.</li>
+    <li>Any other host: the vendor controls the domain and publishes a release list at the well-known URL below, which names the signing identity or key.</li>
+  </ul>
+  <p>A consumer needs nothing else to start verifying a project on a known forge. A short-name alias table (<code>mise</code> for <code>github.com/jdx/mise</code>) is a convenience a consumer may add; it is not part of the format.</p>
+
+  <h2 id="document">Document</h2>
+  <p>The document is an <a href="https://github.com/in-toto/attestation">in-toto Statement v1</a> whose predicate type is the packslip, so attestation tooling parses it unchanged.</p>
+<pre><code>{
+  "_type": "https://in-toto.io/Statement/v1",
+  "subject": [
+    { "name": "mise-v2026.9.1-linux-x64.tar.xz", "digest": { "sha256": "..." } }
+  ],
+  "predicateType": "https://packslip.dev/release/v1",
+  "predicate": {
+    "project": "github.com/jdx/mise",
+    "version": "2026.9.1",
+    "published_at": "2026-09-01T12:00:00Z",
+    "source": { "repo": "https://github.com/jdx/mise", "commit": "...", "tag": "v2026.9.1" },
+    "artifacts": [
+      {
+        "name": "mise-v2026.9.1-linux-x64.tar.xz",
+        "os": "linux", "arch": "x86_64", "libc": "gnu",
+        "size": 12345678,
+        "url": "https://github.com/jdx/mise/releases/download/v2026.9.1/mise-v2026.9.1-linux-x64.tar.xz",
+        "format": "tar.xz",
+        "bin": ["mise/bin/mise"],
+        "provenance": ["https://.../mise-v2026.9.1-linux-x64.tar.xz.sigstore.json"]
+      }
+    ],
+    "identity": {
+      "scheme": "sigstore-oidc",
+      "key_id": "https://github.com/jdx/mise/.github/workflows/release.yml@refs/tags/v2026.9.1",
+      "issuer": "https://token.actions.githubusercontent.com"
+    },
+    "sbom": "https://.../sbom.cdx.json",
+    "supersedes": "2026.9.0"
+  }
+}</code></pre>
+  <p>Rules:</p>
+  <ul>
+    <li><code>subject</code> lists every artifact by file name with its sha256; <code>artifacts</code> carries the same names with platform, size, download URL, format, executables, and provenance links. The two sets of names must match exactly, and neither may contain a duplicate. At least one artifact is required. Digests are 64 lowercase hex characters.</li>
+    <li><code>project</code> is a name as defined above. <code>version</code> is the vendor's version string, compared as opaque text. <code>published_at</code> is RFC 3339 UTC.</li>
+    <li><code>os</code>, <code>arch</code>, and <code>libc</code> use the values <code>linux</code>, <code>darwin</code>, <code>windows</code>, <code>freebsd</code>; <code>x86_64</code>, <code>aarch64</code>, <code>armv7</code>, <code>riscv64</code>, <code>i686</code>; <code>gnu</code>, <code>musl</code>. <code>format</code> is the archive or installer type.</li>
+    <li><code>bin</code> lists the executables inside the artifact as paths relative to the archive root, or the artifact's own name when it is a bare executable. A consumer puts them on PATH. Windows entries carry their <code>.exe</code>.</li>
+    <li><code>provenance</code> holds URLs of build provenance statements (SLSA, sigstore bundles) for that artifact. A consumer that verifies them may raise the level to L3.</li>
+    <li><code>supersedes</code> names the release this one replaces, so a consumer can detect a rollback without a version-ordering scheme.</li>
+    <li><code>identity</code> says how the document is signed and by whom, so a consumer can check what it pinned against what it received. <code>key_id</code> is the minisign key id in uppercase hex, or the certificate's subject identity for the sigstore schemes: a workflow URI for CI, an email for a person. <code>issuer</code> is the OIDC issuer for the sigstore schemes.</li>
+  </ul>
+
+  <h2 id="fields">Field reference</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Field</th><th>Type</th><th></th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>_type</code></td><td>string</td><td><span class="req">required</span></td><td>Always <code>https://in-toto.io/Statement/v1</code>.</td></tr>
+      <tr><td><code>subject[]</code></td><td>array</td><td><span class="req">required</span></td><td>One entry per artifact. Mirrors <code>predicate.artifacts</code> by name.</td></tr>
+      <tr><td><code>subject[].name</code></td><td>string</td><td><span class="req">required</span></td><td>The artifact's file name.</td></tr>
+      <tr><td><code>subject[].digest.sha256</code></td><td>string</td><td><span class="req">required</span></td><td>SHA-256 of the file, lowercase hex.</td></tr>
+      <tr><td><code>predicateType</code></td><td>string</td><td><span class="req">required</span></td><td>Always <code>https://packslip.dev/release/v1</code>.</td></tr>
+      <tr><td><code>predicate.project</code></td><td>string</td><td><span class="req">required</span></td><td>Host path naming the project, such as <code>github.com/jdx/mise</code>.</td></tr>
+      <tr><td><code>predicate.version</code></td><td>string</td><td><span class="req">required</span></td><td>The vendor's version string. Opaque; never parsed for ordering.</td></tr>
+      <tr><td><code>predicate.published_at</code></td><td>string</td><td><span class="req">required</span></td><td>RFC 3339 UTC publish time. Minimum-release-age policy applies to it.</td></tr>
+      <tr><td><code>predicate.source</code></td><td>object</td><td><span class="opt">optional</span></td><td>Where the release was built from.</td></tr>
+      <tr><td><code>predicate.source.repo</code></td><td>string</td><td><span class="req">required</span></td><td>Source repository URL.</td></tr>
+      <tr><td><code>predicate.source.commit</code></td><td>string</td><td><span class="opt">optional</span></td><td>Commit the release was built from.</td></tr>
+      <tr><td><code>predicate.source.tag</code></td><td>string</td><td><span class="opt">optional</span></td><td>Tag the release was built from.</td></tr>
+      <tr><td><code>predicate.artifacts[]</code></td><td>array</td><td><span class="req">required</span></td><td>One entry per artifact; at least one.</td></tr>
+      <tr><td><code>artifacts[].name</code></td><td>string</td><td><span class="req">required</span></td><td>File name, matching a <code>subject</code> entry.</td></tr>
+      <tr><td><code>artifacts[].os</code></td><td>string</td><td><span class="opt">optional</span></td><td><code>linux</code>, <code>darwin</code>, <code>windows</code>, <code>freebsd</code>.</td></tr>
+      <tr><td><code>artifacts[].arch</code></td><td>string</td><td><span class="opt">optional</span></td><td><code>x86_64</code>, <code>aarch64</code>, <code>armv7</code>, <code>riscv64</code>, <code>i686</code>.</td></tr>
+      <tr><td><code>artifacts[].libc</code></td><td>string</td><td><span class="opt">optional</span></td><td><code>gnu</code> or <code>musl</code>; Linux only.</td></tr>
+      <tr><td><code>artifacts[].size</code></td><td>integer</td><td><span class="req">required</span></td><td>File size in bytes. Verified alongside the digest.</td></tr>
+      <tr><td><code>artifacts[].url</code></td><td>string</td><td><span class="opt">optional</span></td><td>Download URL.</td></tr>
+      <tr><td><code>artifacts[].format</code></td><td>string</td><td><span class="opt">optional</span></td><td>Archive or installer type: <code>tar.xz</code>, <code>tar.gz</code>, <code>zip</code>, <code>deb</code>, <code>rpm</code>, <code>dmg</code>, <code>pkg</code>, <code>msi</code>, <code>exe</code>, and so on.</td></tr>
+      <tr><td><code>artifacts[].bin[]</code></td><td>array of string</td><td><span class="opt">optional</span></td><td>Executables inside the artifact, relative to the archive root.</td></tr>
+      <tr><td><code>artifacts[].provenance[]</code></td><td>array of string</td><td><span class="opt">optional</span></td><td>URLs of build provenance statements for this artifact.</td></tr>
+      <tr><td><code>predicate.identity.scheme</code></td><td>string</td><td><span class="req">required</span></td><td><code>sigstore-oidc</code>, <code>minisign</code>, or <code>sigstore-key</code>.</td></tr>
+      <tr><td><code>predicate.identity.key_id</code></td><td>string</td><td><span class="req">required</span></td><td>The certificate identity for the sigstore schemes, or the minisign key id in uppercase hex.</td></tr>
+      <tr><td><code>predicate.identity.issuer</code></td><td>string</td><td><span class="opt">optional</span></td><td>The OIDC issuer, for the sigstore schemes.</td></tr>
+      <tr><td><code>predicate.sbom</code></td><td>string</td><td><span class="opt">optional</span></td><td>URL of a software bill of materials for the release.</td></tr>
+      <tr><td><code>predicate.supersedes</code></td><td>string</td><td><span class="opt">optional</span></td><td>The version this release replaces.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h2 id="signing">Signing</h2>
+  <p>The canonical bytes are the compact JSON serialisation with keys in the order above, exactly as <code>packslip create</code> writes <code>packslip.json</code>. The signature is over those bytes.</p>
+  <p>Schemes, in the order a vendor should prefer them:</p>
+  <ul>
+    <li><code>sigstore-oidc</code>: a <a href="https://github.com/sigstore/protobuf-specs">sigstore bundle</a> in <code>packslip.sigstore.json</code> carrying the document as an in-toto DSSE envelope, signed with an ephemeral key certified by Fulcio for the signer's OIDC identity and logged to Rekor. There is no key to manage: a CI job with an id-token permission signs with its own identity, and the certificate names the workflow that ran. <code>packslip create</code> does this by default when it finds an ambient CI credential (GitHub Actions, GitLab CI, and the others sigstore's clients know) or a token in <code>SIGSTORE_ID_TOKEN</code>. <code>identity.key_id</code> is the certificate identity, <code>identity.issuer</code> the issuer.</li>
+    <li><code>minisign</code>: a detached <a href="https://jedisct1.github.io/minisign/">minisign</a> signature in <code>packslip.json.minisig</code>, prehashed (<code>ED</code>) or legacy (<code>Ed</code>), with a trusted comment covered by the global signature. <code>minisign -V -p vendor.pub -m packslip.json</code> verifies it, as does <code>packslip verify</code>. For vendors who release outside a CI system with OIDC, or who prefer a long-lived key. <code>identity.key_id</code> is the minisign key id in uppercase hex.</li>
+    <li><code>sigstore-key</code>: a sigstore bundle signed with a long-lived key logged to Rekor. Reserved; verification of this scheme is not in the current build.</li>
+  </ul>
+
+  <h2 id="discovery">Discovery</h2>
+  <p>Publish <code>packslip.json</code> and its signature next to the artifacts: as release assets, or under the version directory of a download site.</p>
+  <p>For a project on a known forge, the forge's release listing is the discovery mechanism and nothing more is needed. A project on its own domain, and optionally any project, advertises recent releases at</p>
+<pre><code>https://&lt;host&gt;/.well-known/packslip/&lt;path&gt;.json</code></pre>
+  <p>where <code>&lt;path&gt;</code> is the project name after the host, or <code>packslip.json</code> directly under <code>.well-known</code> when the name is a bare host. The list is signed with the project's identity (its <code>.minisig</code> or <code>.sigstore.json</code> beside it) and looks like this:</p>
+<pre><code>{
+  "project": "mise.jdx.dev",
+  "identity": { "scheme": "minisign", "key_id": "5A0A0B8B9C6D7E1F",
+                "pubkey": "RWS..." },
+  "releases": [
+    { "version": "2026.9.1", "published_at": "2026-09-01T12:00:00Z",
+      "packslip": "https://github.com/jdx/mise/releases/download/v2026.9.1/packslip.json" }
+  ]
+}</code></pre>
+  <p>The list separates the name from where the bytes live, the way a Go vanity import does: the identity is anchored to the domain, and the artifacts can be anywhere.</p>
+
+  <h2 id="consumer-rules">Consumer rules</h2>
+  <ol>
+    <li>Pin the identity once. For a forge project, the name is the pin: accept only the forge's issuer and an identity under the repository. For other projects, record the key or identity from the well-known list on first use, or from a list of pins you maintain. Never take a key from the document itself.</li>
+    <li>Verify the signature, then the document structure, then the subject digest and size of every artifact you downloaded.</li>
+    <li>Enforce no-downgrade: refuse a release whose <code>identity.scheme</code> is weaker than the last accepted one, whose signer changed without a human saying so, or that dropped per-artifact provenance the last release carried.</li>
+    <li>Apply any minimum release age to <code>published_at</code>, and prefer the transparency log's integration time over it when there is one.</li>
+    <li>Treat <code>supersedes</code> as the ordering hint for rollback detection.</li>
+  </ol>
+
+  <h2 id="levels">Evidence levels</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Level</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><span class="lvl">L0</span></td><td>Checksums only, no signature.</td></tr>
+      <tr><td><span class="lvl">L1</span></td><td>Signed checksums or artifact signatures.</td></tr>
+      <tr><td><span class="lvl on">L2</span></td><td>A signed packslip.</td></tr>
+      <tr><td><span class="lvl on">L3</span></td><td>L2 plus per-artifact build provenance that the consumer verified.</td></tr>
+      <tr><td><span class="lvl on">L4</span></td><td>L3 plus reproducible or independently verified builds.</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p><code>packslip verify</code> reports L2 for a verified document, or L3 when every artifact links provenance; it does not itself fetch or verify provenance bundles.</p>
+
+  <h2 id="tooling">Tooling</h2>
+  <p>The reference implementation is the <code>packslip</code> crate and binary in <a href="https://github.com/jdx/packslip">jdx/packslip</a>, also usable as a GitHub Action.</p>
+  <ul>
+    <li>In a release job: <code>uses: jdx/packslip@v1</code> with <code>artifacts: dist/*</code> signs keylessly and uploads <code>packslip.json</code> and <code>packslip.sigstore.json</code> to the release.</li>
+    <li><code>packslip create --project github.com/o/r --version X --out dist --url-base URL --source-repo URL --tag vX --bin NAME artifact...</code> digests the artifacts, infers platforms from file names (<code>path:os/arch[/libc]</code> overrides), and writes the document and its signature. Add <code>--key release.key</code> to sign with minisign instead.</li>
+    <li><code>packslip keygen -o release.key</code> writes a minisign secret seed (mode 0600) and <code>release.pub</code>.</li>
+    <li><code>packslip verify dist/packslip.json [--artifact file...]</code> verifies and exits 1 on any failure; <code>--json</code> prints the result. A sigstore document is checked against the policy its project name implies, or against <code>--identity</code>, <code>--identity-prefix</code>, and <code>--issuer</code>; a minisign document against <code>--pubkey</code>. <code>--trusted-root</code> replaces the embedded sigstore root.</li>
+  </ul>
+</article>
+
+</main>
+
+<footer class="wrap">
+  <span>packslip · version 1, draft · MIT licensed</span>
+  <nav>
+    <a href="/">Overview</a>
+    <a href="/schema/release-v1.json">JSON schema</a>
+    <a href="https://github.com/jdx/packslip">GitHub</a>
+  </nav>
+</footer>
+
+</body>
+</html>

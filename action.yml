@@ -1,0 +1,173 @@
+name: packslip
+description: >
+  Publish a signed packslip for a release: digest the artifacts, sign the
+  manifest keylessly with this job's OIDC identity, and upload
+  packslip.json and packslip.sigstore.json as release assets.
+author: Jeff Dickey <@jdx>
+branding:
+  icon: package
+  color: red
+
+inputs:
+  artifacts:
+    description: Artifact files or globs, whitespace separated (dist/*.tar.xz dist/*.zip)
+    required: true
+  project:
+    description: The project's name; defaults to github.com/<owner>/<repo>
+    required: false
+    default: ""
+  version:
+    description: The release version; defaults to the tag name without a leading v
+    required: false
+    default: ""
+  tag:
+    description: The release tag to upload to; defaults to the tag that triggered the job
+    required: false
+    default: ""
+  url-base:
+    description: Download URL prefix; defaults to this release's download URL
+    required: false
+    default: ""
+  bin:
+    description: Executables inside every archive, whitespace separated (relative to the archive root)
+    required: false
+    default: ""
+  supersedes:
+    description: The version this release replaces
+    required: false
+    default: ""
+  sbom:
+    description: URL of an SBOM for the release
+    required: false
+    default: ""
+  out:
+    description: Directory to write packslip.json and packslip.sigstore.json into
+    required: false
+    default: packslip
+  upload:
+    description: Upload the document and signature to the release
+    required: false
+    default: "true"
+  packslip-version:
+    description: The packslip release to run
+    required: false
+    default: "0.1.0"
+  token:
+    description: Token for downloading packslip and uploading assets
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  document:
+    description: Path of the written packslip.json
+    value: ${{ steps.create.outputs.document }}
+  signature:
+    description: Path of the written packslip.sigstore.json
+    value: ${{ steps.create.outputs.signature }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install packslip
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        PACKSLIP_VERSION: ${{ inputs.packslip-version }}
+      run: |
+        set -euo pipefail
+        case "$(uname -s)" in
+          Linux) os=linux ;;
+          Darwin) os=darwin ;;
+          MINGW*|MSYS*|CYGWIN*) os=windows ;;
+          *) echo "unsupported OS: $(uname -s)" >&2; exit 1 ;;
+        esac
+        case "$(uname -m)" in
+          x86_64|amd64) arch=x64 ;;
+          aarch64|arm64) arch=arm64 ;;
+          *) echo "unsupported arch: $(uname -m)" >&2; exit 1 ;;
+        esac
+        if [ "$os" = windows ]; then ext=zip; else ext=tar.xz; fi
+        asset="packslip-v${PACKSLIP_VERSION}-${os}-${arch}.${ext}"
+        dir="${RUNNER_TEMP}/packslip-bin"
+        mkdir -p "$dir"
+        gh release download "v${PACKSLIP_VERSION}" -R jdx/packslip -p "$asset" -D "$dir" --clobber
+        # The archive was built by jdx/packslip's release workflow; check that before running it.
+        gh attestation verify "$dir/$asset" -R jdx/packslip
+        if [ "$ext" = zip ]; then
+          (cd "$dir" && unzip -oq "$asset")
+        else
+          tar -xJf "$dir/$asset" -C "$dir"
+        fi
+        echo "$dir" >> "$GITHUB_PATH"
+        "$dir/packslip" version
+
+    - name: Create and sign the packslip
+      id: create
+      shell: bash
+      env:
+        IN_ARTIFACTS: ${{ inputs.artifacts }}
+        IN_PROJECT: ${{ inputs.project }}
+        IN_VERSION: ${{ inputs.version }}
+        IN_TAG: ${{ inputs.tag }}
+        IN_URL_BASE: ${{ inputs.url-base }}
+        IN_BIN: ${{ inputs.bin }}
+        IN_SUPERSEDES: ${{ inputs.supersedes }}
+        IN_SBOM: ${{ inputs.sbom }}
+        IN_OUT: ${{ inputs.out }}
+        REPO: ${{ github.repository }}
+        REF_NAME: ${{ github.ref_name }}
+        REF_TYPE: ${{ github.ref_type }}
+        SHA: ${{ github.sha }}
+        SERVER: ${{ github.server_url }}
+      run: |
+        set -euo pipefail
+        tag="${IN_TAG:-$REF_NAME}"
+        if [ -z "$IN_TAG" ] && [ "$REF_TYPE" != tag ]; then
+          echo "not running on a tag; pass the tag input" >&2
+          exit 1
+        fi
+        version="${IN_VERSION:-${tag#v}}"
+        project="${IN_PROJECT:-github.com/${REPO}}"
+        url_base="${IN_URL_BASE:-${SERVER}/${REPO}/releases/download/${tag}}"
+        args=(
+          create
+          --project "$project"
+          --version "$version"
+          --out "$IN_OUT"
+          --url-base "$url_base"
+          --source-repo "${SERVER}/${REPO}"
+          --tag "$tag"
+          --commit "$SHA"
+        )
+        for b in $IN_BIN; do args+=(--bin "$b"); done
+        [ -n "$IN_SUPERSEDES" ] && args+=(--supersedes "$IN_SUPERSEDES")
+        [ -n "$IN_SBOM" ] && args+=(--sbom "$IN_SBOM")
+        shopt -s nullglob
+        files=()
+        for pattern in $IN_ARTIFACTS; do
+          for f in $pattern; do files+=("$f"); done
+        done
+        if [ "${#files[@]}" -eq 0 ]; then
+          echo "no artifacts matched: $IN_ARTIFACTS" >&2
+          exit 1
+        fi
+        packslip "${args[@]}" "${files[@]}"
+        echo "document=${IN_OUT}/packslip.json" >> "$GITHUB_OUTPUT"
+        echo "signature=${IN_OUT}/packslip.sigstore.json" >> "$GITHUB_OUTPUT"
+        echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+    - name: Verify what was written
+      shell: bash
+      env:
+        DOC: ${{ steps.create.outputs.document }}
+      run: packslip verify "$DOC"
+
+    - name: Upload to the release
+      if: inputs.upload == 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        TAG: ${{ steps.create.outputs.tag }}
+        DOC: ${{ steps.create.outputs.document }}
+        SIG: ${{ steps.create.outputs.signature }}
+      run: gh release upload "$TAG" "$DOC" "$SIG" --clobber
