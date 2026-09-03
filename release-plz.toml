@@ -14,3 +14,7 @@ publish = false
 semver_check = false
 # release-plz ignores cliff.toml unless told about it.
 changelog_config = "cliff.toml"
+
+# Measure releases against git tags, not crates.io, which does not have
+# the crate yet.
+git_only = true

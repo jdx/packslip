@@ -1,26 +1,5 @@
 # Changelog
 
-## [unreleased]
-
-### 🚀 Features
-
-- Monorepo subpath names (`github.com/owner/repo/tool`), one packslip per
-  tool, `packslip.<subpath>.sigstore.json` file naming.
-- Artifact `variant`, per-artifact `url`, `bin` entries with a PATH name
-  distinct from the file (`{ path, name }`), `requires` (`os_min`,
-  `glibc_min`), optional `sha512` digests, formats `tar.zst`, `tar.bz2`,
-  `7z`, `msix`, `appimage`, `raw`.
-- Release `prerelease`, `channel`, `notes_url`; release-list entries carry
-  `prerelease`, `channel`, `status: yanked` with `status_reason`, and
-  `security`.
-- Repackager attestation: `attested_by: repackager` with `evidence`, for a
-  repository that signs a packslip about a vendor's artifacts.
-- `create` refuses two artifacts that share os, arch, libc, format, and
-  variant.
-- The action reads its default version from its own `Cargo.toml`, names
-  the bundle after the project, and accepts `variants`, `prerelease`,
-  `channel`, and `notes-url`.
-
 ## [0.2.0](https://github.com/jdx/packslip/compare/v0.1.0..v0.2.0) - 2026-09-03
 
 ### 🚀 Features
