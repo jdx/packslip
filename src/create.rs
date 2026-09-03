@@ -4,8 +4,9 @@
 use std::path::Path;
 
 use crate::model::{
-    Artifact, Digest, Envelope, Identity, PREDICATE_TYPE, Predicate, RELEASES_PREDICATE_TYPE,
-    ReleaseList, ReleaseListStatement, ReleaseRef, STATEMENT_TYPE, Source, Statement, Subject,
+    Artifact, Attestor, Bin, Digest, Envelope, Evidence, Identity, PREDICATE_TYPE, Predicate,
+    RELEASES_PREDICATE_TYPE, ReleaseList, ReleaseListStatement, ReleaseRef, Requires,
+    STATEMENT_TYPE, Source, Statement, Subject,
 };
 
 /// What `create` needs.
@@ -13,14 +14,45 @@ pub struct Request<'a> {
     pub project: &'a str,
     pub version: &'a str,
     pub published_at: Option<&'a str>,
+    pub prerelease: bool,
+    pub channel: Option<&'a str>,
     pub source: Option<Source>,
     pub artifacts: Vec<ArtifactInput<'a>>,
-    /// Prepended to artifact names for their download URL, when given.
+    /// Prepended to artifact names for their download URL, when given and
+    /// the artifact has no URL of its own.
     pub url_base: Option<&'a str>,
+    pub notes_url: Option<&'a str>,
     pub sbom: Option<&'a str>,
     pub supersedes: Option<&'a str>,
     /// Who will sign the document.
     pub identity: Identity,
+    pub attested_by: Attestor,
+    pub evidence: Vec<Evidence>,
+    /// Also record sha512 digests.
+    pub sha512: bool,
+}
+
+impl<'a> Request<'a> {
+    /// A vendor-attested request with nothing optional set.
+    pub fn new(project: &'a str, version: &'a str, identity: Identity) -> Request<'a> {
+        Request {
+            project,
+            version,
+            published_at: None,
+            prerelease: false,
+            channel: None,
+            source: None,
+            artifacts: Vec::new(),
+            url_base: None,
+            notes_url: None,
+            sbom: None,
+            supersedes: None,
+            identity,
+            attested_by: Attestor::Vendor,
+            evidence: Vec::new(),
+            sha512: true,
+        }
+    }
 }
 
 /// One artifact file, with optional overrides for what the name implies.
@@ -29,10 +61,30 @@ pub struct ArtifactInput<'a> {
     pub os: Option<&'a str>,
     pub arch: Option<&'a str>,
     pub libc: Option<&'a str>,
+    pub variant: Option<String>,
+    /// The download URL, when it is not `url_base/name`.
+    pub url: Option<String>,
     /// Executables inside the artifact. On Windows an entry without an
-    /// extension gets `.exe`.
-    pub bin: Vec<String>,
+    /// extension gets `.exe`, on both path and name.
+    pub bin: Vec<Bin>,
+    pub requires: Option<Requires>,
     pub provenance: Vec<String>,
+}
+
+impl<'a> ArtifactInput<'a> {
+    pub fn new(path: &'a Path) -> ArtifactInput<'a> {
+        ArtifactInput {
+            path,
+            os: None,
+            arch: None,
+            libc: None,
+            variant: None,
+            url: None,
+            bin: Vec::new(),
+            requires: None,
+            provenance: Vec::new(),
+        }
+    }
 }
 
 /// The statement, ready to sign.
@@ -55,6 +107,14 @@ pub enum Error {
     Invalid(#[from] crate::model::InvalidDocument),
     #[error("{path}: not a packslip bundle: {why}")]
     NotAPackslip { path: String, why: String },
+    #[error(
+        "artifacts {a:?} and {b:?} both describe {platform}; give one a variant so consumers can tell them apart"
+    )]
+    Ambiguous {
+        a: String,
+        b: String,
+        platform: String,
+    },
 }
 
 /// The `(os, arch, libc, format)` a file name implies.
@@ -85,6 +145,7 @@ pub fn infer_platform(name: &str) -> Platform {
         || lower.contains("win64")
         || lower.ends_with(".exe")
         || lower.ends_with(".msi")
+        || lower.ends_with(".msix")
     {
         Some("windows")
     } else if lower.contains("freebsd") {
@@ -117,18 +178,28 @@ pub fn infer_platform(name: &str) -> Platform {
         None
     };
     let format = [
-        "tar.xz", "tar.gz", "tar.zst", "tar.bz2", "tgz", "zip", "deb", "rpm", "dmg", "pkg", "msi",
-        "exe", "AppImage",
+        "tar.xz", "tar.gz", "tar.zst", "tar.bz2", "tgz", "zip", "7z", "deb", "rpm", "dmg", "pkg",
+        "msix", "msi", "exe", "appimage",
     ]
     .into_iter()
-    .find(|ext| lower.ends_with(&format!(".{}", ext.to_ascii_lowercase())));
+    .find(|ext| lower.ends_with(&format!(".{ext}")));
     (os, arch, libc, format)
+}
+
+/// Add `.exe` to a Windows executable name that has no extension.
+fn windows_exe(value: &str) -> String {
+    let last = value.rsplit('/').next().unwrap_or(value);
+    if last.contains('.') {
+        value.to_string()
+    } else {
+        format!("{value}.exe")
+    }
 }
 
 /// Build and validate the release statement.
 pub fn create(request: &Request<'_>) -> Result<Created, Error> {
     let mut subject = Vec::new();
-    let mut artifacts = Vec::new();
+    let mut artifacts: Vec<Artifact> = Vec::new();
     for input in &request.artifacts {
         let name = input
             .path
@@ -136,46 +207,85 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
             .and_then(|n| n.to_str())
             .unwrap_or_default()
             .to_string();
-        let (sha256, size) = crate::digest_file(input.path).map_err(|source| Error::Io {
+        let digests = crate::digest_file_all(input.path).map_err(|source| Error::Io {
             path: input.path.display().to_string(),
             source,
         })?;
-        let (inferred_os, arch, inferred_libc, format) = infer_platform(&name);
+        let (inferred_os, arch, inferred_libc, inferred_format) = infer_platform(&name);
         let os = input.os.or(inferred_os);
         let libc = input.libc.map(str::to_string).or_else(|| match os {
             Some("linux") => Some(inferred_libc.unwrap_or("gnu").to_string()),
             _ => None,
         });
+        // A file with no archive or installer extension is the executable itself.
+        let format = inferred_format.map(str::to_string).or_else(|| {
+            let has_extension = name
+                .rsplit_once('.')
+                .is_some_and(|(_, ext)| !ext.is_empty());
+            (!has_extension && os.is_some()).then(|| "raw".to_string())
+        });
         let bin = input
             .bin
             .iter()
             .map(|b| {
-                let last = b.rsplit('/').next().unwrap_or(b);
-                if os == Some("windows") && !last.contains('.') {
-                    format!("{b}.exe")
+                if os == Some("windows") {
+                    Bin::named(windows_exe(&b.path), windows_exe(&b.name))
                 } else {
                     b.clone()
                 }
             })
             .collect();
-        subject.push(Subject {
-            name: name.clone(),
-            digest: Digest { sha256 },
+        let url = input.url.clone().or_else(|| {
+            request
+                .url_base
+                .map(|base| format!("{}/{name}", base.trim_end_matches('/')))
         });
-        let url = request
-            .url_base
-            .map(|base| format!("{}/{name}", base.trim_end_matches('/')));
-        artifacts.push(Artifact {
+        let artifact = Artifact {
             url,
-            name,
+            name: name.clone(),
             os: os.map(str::to_string),
             arch: input.arch.or(arch).map(str::to_string),
             libc,
-            size,
-            format: format.map(str::to_string),
+            variant: input.variant.clone(),
+            size: digests.size,
+            format,
             bin,
+            requires: input.requires.clone(),
             provenance: input.provenance.clone(),
+        };
+        if let (Some(_), Some(_), Some(_)) = (&artifact.os, &artifact.arch, &artifact.format)
+            && let Some(other) = artifacts.iter().find(|a| {
+                a.os == artifact.os
+                    && a.arch == artifact.arch
+                    && a.libc == artifact.libc
+                    && a.format == artifact.format
+                    && a.variant == artifact.variant
+            })
+        {
+            return Err(Error::Ambiguous {
+                a: other.name.clone(),
+                b: artifact.name.clone(),
+                platform: [
+                    artifact.os.as_deref(),
+                    artifact.arch.as_deref(),
+                    artifact.libc.as_deref(),
+                    artifact.format.as_deref(),
+                    artifact.variant.as_deref(),
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join("/"),
+            });
+        }
+        subject.push(Subject {
+            name,
+            digest: Digest {
+                sha256: digests.sha256,
+                sha512: request.sha512.then_some(digests.sha512),
+            },
         });
+        artifacts.push(artifact);
     }
     let published_at = request
         .published_at
@@ -189,9 +299,14 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
             project: request.project.into(),
             version: request.version.into(),
             published_at,
+            prerelease: request.prerelease,
+            channel: request.channel.map(str::to_string),
             source: request.source.clone(),
             artifacts,
             identity: request.identity.clone(),
+            attested_by: request.attested_by,
+            evidence: request.evidence.clone(),
+            notes_url: request.notes_url.map(str::to_string),
             sbom: request.sbom.map(str::to_string),
             supersedes: request.supersedes.map(str::to_string),
         },
@@ -209,6 +324,9 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
 pub struct ListedRelease<'a> {
     pub url: &'a str,
     pub bundle_path: &'a Path,
+    /// Withdrawn by the vendor, with the reason.
+    pub yanked: Option<String>,
+    pub security: bool,
 }
 
 /// What `create_release_list` needs.
@@ -250,7 +368,7 @@ pub fn create_release_list(request: &ListRequest<'_>) -> Result<CreatedList, Err
     let mut subject = Vec::new();
     let mut releases = Vec::new();
     for listed in &request.releases {
-        let (sha256, _) = crate::digest_file(listed.bundle_path).map_err(|source| Error::Io {
+        let digests = crate::digest_file_all(listed.bundle_path).map_err(|source| Error::Io {
             path: listed.bundle_path.display().to_string(),
             source,
         })?;
@@ -278,12 +396,23 @@ pub fn create_release_list(request: &ListRequest<'_>) -> Result<CreatedList, Err
         }
         subject.push(Subject {
             name: listed.url.to_string(),
-            digest: Digest { sha256 },
+            digest: Digest {
+                sha256: digests.sha256,
+                sha512: Some(digests.sha512),
+            },
         });
         releases.push(ReleaseRef {
             version: statement.predicate.version,
             published_at: statement.predicate.published_at,
             packslip: listed.url.to_string(),
+            prerelease: statement.predicate.prerelease,
+            channel: statement.predicate.channel,
+            status: listed
+                .yanked
+                .is_some()
+                .then_some(crate::model::ReleaseStatus::Yanked),
+            status_reason: listed.yanked.clone(),
+            security: listed.security,
         });
     }
     let statement = Envelope {
@@ -354,8 +483,20 @@ mod tests {
             (Some("windows"), None, None, Some("msi"))
         );
         assert_eq!(
-            infer_platform("tool-linux-x86-64.tar.gz"),
-            (Some("linux"), Some("x86_64"), Some("gnu"), Some("tar.gz"))
+            infer_platform("Tool-x64.msix"),
+            (Some("windows"), Some("x86_64"), None, Some("msix"))
+        );
+        assert_eq!(
+            infer_platform("LM-Studio-0.3.0-x64.AppImage"),
+            (Some("linux"), Some("x86_64"), Some("gnu"), Some("appimage"))
+        );
+        assert_eq!(
+            infer_platform("tool-linux-x86-64.tar.zst"),
+            (Some("linux"), Some("x86_64"), Some("gnu"), Some("tar.zst"))
+        );
+        assert_eq!(
+            infer_platform("tool-linux-x64.7z"),
+            (Some("linux"), Some("x86_64"), Some("gnu"), Some("7z"))
         );
     }
 
@@ -365,28 +506,25 @@ mod tests {
         let a = dir.path().join("tool-v1.0.0-linux-x64.tar.xz");
         let b = dir.path().join("tool-v1.0.0-darwin-arm64.tar.xz");
         let w = dir.path().join("tool-v1.0.0-windows-x64.zip");
+        let raw = dir.path().join("tool-linux-arm64");
         std::fs::write(&a, b"linux bytes").unwrap();
         std::fs::write(&b, b"darwin bytes").unwrap();
         std::fs::write(&w, b"windows bytes").unwrap();
+        std::fs::write(&raw, b"bare").unwrap();
         let key = SecretKey::from_seed([1u8; 32]);
         let input = |path, os, bin: &[&str], provenance: &[&str]| ArtifactInput {
-            path,
             os,
-            arch: None,
-            libc: None,
-            bin: bin.iter().map(|s| s.to_string()).collect(),
+            bin: bin.iter().map(|s| Bin::new(*s)).collect(),
             provenance: provenance.iter().map(|s| s.to_string()).collect(),
+            ..ArtifactInput::new(path)
         };
         let request = |artifacts, source, url_base, supersedes| Request {
-            project: "tool.example.com",
-            version: "1.0.0",
             published_at: Some("2026-09-01T00:00:00Z"),
             source,
             artifacts,
             url_base,
-            sbom: None,
             supersedes,
-            identity: key_identity(&key),
+            ..Request::new("tool.example.com", "1.0.0", key_identity(&key))
         };
         let created = create(&request(
             vec![
@@ -397,7 +535,12 @@ mod tests {
                     &["https://example.com/a.sigstore.json"],
                 ),
                 input(&b, None, &["tool"], &[]),
-                input(&w, None, &["tool"], &[]),
+                input(&w, None, &["bin/tool"], &[]),
+                ArtifactInput {
+                    bin: vec![Bin::named("tool-linux-arm64", "tool")],
+                    url: Some("https://cdn.example.com/tool-linux-arm64".into()),
+                    ..ArtifactInput::new(&raw)
+                },
             ],
             Some(Source {
                 repo: "https://github.com/example/tool".into(),
@@ -416,8 +559,26 @@ mod tests {
             )
         );
         assert_eq!(arts[0].size, 11);
-        assert_eq!(arts[0].bin, ["tool"]);
-        assert_eq!(arts[2].bin, ["tool.exe"], "windows gets .exe");
+        assert_eq!(arts[0].bin, [Bin::new("tool")]);
+        assert_eq!(
+            arts[2].bin,
+            [Bin::named("bin/tool.exe", "tool.exe")],
+            "windows gets .exe on path and name"
+        );
+        assert_eq!(arts[3].format.as_deref(), Some("raw"));
+        assert_eq!(
+            arts[3].url.as_deref(),
+            Some("https://cdn.example.com/tool-linux-arm64")
+        );
+        assert_eq!(arts[3].bin[0].name, "tool");
+        assert_eq!(
+            created.statement.subject[0]
+                .digest
+                .sha512
+                .as_ref()
+                .map(String::len),
+            Some(128)
+        );
         assert!(!created.statement.provenance_linked());
 
         let overridden = create(&request(
@@ -440,6 +601,36 @@ mod tests {
             Some("gnu")
         );
 
+        // Two artifacts for one platform need a variant.
+        let fips = dir.path().join("tool-fips-v1.0.0-linux-x64.tar.xz");
+        std::fs::write(&fips, b"fips bytes").unwrap();
+        let err = create(&request(
+            vec![input(&a, None, &[], &[]), input(&fips, None, &[], &[])],
+            None,
+            None,
+            None,
+        ))
+        .unwrap_err();
+        assert!(matches!(err, Error::Ambiguous { .. }), "{err}");
+        assert!(err.to_string().contains("linux/x86_64/gnu/tar.xz"), "{err}");
+        let ok = create(&request(
+            vec![
+                input(&a, None, &[], &[]),
+                ArtifactInput {
+                    variant: Some("fips".into()),
+                    ..ArtifactInput::new(&fips)
+                },
+            ],
+            None,
+            None,
+            None,
+        ))
+        .unwrap();
+        assert_eq!(
+            ok.statement.predicate.artifacts[1].variant.as_deref(),
+            Some("fips")
+        );
+
         // Sign with the key, unlogged, and verify with the key.
         let root = crate::sigstore::trusted_root(None).unwrap();
         let options = crate::verify::Options {
@@ -459,6 +650,7 @@ mod tests {
             crate::verify::verify(&bundle, &Trust::Key(&public), options, &[&a, &b]).unwrap();
         assert_eq!(verified.version, "1.0.0");
         assert_eq!(verified.scheme, Scheme::SigstoreKey);
+        assert_eq!(verified.attested_by, Attestor::Vendor);
         assert_eq!(
             verified.checked_artifacts,
             [
@@ -500,7 +692,32 @@ mod tests {
             "{err}"
         );
 
-        // A release list over that bundle.
+        // A repackager document says so and lists its evidence.
+        let repack = create(&Request {
+            attested_by: Attestor::Repackager,
+            evidence: vec![Evidence {
+                kind: "pkgbuild-checksums".into(),
+                detail: None,
+            }],
+            ..request(vec![input(&b, None, &[], &[])], None, None, None)
+        })
+        .unwrap();
+        assert!(
+            String::from_utf8_lossy(&repack.document).contains(r#""attested_by":"repackager""#)
+        );
+        let repack_bundle = crate::sigstore::sign(
+            Signer::Key {
+                key: key.clone(),
+                log: false,
+            },
+            &repack.document,
+        )
+        .unwrap();
+        let verified =
+            crate::verify::verify(&repack_bundle, &Trust::Key(&public), options, &[]).unwrap();
+        assert_eq!(verified.attested_by, Attestor::Repackager);
+
+        // A release list over the bundle: a yanked, security-flagged entry.
         let bundle_path = dir.path().join("packslip.sigstore.json");
         std::fs::write(&bundle_path, &bundle).unwrap();
         let list = create_release_list(&ListRequest {
@@ -511,12 +728,18 @@ mod tests {
             releases: vec![ListedRelease {
                 url: "https://dl.example.com/1.0.0/packslip.sigstore.json",
                 bundle_path: &bundle_path,
+                yanked: Some("bad build".into()),
+                security: true,
             }],
             identity: key_identity(&key),
         })
         .unwrap();
         assert_eq!(list.statement.predicate.expires_at, "2026-10-01T01:00:00Z");
-        assert_eq!(list.statement.predicate.releases[0].version, "1.0.0");
+        let entry = &list.statement.predicate.releases[0];
+        assert_eq!(entry.version, "1.0.0");
+        assert!(entry.is_yanked());
+        assert_eq!(entry.status_reason.as_deref(), Some("bad build"));
+        assert!(entry.security);
         assert_eq!(
             list.statement.subject[0].name,
             "https://dl.example.com/1.0.0/packslip.sigstore.json"
@@ -538,6 +761,30 @@ mod tests {
                 .list
                 .is_current("2026-09-15T00:00:00Z".parse().unwrap())
         );
+        // Two bundles carrying the same version are a duplicate release.
+        let err = create_release_list(&ListRequest {
+            project: "tool.example.com",
+            generated_at: None,
+            valid_for: std::time::Duration::from_secs(60),
+            sequence: 4,
+            releases: vec![
+                ListedRelease {
+                    url: "https://x/a.sigstore.json",
+                    bundle_path: &bundle_path,
+                    yanked: None,
+                    security: false,
+                },
+                ListedRelease {
+                    url: "https://x/b.sigstore.json",
+                    bundle_path: &bundle_path,
+                    yanked: None,
+                    security: false,
+                },
+            ],
+            identity: key_identity(&key),
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("appears more than once"), "{err}");
         let err = create_release_list(&ListRequest {
             project: "other.example.com",
             generated_at: None,
@@ -546,6 +793,8 @@ mod tests {
             releases: vec![ListedRelease {
                 url: "https://x/packslip.sigstore.json",
                 bundle_path: &bundle_path,
+                yanked: None,
+                security: false,
             }],
             identity: key_identity(&key),
         })

@@ -59,6 +59,16 @@ jobs:
           ./target/release/packslip show dist/packslip.sigstore.json
           ./target/release/packslip verify dist/packslip.sigstore.json \
             --artifact dist/tool-v0.0.0-linux-x64.tar.xz --json
+          # A tool in a monorepo: subpath name, its own file, same pin.
+          printf 'fips\n' > dist/tool-fips-v0.0.0-linux-x64.tar.xz
+          ./target/release/packslip create \
+            --project "github.com/${GITHUB_REPOSITORY}/tool" \
+            --version 0.0.0 \
+            --out dist \
+            --bin tool=bin/tool-x86_64 \
+            dist/tool-v0.0.0-linux-x64.tar.xz "dist/tool-fips-v0.0.0-linux-x64.tar.xz@fips"
+          test -f dist/packslip.tool.sigstore.json
+          ./target/release/packslip verify dist/packslip.tool.sigstore.json
           # A wrong repository must be refused.
           if ./target/release/packslip verify dist/packslip.sigstore.json \
                --identity-prefix "https://github.com/someone-else/repo/" \

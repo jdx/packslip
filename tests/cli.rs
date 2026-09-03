@@ -306,3 +306,240 @@ fn schemas_are_json() {
         "{out}"
     );
 }
+
+#[test]
+fn variants_urls_evidence_and_monorepo_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let (code, _, err) = packslip(d, &["keygen", "-o", "k.key"]);
+    assert_eq!(code, 0, "{err}");
+    std::fs::write(d.join("oxlint-linux-x64.tar.gz"), b"a").unwrap();
+    std::fs::write(d.join("oxlint-fips-linux-x64.tar.gz"), b"b").unwrap();
+    std::fs::write(d.join("oxlint-linux-arm64"), b"c").unwrap();
+
+    // Two builds for one platform need a variant.
+    let (code, _, err) = packslip(
+        d,
+        &[
+            "create",
+            "--project",
+            "github.com/oxc-project/oxc/oxlint",
+            "--version",
+            "1.0.0",
+            "--key",
+            "k.key",
+            "--no-log",
+            "--out",
+            "dist",
+            "oxlint-linux-x64.tar.gz",
+            "oxlint-fips-linux-x64.tar.gz",
+        ],
+    );
+    assert_ne!(code, 0);
+    assert!(err.contains("give one a variant"), "{err}");
+
+    let (code, out, err) = packslip(
+        d,
+        &[
+            "create",
+            "--project",
+            "github.com/oxc-project/oxc/oxlint",
+            "--version",
+            "1.0.0",
+            "--key",
+            "k.key",
+            "--no-log",
+            "--out",
+            "dist",
+            "--url-base",
+            "https://github.com/oxc-project/oxc/releases/download/oxlint_v1.0.0",
+            "--url",
+            "oxlint-linux-arm64=https://cdn.example.com/oxlint-linux-arm64",
+            "--bin",
+            "oxlint=bin/oxlint-x86_64",
+            "--prerelease",
+            "--channel",
+            "beta",
+            "--notes-url",
+            "https://github.com/oxc-project/oxc/releases/tag/oxlint_v1.0.0",
+            "--source-repo",
+            "https://github.com/oxc-project/oxc",
+            "--tag",
+            "oxlint_v1.0.0",
+            "--published-at",
+            "2026-09-01T00:00:00Z",
+            "oxlint-linux-x64.tar.gz",
+            "oxlint-fips-linux-x64.tar.gz@fips",
+            "oxlint-linux-arm64",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.contains("wrote dist/packslip.oxlint.sigstore.json (3 artifact(s)"),
+        "{out}"
+    );
+    let (code, out, err) = packslip(d, &["show", "dist/packslip.oxlint.sigstore.json"]);
+    assert_eq!(code, 0, "{err}");
+    let doc: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let arts = &doc["predicate"]["artifacts"];
+    assert_eq!(arts[1]["variant"], "fips");
+    assert_eq!(arts[2]["format"], "raw");
+    assert_eq!(arts[2]["url"], "https://cdn.example.com/oxlint-linux-arm64");
+    assert_eq!(arts[0]["bin"][0]["name"], "oxlint");
+    assert_eq!(arts[0]["bin"][0]["path"], "bin/oxlint-x86_64");
+    assert_eq!(doc["predicate"]["prerelease"], true);
+    assert_eq!(doc["predicate"]["channel"], "beta");
+    assert_eq!(doc["predicate"]["source"]["tag"], "oxlint_v1.0.0");
+    assert_eq!(
+        doc["subject"][0]["digest"]["sha512"].as_str().map(str::len),
+        Some(128)
+    );
+    assert!(doc["predicate"].get("attested_by").is_none());
+
+    let (code, out, err) = packslip(
+        d,
+        &[
+            "verify",
+            "dist/packslip.oxlint.sigstore.json",
+            "--pubkey",
+            "k.pub",
+            "--allow-unlogged",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.starts_with("ok: github.com/oxc-project/oxc/oxlint 1.0.0 (prerelease) published"),
+        "{out}"
+    );
+
+    // A repackager document carries its evidence and says so.
+    let (code, _, err) = packslip(
+        d,
+        &[
+            "create",
+            "--project",
+            "packages.example.com/tool",
+            "--version",
+            "2.0",
+            "--key",
+            "k.key",
+            "--no-log",
+            "--out",
+            "repack",
+            "--evidence",
+            "apt-release-gpg=3FEF9748",
+            "oxlint-linux-x64.tar.gz",
+        ],
+    );
+    assert_ne!(code, 0, "evidence needs --attested-by repackager");
+    assert!(err.contains("--attested-by repackager"), "{err}");
+    let (code, out, err) = packslip(
+        d,
+        &[
+            "create",
+            "--project",
+            "packages.example.com/tool",
+            "--version",
+            "2.0",
+            "--key",
+            "k.key",
+            "--no-log",
+            "--out",
+            "repack",
+            "--attested-by",
+            "repackager",
+            "--evidence",
+            "apt-release-gpg=3FEF9748",
+            "--evidence",
+            "pkgbuild-checksums",
+            "--no-sha512",
+            "oxlint-linux-x64.tar.gz",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("repackager-attested"), "{out}");
+    let (code, out, _) = packslip(d, &["show", "repack/packslip.sigstore.json"]);
+    assert_eq!(code, 0);
+    let doc: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(doc["predicate"]["attested_by"], "repackager");
+    assert_eq!(doc["predicate"]["evidence"][0]["kind"], "apt-release-gpg");
+    assert_eq!(doc["predicate"]["evidence"][0]["detail"], "3FEF9748");
+    assert!(doc["subject"][0]["digest"].get("sha512").is_none());
+    let (code, out, err) = packslip(
+        d,
+        &[
+            "verify",
+            "repack/packslip.sigstore.json",
+            "--pubkey",
+            "k.pub",
+            "--allow-unlogged",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("repackager-attested"), "{out}");
+
+    // A release list with a yanked, security-flagged entry.
+    let (code, out, err) = packslip(
+        d,
+        &[
+            "releases",
+            "--project",
+            "packages.example.com/tool",
+            "--sequence",
+            "1",
+            "--release",
+            "https://packages.example.com/2.0/packslip.sigstore.json=repack/packslip.sigstore.json",
+            "--yank",
+            "https://packages.example.com/2.0/packslip.sigstore.json=regression",
+            "--security",
+            "https://packages.example.com/2.0/packslip.sigstore.json",
+            "--key",
+            "k.key",
+            "--no-log",
+            "--out",
+            "list.sigstore.json",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("1 release(s), sequence 1"), "{out}");
+    let (code, out, err) = packslip(
+        d,
+        &[
+            "verify",
+            "list.sigstore.json",
+            "--pubkey",
+            "k.pub",
+            "--allow-unlogged",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("listing 1 release(s), 1 yanked"), "{out}");
+    let (code, out, _) = packslip(d, &["show", "list.sigstore.json"]);
+    assert_eq!(code, 0);
+    let list: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(list["predicate"]["releases"][0]["status"], "yanked");
+    assert_eq!(
+        list["predicate"]["releases"][0]["status_reason"],
+        "regression"
+    );
+    assert_eq!(list["predicate"]["releases"][0]["security"], true);
+    let (code, _, err) = packslip(
+        d,
+        &[
+            "releases",
+            "--project",
+            "packages.example.com/tool",
+            "--sequence",
+            "2",
+            "--release",
+            "https://x/a=repack/packslip.sigstore.json",
+            "--yank",
+            "https://x/other=why",
+            "--key",
+            "k.key",
+            "--no-log",
+        ],
+    );
+    assert_ne!(code, 0);
+    assert!(err.contains("not among the --release entries"), "{err}");
+}

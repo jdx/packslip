@@ -1,8 +1,11 @@
 name: release
 
+# Runs when release-plz pushes a version tag after its release PR is
+# merged (see RELEASING.md). `v1` is the action's major tag, moved by
+# this workflow; it must not start a release of its own.
 on:
   push:
-    tags: ["v*"]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
 
 permissions:
   contents: read
@@ -124,3 +127,20 @@ jobs:
             dist/*
           bin/packslip verify packslip/packslip.sigstore.json --artifact dist/packslip-v${version}-linux-x64.tar.xz
           gh release upload "$GITHUB_REF_NAME" packslip/packslip.sigstore.json --clobber
+      # `uses: jdx/packslip@v1` follows the latest release. A push made with
+      # the built-in token starts no workflow, so this cannot recurse.
+      - name: Move the v1 action tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          for attempt in 1 2 3; do
+            git tag -f v1 "$GITHUB_SHA"
+            if git push -f origin v1; then
+              break
+            fi
+            git fetch origin "refs/tags/v1:refs/tags/v1" -f || true
+            [ "$attempt" -lt 3 ] || exit 1
+          done

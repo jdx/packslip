@@ -6,7 +6,9 @@ use eyre::{Context as _, Result, bail};
 use packslip::cli::{BinInfo, Version};
 use packslip::create::{ArtifactInput, ListRequest, ListedRelease, Request};
 use packslip::minisign::{PublicKey, SecretKey, key_id_hex};
-use packslip::model::{RELEASES_PREDICATE_TYPE, ReleaseListStatement, Source, Statement};
+use packslip::model::{
+    Attestor, Bin, Evidence, RELEASES_PREDICATE_TYPE, ReleaseListStatement, Source, Statement,
+};
 use packslip::sigstore::{self, Policy, Signer, Trust};
 use packslip::verify::Options;
 use usage_rs::RunWith;
@@ -16,8 +18,16 @@ const BIN: BinInfo = BinInfo {
     version: env!("CARGO_PKG_VERSION"),
 };
 
-/// The file a release ships.
-const BUNDLE_NAME: &str = "packslip.sigstore.json";
+/// The file a release ships: `packslip.sigstore.json`, or, for a tool in
+/// a monorepo named `github.com/owner/repo/sub/path`,
+/// `packslip.sub-path.sigstore.json`, so several tools can share one
+/// release. Consumers match on the statement's `project`, not the name.
+pub fn bundle_name(project: &str) -> String {
+    match packslip::model::repository_subpath(project) {
+        Some(sub) => format!("packslip.{}.sigstore.json", sub.replace('/', "-")),
+        None => "packslip.sigstore.json".to_string(),
+    }
+}
 
 /// A signed release manifest: what shipped, and how to verify it
 ///
@@ -184,6 +194,24 @@ impl std::str::FromStr for SignWith {
     }
 }
 
+/// `vendor` or `repackager`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AttestorArg(Attestor);
+
+impl std::str::FromStr for AttestorArg {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "vendor" => Ok(AttestorArg(Attestor::Vendor)),
+            "repackager" => Ok(AttestorArg(Attestor::Repackager)),
+            other => Err(format!(
+                "--attested-by must be vendor or repackager, got {other:?}"
+            )),
+        }
+    }
+}
+
 /// Resolve who signs from the shared signing flags.
 fn signer(key: &Option<PathBuf>, sign: Option<SignWith>, no_log: bool) -> Result<Signer> {
     let sign_with = sign.unwrap_or(if key.is_some() {
@@ -218,19 +246,21 @@ fn signer(key: &Option<PathBuf>, sign: Option<SignWith>, no_log: bool) -> Result
 /// Create and sign a packslip for a release
 ///
 /// Digests every artifact, infers os/arch/libc/format from file names
-/// (override with name:os/arch[/libc]), and writes packslip.sigstore.json
-/// into --out. Inside a CI job the document is signed keylessly with the
-/// job's identity. With --key it is signed with an Ed25519 key from
-/// `packslip keygen`. Either way the signature is logged to Rekor.
+/// (override with path:os/arch[/libc], add @variant to tell apart two
+/// builds for one platform), and writes packslip.sigstore.json into --out.
+/// Inside a CI job the document is signed keylessly with the job's
+/// identity. With --key it is signed with an Ed25519 key from `packslip
+/// keygen`. Either way the signature is logged to Rekor.
 #[derive(Debug, usage_rs::Args)]
 struct Create {
-    /// The project's name: a host path such as github.com/owner/repo
+    /// The project's name: a host path such as github.com/owner/repo, or
+    /// github.com/owner/repo/tool for one tool of a monorepo
     #[usage(long)]
     project: String,
     /// The release version
     #[usage(long)]
     version: String,
-    /// Artifact files, optionally as path:os/arch[/libc]
+    /// Artifact files, optionally as path[:os/arch[/libc]][@variant]
     #[usage(required = true)]
     artifacts: Vec<String>,
     /// Sign with this secret key instead of a CI identity
@@ -249,6 +279,9 @@ struct Create {
     /// Download URL prefix for the artifacts
     #[usage(long)]
     url_base: Option<String>,
+    /// Download URL for one artifact, as FILENAME=URL (repeatable)
+    #[usage(long)]
+    url: Vec<String>,
     /// Source repository URL
     #[usage(long)]
     source_repo: Option<String>,
@@ -261,18 +294,58 @@ struct Create {
     /// RFC 3339 publish time; defaults to now
     #[usage(long)]
     published_at: Option<String>,
+    /// Mark the release as not for general use
+    #[usage(long)]
+    prerelease: bool,
+    /// The release channel: stable, beta, nightly
+    #[usage(long)]
+    channel: Option<String>,
+    /// URL of the release notes
+    #[usage(long)]
+    notes_url: Option<String>,
     /// SBOM URL
     #[usage(long)]
     sbom: Option<String>,
     /// The version this release replaces
     #[usage(long)]
     supersedes: Option<String>,
-    /// Executable inside every archive, relative to its root (repeatable)
+    /// Executable inside every archive, as PATH or NAME=PATH (repeatable)
     #[usage(long)]
     bin: Vec<String>,
     /// Provenance URL for every artifact (repeatable, positional order)
     #[usage(long)]
     provenance: Vec<String>,
+    /// Who makes the claim: vendor (default) or repackager
+    #[usage(long)]
+    attested_by: Option<AttestorArg>,
+    /// What a repackager checked, as KIND or KIND=DETAIL (repeatable)
+    #[usage(long)]
+    evidence: Vec<String>,
+    /// Record only sha256, not sha512 as well
+    #[usage(long)]
+    no_sha512: bool,
+}
+
+/// `PATH` or `NAME=PATH`.
+fn parse_bin(spec: &str) -> Bin {
+    match spec.split_once('=') {
+        Some((name, path)) if !name.is_empty() && !path.is_empty() => Bin::named(path, name),
+        _ => Bin::new(spec),
+    }
+}
+
+/// `KIND` or `KIND=DETAIL`.
+fn parse_evidence(spec: &str) -> Evidence {
+    match spec.split_once('=') {
+        Some((kind, detail)) => Evidence {
+            kind: kind.to_string(),
+            detail: Some(detail.to_string()),
+        },
+        None => Evidence {
+            kind: spec.to_string(),
+            detail: None,
+        },
+    }
 }
 
 impl RunWith<BinInfo> for Create {
@@ -282,65 +355,114 @@ impl RunWith<BinInfo> for Create {
         if self.source_repo.is_none() && (self.commit.is_some() || self.tag.is_some()) {
             bail!("--commit and --tag require --source-repo");
         }
+        let attested_by = self.attested_by.map(|a| a.0).unwrap_or_default();
+        if attested_by == Attestor::Vendor && !self.evidence.is_empty() {
+            bail!("--evidence describes what a repackager checked; pass --attested-by repackager");
+        }
         let signer = signer(&self.key, self.sign, self.no_log)?;
+        let mut urls = std::collections::BTreeMap::new();
+        for spec in &self.url {
+            let Some((name, url)) = spec.split_once('=') else {
+                bail!("--url wants FILENAME=URL, got {spec:?}");
+            };
+            urls.insert(name.to_string(), url.to_string());
+        }
+        let bins: Vec<Bin> = self.bin.iter().map(|s| parse_bin(s)).collect();
         let parsed: Vec<ArtifactSpec> = self.artifacts.iter().map(|s| parse_spec(s)).collect();
         let artifacts: Vec<ArtifactInput<'_>> = parsed
             .iter()
             .enumerate()
-            .map(|(i, spec)| ArtifactInput {
-                path: &spec.path,
-                os: spec.os.as_deref(),
-                arch: spec.arch.as_deref(),
-                libc: spec.libc.as_deref(),
-                bin: self.bin.clone(),
-                provenance: self.provenance.get(i).cloned().into_iter().collect(),
+            .map(|(i, spec)| {
+                let file_name = spec
+                    .path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or_default();
+                ArtifactInput {
+                    path: &spec.path,
+                    os: spec.os.as_deref(),
+                    arch: spec.arch.as_deref(),
+                    libc: spec.libc.as_deref(),
+                    variant: spec.variant.clone(),
+                    url: urls.get(file_name).cloned(),
+                    bin: bins.clone(),
+                    requires: None,
+                    provenance: self.provenance.get(i).cloned().into_iter().collect(),
+                }
             })
             .collect();
+        for name in urls.keys() {
+            if !parsed
+                .iter()
+                .any(|s| s.path.file_name().and_then(|n| n.to_str()) == Some(name.as_str()))
+            {
+                bail!("--url names {name:?}, which is not among the artifacts");
+            }
+        }
         let source = self.source_repo.as_ref().map(|repo| Source {
             repo: repo.clone(),
             commit: self.commit.clone(),
             tag: self.tag.clone(),
         });
         let created = packslip::create::create(&Request {
-            project: &self.project,
-            version: &self.version,
             published_at: self.published_at.as_deref(),
+            prerelease: self.prerelease,
+            channel: self.channel.as_deref(),
             source,
             artifacts,
             url_base: self.url_base.as_deref(),
+            notes_url: self.notes_url.as_deref(),
             sbom: self.sbom.as_deref(),
             supersedes: self.supersedes.as_deref(),
-            identity: signer.identity(),
+            attested_by,
+            evidence: self.evidence.iter().map(|s| parse_evidence(s)).collect(),
+            sha512: !self.no_sha512,
+            ..Request::new(&self.project, &self.version, signer.identity())
         })?;
         let identity = created.statement.predicate.identity.clone();
         let bundle = sigstore::sign(signer, &created.document)?;
         std::fs::create_dir_all(&self.out)
             .wrap_err_with(|| format!("creating {}", self.out.display()))?;
-        let path = self.out.join(BUNDLE_NAME);
+        let path = self.out.join(bundle_name(&self.project));
         std::fs::write(&path, &bundle)?;
         println!(
-            "wrote {} ({} artifact(s), signed by {}{})",
+            "wrote {} ({} artifact(s), signed by {}{}{})",
             path.display(),
             created.statement.predicate.artifacts.len(),
             identity.key_id,
+            if attested_by == Attestor::Repackager {
+                ", repackager-attested"
+            } else {
+                ""
+            },
             if self.no_log { ", unlogged" } else { "" }
         );
         Ok(())
     }
 }
 
-/// An artifact argument: a path, optionally with `:os/arch[/libc]`.
+/// An artifact argument: a path, optionally with `:os/arch[/libc]` and
+/// `@variant`.
 struct ArtifactSpec {
     path: PathBuf,
     os: Option<String>,
     arch: Option<String>,
     libc: Option<String>,
+    variant: Option<String>,
 }
 
-/// Recognize only a well-formed `os/arch[/libc]` suffix. In particular,
-/// colons inside timestamped directory names remain part of the path.
+/// Recognize only a well-formed `os/arch[/libc]` suffix and a trailing
+/// `@variant`. In particular, colons inside timestamped directory names
+/// remain part of the path, and so does an `@` inside a file name that
+/// is not followed by a plain word.
 fn parse_spec(spec: &str) -> ArtifactSpec {
-    match spec.rsplit_once(':') {
+    let (rest, variant) = match spec.rsplit_once('@') {
+        Some((rest, variant)) if valid_word(variant) && !rest.is_empty() => {
+            (rest, Some(variant.to_string()))
+        }
+        _ => (spec, None),
+    };
+    match rest.rsplit_once(':') {
         Some((path, platform)) if valid_platform(platform) => {
             let mut parts = platform.split('/');
             ArtifactSpec {
@@ -348,15 +470,26 @@ fn parse_spec(spec: &str) -> ArtifactSpec {
                 os: parts.next().map(str::to_string),
                 arch: parts.next().map(str::to_string),
                 libc: parts.next().map(str::to_string),
+                variant,
             }
         }
         _ => ArtifactSpec {
-            path: PathBuf::from(spec),
+            path: PathBuf::from(rest),
             os: None,
             arch: None,
             libc: None,
+            variant,
         },
     }
+}
+
+/// A variant is a word like `fips` or `install_only`, never something
+/// with a dot in it, so `scoped@pkg-1.0.tgz` stays a file name.
+fn valid_word(part: &str) -> bool {
+    part.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
+        && part
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
 }
 
 fn valid_platform(platform: &str) -> bool {
@@ -394,6 +527,12 @@ struct Releases {
     /// local copy to read (repeatable)
     #[usage(long, required = true)]
     release: Vec<String>,
+    /// Mark a listed release withdrawn, as URL=REASON (repeatable)
+    #[usage(long)]
+    yank: Vec<String>,
+    /// Mark a listed release as a security fix, by URL (repeatable)
+    #[usage(long)]
+    security: Vec<String>,
     /// Sign with this secret key instead of a CI identity
     #[usage(short = 'k', long, value_hint = usage_rs::ValueHint::FilePath)]
     key: Option<PathBuf>,
@@ -420,11 +559,25 @@ impl RunWith<BinInfo> for Releases {
             };
             pairs.push((url.to_string(), PathBuf::from(path)));
         }
+        let mut yanked = std::collections::BTreeMap::new();
+        for spec in &self.yank {
+            let Some((url, reason)) = spec.split_once('=') else {
+                bail!("--yank wants URL=REASON, got {spec:?}");
+            };
+            yanked.insert(url.to_string(), reason.to_string());
+        }
+        for url in yanked.keys().chain(self.security.iter()) {
+            if !pairs.iter().any(|(u, _)| u == url) {
+                bail!("{url} is not among the --release entries");
+            }
+        }
         let releases = pairs
             .iter()
             .map(|(url, path)| ListedRelease {
                 url,
                 bundle_path: path,
+                yanked: yanked.get(url).cloned(),
+                security: self.security.contains(url),
             })
             .collect();
         let created = packslip::create::create_release_list(&ListRequest {
@@ -593,14 +746,20 @@ impl RunWith<BinInfo> for Verify {
                     if self.json {
                         println!("{}", serde_json::to_string_pretty(&verified.list)?);
                     } else {
+                        let yanked = list.releases.iter().filter(|r| r.is_yanked()).count();
                         println!(
-                            "ok: release list for {} sequence {} expires {} signed by {} ({}) listing {} release(s)",
+                            "ok: release list for {} sequence {} expires {} signed by {} ({}) listing {} release(s){}",
                             list.project,
                             list.sequence,
                             list.expires_at,
                             verified.key_id,
                             verified.scheme,
-                            list.releases.len()
+                            list.releases.len(),
+                            if yanked > 0 {
+                                format!(", {yanked} yanked")
+                            } else {
+                                String::new()
+                            }
                         );
                     }
                     Ok(())
@@ -617,12 +776,22 @@ impl RunWith<BinInfo> for Verify {
                     println!("{}", serde_json::to_string_pretty(&verified)?);
                 } else {
                     println!(
-                        "ok: {} {} published {} signed by {} ({}){} ({} of {} artifact(s) checked{})",
+                        "ok: {} {}{} published {} signed by {} ({}){}{} ({} of {} artifact(s) checked{})",
                         verified.project,
                         verified.version,
+                        if verified.prerelease {
+                            " (prerelease)"
+                        } else {
+                            ""
+                        },
                         verified.published_at,
                         verified.key_id,
                         verified.scheme,
+                        if verified.attested_by == Attestor::Repackager {
+                            " repackager-attested"
+                        } else {
+                            ""
+                        },
                         match &verified.logged_at {
                             Some(at) => format!(" logged {at}"),
                             None => " unlogged".to_string(),
@@ -662,18 +831,55 @@ mod tests {
     use super::*;
 
     #[test]
-    fn artifact_platform_suffix_does_not_consume_timestamped_paths() {
+    fn artifact_specs() {
         let spec = parse_spec("build/2026-09-01T12:00:00Z/tool.tar.gz");
         assert_eq!(
             spec.path,
             PathBuf::from("build/2026-09-01T12:00:00Z/tool.tar.gz")
         );
         assert!(spec.os.is_none());
+        assert!(spec.variant.is_none());
         let spec = parse_spec("weird.bin:freebsd/riscv64");
         assert_eq!(spec.os.as_deref(), Some("freebsd"));
         assert_eq!(spec.arch.as_deref(), Some("riscv64"));
-        let spec = parse_spec("tool.tar.gz:linux/x86_64/musl");
+        let spec = parse_spec("tool.tar.gz:linux/x86_64/musl@fips");
         assert_eq!(spec.libc.as_deref(), Some("musl"));
+        assert_eq!(spec.variant.as_deref(), Some("fips"));
+        let spec = parse_spec("tool-fips.tar.gz@fips");
+        assert_eq!(spec.path, PathBuf::from("tool-fips.tar.gz"));
+        assert_eq!(spec.variant.as_deref(), Some("fips"));
+        let spec = parse_spec("scoped@pkg-1.0.tgz");
+        assert_eq!(spec.path, PathBuf::from("scoped@pkg-1.0.tgz"));
+        assert!(spec.variant.is_none(), "a variant is a plain word");
+    }
+
+    #[test]
+    fn bins_and_evidence_parse() {
+        assert_eq!(parse_bin("bin/tool"), Bin::new("bin/tool"));
+        assert_eq!(
+            parse_bin("oxlint=bin/oxlint-x86_64"),
+            Bin::named("bin/oxlint-x86_64", "oxlint")
+        );
+        assert_eq!(parse_evidence("pkgbuild-checksums").detail, None);
+        assert_eq!(
+            parse_evidence("apt-release-gpg=3FEF9748").detail.as_deref(),
+            Some("3FEF9748")
+        );
+    }
+
+    #[test]
+    fn bundle_names() {
+        assert_eq!(bundle_name("github.com/jdx/mise"), "packslip.sigstore.json");
+        assert_eq!(bundle_name("mise.jdx.dev"), "packslip.sigstore.json");
+        assert_eq!(bundle_name("example.com/tool"), "packslip.sigstore.json");
+        assert_eq!(
+            bundle_name("github.com/oxc-project/oxc/oxlint"),
+            "packslip.oxlint.sigstore.json"
+        );
+        assert_eq!(
+            bundle_name("github.com/biomejs/biome/crates/cli"),
+            "packslip.crates-cli.sigstore.json"
+        );
     }
 
     #[test]

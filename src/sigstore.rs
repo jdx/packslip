@@ -291,16 +291,23 @@ impl Policy {
     /// `github.com/owner/repo` must be signed by a workflow of that
     /// repository through GitHub's issuer, and likewise for gitlab.com.
     pub fn for_project(project: &str) -> Option<Policy> {
+        // A GitHub project may name a tool inside a monorepo
+        // (`github.com/owner/repo/tool`); the workflow that signs it
+        // belongs to the repository, so only owner and repo form the pin.
+        if let Some((host, owner, repo)) = crate::model::repository(project) {
+            return Some(Policy {
+                issuer: Some(GITHUB_ISSUER.into()),
+                identity: None,
+                identity_prefix: Some(format!("https://{host}/{owner}/{repo}/")),
+            });
+        }
         let (host, path) = project.split_once('/')?;
         if path.is_empty() || path.split('/').count() < 2 {
             return None;
         }
         match host {
-            "github.com" => Some(Policy {
-                issuer: Some(GITHUB_ISSUER.into()),
-                identity: None,
-                identity_prefix: Some(format!("https://github.com/{path}/")),
-            }),
+            // GitLab subgroups make project paths arbitrary depth, so the
+            // whole path is the pin and subpaths are not distinguished.
             "gitlab.com" => Some(Policy {
                 issuer: Some(GITLAB_ISSUER.into()),
                 identity: None,
@@ -547,6 +554,11 @@ mod tests {
         assert_eq!(
             p.identity_prefix.as_deref(),
             Some("https://github.com/jdx/mise/")
+        );
+        let sub = Policy::for_project("github.com/oxc-project/oxc/oxlint").unwrap();
+        assert_eq!(
+            sub.identity_prefix.as_deref(),
+            Some("https://github.com/oxc-project/oxc/")
         );
         assert!(Policy::for_project("mise.jdx.dev").is_none());
         assert!(Policy::for_project("github.com/jdx").is_none());

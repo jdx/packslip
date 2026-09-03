@@ -27,6 +27,11 @@ pub struct Verified {
     pub scheme: Scheme,
     /// Who signed: the certificate identity, or the key id.
     pub key_id: String,
+    /// Whether the vendor or a repackager made the claim.
+    pub attested_by: crate::model::Attestor,
+    pub prerelease: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel: Option<String>,
     /// The OIDC issuer, for `sigstore-oidc`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub issuer: Option<String>,
@@ -187,6 +192,9 @@ pub fn verify(
         published_at: statement.predicate.published_at.clone(),
         scheme,
         key_id,
+        attested_by: statement.predicate.attested_by,
+        prerelease: statement.predicate.prerelease,
+        channel: statement.predicate.channel.clone(),
         issuer,
         logged_at: logged_at(verified.integrated_time),
         provenance_linked: statement.provenance_linked(),

@@ -5,6 +5,13 @@
         "sha256": {
           "description": "Lowercase hex.",
           "type": "string"
+        },
+        "sha512": {
+          "description": "Lowercase hex, for consumers that want it (electron-updater,\nBalrog, Scoop).",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -79,13 +86,43 @@
     },
     "ReleaseRef": {
       "properties": {
+        "channel": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "packslip": {
           "description": "URL of the release's `packslip.sigstore.json`. The statement's\nsubject of the same name carries that file's digest.",
           "type": "string"
         },
+        "prerelease": {
+          "type": "boolean"
+        },
         "published_at": {
           "description": "RFC 3339 UTC, copied from the release's packslip.",
           "type": "string"
+        },
+        "security": {
+          "description": "The release fixes a vulnerability; a consumer's minimum release age\nmay shorten for it.",
+          "type": "boolean"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReleaseStatus"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Set when the vendor withdrew the release. Consumers never select a\nyanked release and warn when they hold one."
+        },
+        "status_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "version": {
           "type": "string"
@@ -97,6 +134,12 @@
         "packslip"
       ],
       "type": "object"
+    },
+    "ReleaseStatus": {
+      "enum": [
+        "yanked"
+      ],
+      "type": "string"
     },
     "Scheme": {
       "oneOf": [

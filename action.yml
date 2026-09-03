@@ -2,7 +2,7 @@ name: packslip
 description: >
   Publish a signed packslip for a release: attest the artifacts' build
   provenance, digest them, sign the release manifest keylessly with this
-  job's OIDC identity, and upload packslip.sigstore.json as a release asset.
+  job's OIDC identity, and upload the bundle as a release asset.
 author: Jeff Dickey <@jdx>
 branding:
   icon: package
@@ -13,7 +13,10 @@ inputs:
     description: Artifact files or globs, whitespace separated (dist/*.tar.xz dist/*.zip)
     required: true
   project:
-    description: The project's name; defaults to github.com/<owner>/<repo>
+    description: >
+      The project's name; defaults to github.com/<owner>/<repo>. A tool in
+      a monorepo names itself github.com/<owner>/<repo>/<tool> and runs this
+      step once per tool.
     required: false
     default: ""
   version:
@@ -29,7 +32,27 @@ inputs:
     required: false
     default: ""
   bin:
-    description: Executables inside every archive, whitespace separated (relative to the archive root)
+    description: >
+      Executables inside every archive, whitespace separated, each a path
+      relative to the archive root or NAME=PATH when the PATH name differs.
+    required: false
+    default: ""
+  variants:
+    description: >
+      Variants for artifacts that share a platform, as FILENAME=VARIANT,
+      whitespace separated (tool-fips-linux-x64.tar.gz=fips).
+    required: false
+    default: ""
+  prerelease:
+    description: Mark the release as not for general use; defaults to the GitHub release's flag
+    required: false
+    default: ""
+  channel:
+    description: The release channel (stable, beta, nightly)
+    required: false
+    default: ""
+  notes-url:
+    description: URL of the release notes; defaults to the release page
     required: false
     default: ""
   supersedes:
@@ -48,7 +71,7 @@ inputs:
     required: false
     default: "true"
   out:
-    description: Directory to write packslip.sigstore.json into
+    description: Directory to write the bundle into
     required: false
     default: packslip
   upload:
@@ -56,9 +79,11 @@ inputs:
     required: false
     default: "true"
   packslip-version:
-    description: The packslip release to run
+    description: >
+      The packslip release to run; defaults to the version this action was
+      released with (read from its Cargo.toml).
     required: false
-    default: "0.2.0"
+    default: ""
   token:
     description: Token for downloading packslip and uploading assets
     required: false
@@ -66,7 +91,7 @@ inputs:
 
 outputs:
   bundle:
-    description: Path of the written packslip.sigstore.json
+    description: Path of the written bundle
     value: ${{ steps.create.outputs.bundle }}
 
 runs:
@@ -79,6 +104,8 @@ runs:
         PACKSLIP_VERSION: ${{ inputs.packslip-version }}
       run: |
         set -euo pipefail
+        version="${PACKSLIP_VERSION:-$(sed -nE 's/^version *= *"([^"]+)".*/\1/p' "${GITHUB_ACTION_PATH}/Cargo.toml" | head -n1)}"
+        [ -n "$version" ] || { echo "could not read the packslip version from Cargo.toml" >&2; exit 1; }
         case "$(uname -s)" in
           Linux) os=linux ;;
           Darwin) os=darwin ;;
@@ -91,10 +118,10 @@ runs:
           *) echo "unsupported arch: $(uname -m)" >&2; exit 1 ;;
         esac
         if [ "$os" = windows ]; then ext=zip; else ext=tar.xz; fi
-        asset="packslip-v${PACKSLIP_VERSION}-${os}-${arch}.${ext}"
+        asset="packslip-v${version}-${os}-${arch}.${ext}"
         dir="${RUNNER_TEMP}/packslip-bin"
         mkdir -p "$dir"
-        gh release download "v${PACKSLIP_VERSION}" -R jdx/packslip -p "$asset" -D "$dir" --clobber
+        gh release download "v${version}" -R jdx/packslip -p "$asset" -D "$dir" --clobber
         # The archive was built by jdx/packslip's release workflow; check that before running it.
         gh attestation verify "$dir/$asset" -R jdx/packslip
         if [ "$ext" = zip ]; then
@@ -143,10 +170,15 @@ runs:
         IN_TAG: ${{ inputs.tag }}
         IN_URL_BASE: ${{ inputs.url-base }}
         IN_BIN: ${{ inputs.bin }}
+        IN_VARIANTS: ${{ inputs.variants }}
+        IN_PRERELEASE: ${{ inputs.prerelease }}
+        IN_CHANNEL: ${{ inputs.channel }}
+        IN_NOTES_URL: ${{ inputs.notes-url }}
         IN_SUPERSEDES: ${{ inputs.supersedes }}
         IN_SBOM: ${{ inputs.sbom }}
         IN_ATTEST: ${{ inputs.attest }}
         IN_OUT: ${{ inputs.out }}
+        EVENT_PRERELEASE: ${{ github.event.release.prerelease }}
         REPO: ${{ github.repository }}
         REF_NAME: ${{ github.ref_name }}
         REF_TYPE: ${{ github.ref_type }}
@@ -163,16 +195,21 @@ runs:
         version="${IN_VERSION:-${tag#v}}"
         project="${IN_PROJECT:-github.com/${REPO}}"
         url_base="${IN_URL_BASE:-${SERVER}/${REPO}/releases/download/${tag}}"
+        notes_url="${IN_NOTES_URL:-${SERVER}/${REPO}/releases/tag/${tag}}"
+        prerelease="${IN_PRERELEASE:-${EVENT_PRERELEASE:-false}}"
         args=(
           create
           --project "$project"
           --version "$version"
           --out "$IN_OUT"
           --url-base "$url_base"
+          --notes-url "$notes_url"
           --source-repo "${SERVER}/${REPO}"
           --tag "$tag"
           --commit "$SHA"
         )
+        [ "$prerelease" = true ] && args+=(--prerelease)
+        [ -n "$IN_CHANNEL" ] && args+=(--channel "$IN_CHANNEL")
         for b in $IN_BIN; do args+=(--bin "$b"); done
         [ -n "$IN_SUPERSEDES" ] && args+=(--supersedes "$IN_SUPERSEDES")
         [ -n "$IN_SBOM" ] && args+=(--sbom "$IN_SBOM")
@@ -185,8 +222,32 @@ runs:
             args+=(--provenance "${API}/repos/${REPO}/attestations/sha256:${digest}")
           done
         fi
-        packslip "${args[@]}" "${files[@]}"
-        echo "bundle=${IN_OUT}/packslip.sigstore.json" >> "$GITHUB_OUTPUT"
+        # Artifacts sharing a platform carry the variant given for them.
+        declare -A variants=()
+        for spec in $IN_VARIANTS; do
+          variants["${spec%%=*}"]="${spec#*=}"
+        done
+        specs=()
+        for f in "${files[@]}"; do
+          name="${f##*/}"
+          if [ -n "${variants[$name]:-}" ]; then
+            specs+=("$f@${variants[$name]}")
+          else
+            specs+=("$f")
+          fi
+        done
+        packslip "${args[@]}" "${specs[@]}"
+        # The file name follows the project: packslip.sigstore.json, or
+        # packslip.<subpath>.sigstore.json for a tool in a monorepo.
+        repo_path="${project#github.com/}"
+        sub="${repo_path#*/*/}"
+        if [ "$sub" = "$repo_path" ] || [ -z "$sub" ] || [ "${project%%/*}" != github.com ]; then
+          bundle="${IN_OUT}/packslip.sigstore.json"
+        else
+          bundle="${IN_OUT}/packslip.${sub//\//-}.sigstore.json"
+        fi
+        [ -f "$bundle" ] || { echo "expected $bundle to exist" >&2; ls -la "$IN_OUT" >&2; exit 1; }
+        echo "bundle=$bundle" >> "$GITHUB_OUTPUT"
         echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
     - name: Verify what was written

@@ -21,17 +21,49 @@ pub mod sigstore;
 pub mod verify;
 
 pub use model::{
-    Artifact, Identity, Predicate, ReleaseList, ReleaseListStatement, ReleaseRef, Scheme, Source,
-    Statement, Subject,
+    Artifact, Attestor, Bin, Evidence, Identity, Predicate, ReleaseList, ReleaseListStatement,
+    ReleaseRef, ReleaseStatus, Requires, Scheme, Source, Statement, Subject,
 };
 pub use sigstore::{Policy, Signer, Trust};
 pub use verify::{Options, Verified, VerifiedList, verify, verify_release_list};
 
 /// The sha256 of a file, lowercase hex, and its size.
 pub fn digest_file(path: &std::path::Path) -> std::io::Result<(String, u64)> {
+    let all = digest_file_all(path)?;
+    Ok((all.sha256, all.size))
+}
+
+/// Every digest of a file, in one pass.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Digests {
+    /// Lowercase hex.
+    pub sha256: String,
+    /// Lowercase hex.
+    pub sha512: String,
+    pub size: u64,
+}
+
+/// The sha256 and sha512 of a file, lowercase hex, and its size.
+pub fn digest_file_all(path: &std::path::Path) -> std::io::Result<Digests> {
     use sha2::Digest as _;
+    use std::io::Read as _;
     let mut file = std::fs::File::open(path)?;
-    let mut hasher = sha2::Sha256::new();
-    let size = std::io::copy(&mut file, &mut hasher)?;
-    Ok((format!("{:x}", hasher.finalize()), size))
+    let mut sha256 = sha2::Sha256::new();
+    let mut sha512 = sha2::Sha512::new();
+    let mut size = 0u64;
+    let mut buf = vec![0u8; 1 << 16];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        sha256.update(&buf[..n]);
+        sha512.update(&buf[..n]);
+        size += n as u64;
+    }
+    Ok(Digests {
+        sha256: format!("{:x}", sha256.finalize()),
+        sha512: format!("{:x}", sha512.finalize()),
+        size,
+    })
 }

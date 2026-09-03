@@ -33,10 +33,14 @@ pub struct Subject {
     pub digest: Digest,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Digest {
     /// Lowercase hex.
     pub sha256: String,
+    /// Lowercase hex, for consumers that want it (electron-updater,
+    /// Balrog, Scoop).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha512: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -44,20 +48,74 @@ pub struct Predicate {
     /// The project's name: a host path such as `github.com/jdx/mise` or
     /// `mise.jdx.dev`, the way Go names modules. The host is where a
     /// consumer discovers releases and, for forge hosts, what identity is
-    /// expected to have signed them.
+    /// expected to have signed them. A tool in a monorepo adds a subpath:
+    /// `github.com/oxc-project/oxc/oxlint`.
     pub project: String,
     pub version: String,
     /// RFC 3339 UTC.
     pub published_at: String,
+    /// A release not meant for general use.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub prerelease: bool,
+    /// `stable`, `beta`, `nightly`, or whatever the vendor calls it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<Source>,
     pub artifacts: Vec<Artifact>,
     pub identity: Identity,
+    /// Who is making the claim: the vendor itself, or a repackager that
+    /// checked the vendor's evidence and signed a document about it.
+    #[serde(default, skip_serializing_if = "Attestor::is_vendor")]
+    pub attested_by: Attestor,
+    /// What a repackager checked before signing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence: Vec<Evidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sbom: Option<String>,
     /// The version this release replaces, for ordering.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supersedes: Option<String>,
+}
+
+/// Who signed the claim.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum Attestor {
+    /// The project's own publisher.
+    #[default]
+    Vendor,
+    /// A repository or mirror describing a vendor's artifacts on the
+    /// vendor's behalf, having checked whatever evidence the vendor gave.
+    Repackager,
+}
+
+impl Attestor {
+    pub fn is_vendor(&self) -> bool {
+        *self == Attestor::Vendor
+    }
+}
+
+impl std::fmt::Display for Attestor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Attestor::Vendor => "vendor",
+            Attestor::Repackager => "repackager",
+        })
+    }
+}
+
+/// One thing a repackager checked. Documented kinds:
+/// `pkgbuild-checksums`, `checksum-file-over-tls`, `apt-release-gpg`,
+/// `vendor-signature`, `github-attestation`, `none`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Evidence {
+    pub kind: String,
+    /// A key id, URL, or note that lets a reader check the claim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -78,6 +136,10 @@ pub struct Artifact {
     pub arch: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub libc: Option<String>,
+    /// Tells apart artifacts that share os, arch, libc, and format:
+    /// `fips`, `baseline`, `debug`, `installer`, `source`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant: Option<String>,
     pub size: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
@@ -85,12 +147,88 @@ pub struct Artifact {
     pub format: Option<String>,
     /// Executables inside the artifact, as paths relative to the archive
     /// root, or the artifact's own name when it is a bare executable. A
-    /// consumer puts these on PATH.
+    /// consumer puts these on PATH under `name`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub bin: Vec<String>,
+    pub bin: Vec<Bin>,
+    /// What the artifact needs from the host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requires: Option<Requires>,
     /// URLs of build provenance statements (SLSA) for this artifact.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub provenance: Vec<String>,
+}
+
+/// An executable inside an artifact. Serialises as the bare path when the
+/// PATH name is the file's own name, else as `{ "path", "name" }`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(from = "BinRepr", into = "BinRepr")]
+pub struct Bin {
+    /// Path inside the archive, relative to its root.
+    pub path: String,
+    /// The name to put on PATH.
+    pub name: String,
+}
+
+impl Bin {
+    pub fn new(path: impl Into<String>) -> Bin {
+        let path = path.into();
+        Bin {
+            name: file_name(&path).to_string(),
+            path,
+        }
+    }
+
+    pub fn named(path: impl Into<String>, name: impl Into<String>) -> Bin {
+        Bin {
+            path: path.into(),
+            name: name.into(),
+        }
+    }
+}
+
+fn file_name(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+enum BinRepr {
+    Path(String),
+    Named { path: String, name: String },
+}
+
+impl From<BinRepr> for Bin {
+    fn from(repr: BinRepr) -> Bin {
+        match repr {
+            BinRepr::Path(path) => Bin::new(path),
+            BinRepr::Named { path, name } => Bin { path, name },
+        }
+    }
+}
+
+impl From<Bin> for BinRepr {
+    fn from(bin: Bin) -> BinRepr {
+        if bin.name == file_name(&bin.path) {
+            BinRepr::Path(bin.path)
+        } else {
+            BinRepr::Named {
+                path: bin.path,
+                name: bin.name,
+            }
+        }
+    }
+}
+
+/// Host requirements a consumer can check before installing.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Requires {
+    /// Minimum OS version, in the OS's own terms: `12` for macOS Monterey,
+    /// `10.0.17763` for Windows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub os_min: Option<String>,
+    /// Minimum glibc for a `gnu` Linux build, such as `2.31`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glibc_min: Option<String>,
 }
 
 /// How the document is signed, so a consumer can check what it pinned
@@ -146,7 +284,7 @@ pub struct ReleaseList {
     pub releases: Vec<ReleaseRef>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ReleaseRef {
     pub version: String,
     /// RFC 3339 UTC, copied from the release's packslip.
@@ -154,6 +292,32 @@ pub struct ReleaseRef {
     /// URL of the release's `packslip.sigstore.json`. The statement's
     /// subject of the same name carries that file's digest.
     pub packslip: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub prerelease: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<String>,
+    /// Set when the vendor withdrew the release. Consumers never select a
+    /// yanked release and warn when they hold one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<ReleaseStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_reason: Option<String>,
+    /// The release fixes a vulnerability; a consumer's minimum release age
+    /// may shorten for it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub security: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum ReleaseStatus {
+    Yanked,
+}
+
+impl ReleaseRef {
+    pub fn is_yanked(&self) -> bool {
+        self.status == Some(ReleaseStatus::Yanked)
+    }
 }
 
 /// Why a document is malformed.
@@ -184,6 +348,12 @@ pub enum InvalidDocument {
     OrphanArtifact(String),
     #[error("sha256 for {0:?} must be 64 lowercase hex characters")]
     Sha256(String),
+    #[error("sha512 for {0:?} must be 128 lowercase hex characters")]
+    Sha512(String),
+    #[error("artifact {0:?} has an executable with an empty path")]
+    BinPath(String),
+    #[error("artifact {0:?} has an executable name containing a slash: {1:?}")]
+    BinName(String, String),
     #[error("at least one artifact is required")]
     NoArtifacts,
     #[error("at least one release is required")]
@@ -203,13 +373,20 @@ fn check_timestamp(field: &'static str, value: &str) -> Result<jiff::Timestamp, 
     })
 }
 
-fn check_sha256(name: &str, hex: &str) -> Result<(), InvalidDocument> {
-    if hex.len() != 64
-        || !hex
-            .bytes()
+fn lowercase_hex(s: &str, len: usize) -> bool {
+    s.len() == len
+        && s.bytes()
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-    {
+}
+
+fn check_digest(name: &str, digest: &Digest) -> Result<(), InvalidDocument> {
+    if !lowercase_hex(&digest.sha256, 64) {
         return Err(InvalidDocument::Sha256(name.to_string()));
+    }
+    if let Some(sha512) = &digest.sha512
+        && !lowercase_hex(sha512, 128)
+    {
+        return Err(InvalidDocument::Sha512(name.to_string()));
     }
     Ok(())
 }
@@ -230,7 +407,7 @@ impl<P> Envelope<P> {
             if !subjects.insert(subject.name.as_str()) {
                 return Err(InvalidDocument::DuplicateSubject(subject.name.clone()));
             }
-            check_sha256(&subject.name, &subject.digest.sha256)?;
+            check_digest(&subject.name, &subject.digest)?;
         }
         Ok(())
     }
@@ -274,6 +451,17 @@ impl Statement {
             }
             if !self.subject.iter().any(|s| s.name == artifact.name) {
                 return Err(InvalidDocument::OrphanArtifact(artifact.name.clone()));
+            }
+            for bin in &artifact.bin {
+                if bin.path.is_empty() {
+                    return Err(InvalidDocument::BinPath(artifact.name.clone()));
+                }
+                if bin.name.contains('/') {
+                    return Err(InvalidDocument::BinName(
+                        artifact.name.clone(),
+                        bin.name.clone(),
+                    ));
+                }
             }
         }
         for subject in &self.subject {
@@ -358,6 +546,33 @@ pub fn project_host(project: &str) -> &str {
     project.split('/').next().unwrap_or_default()
 }
 
+/// The forge repository a project lives in, when the tooling knows the
+/// host's layout: `(host, owner, repo)` for `github.com/owner/repo[/sub]`.
+/// GitLab subgroups make its paths arbitrary depth, so it is not covered.
+pub fn repository(project: &str) -> Option<(&str, &str, &str)> {
+    let mut parts = project.split('/');
+    let host = parts.next()?;
+    if host != "github.com" {
+        return None;
+    }
+    let owner = parts.next()?;
+    let repo = parts.next()?;
+    if owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+    Some((host, owner, repo))
+}
+
+/// The path after the forge repository: `Some("oxlint")` for
+/// `github.com/oxc-project/oxc/oxlint`, `None` for a repository itself or
+/// a non-forge name.
+pub fn repository_subpath(project: &str) -> Option<&str> {
+    let (host, owner, repo) = repository(project)?;
+    let prefix_len = host.len() + owner.len() + repo.len() + 2;
+    let rest = project.get(prefix_len..)?;
+    rest.strip_prefix('/').filter(|s| !s.is_empty())
+}
+
 /// A project name is a lowercase DNS host, optionally followed by path
 /// segments: `github.com/jdx/mise`, `mise.jdx.dev`. No scheme, no empty
 /// or dot segments, no trailing slash, and the host has at least one dot.
@@ -400,6 +615,7 @@ mod tests {
                 name: "mise-v2026.9.1-linux-x64.tar.xz".into(),
                 digest: Digest {
                     sha256: "a".repeat(64),
+                    sha512: None,
                 },
             }],
             predicate_type: PREDICATE_TYPE.into(),
@@ -407,6 +623,8 @@ mod tests {
                 project: "github.com/jdx/mise".into(),
                 version: "2026.9.1".into(),
                 published_at: "2026-09-01T12:00:00Z".into(),
+                prerelease: false,
+                channel: None,
                 source: Some(Source {
                     repo: "https://github.com/jdx/mise".into(),
                     commit: Some("b".repeat(40)),
@@ -417,10 +635,12 @@ mod tests {
                     os: Some("linux".into()),
                     arch: Some("x86_64".into()),
                     libc: Some("gnu".into()),
+                    variant: None,
                     size: 12345678,
                     url: Some("https://github.com/jdx/mise/releases/download/v2026.9.1/mise-v2026.9.1-linux-x64.tar.xz".into()),
                     format: Some("tar.xz".into()),
-                    bin: vec!["mise/bin/mise".into()],
+                    bin: vec![Bin::new("mise/bin/mise")],
+                    requires: None,
                     provenance: vec![],
                 }],
                 identity: Identity {
@@ -428,6 +648,9 @@ mod tests {
                     key_id: "5A0A0B8B9C6D7E1F".into(),
                     issuer: None,
                 },
+                attested_by: Attestor::Vendor,
+                evidence: vec![],
+                notes_url: None,
                 sbom: None,
                 supersedes: Some("2026.9.0".into()),
             },
@@ -441,6 +664,7 @@ mod tests {
                 name: "https://dl.example/2026.9.1/packslip.sigstore.json".into(),
                 digest: Digest {
                     sha256: "c".repeat(64),
+                    sha512: None,
                 },
             }],
             predicate_type: RELEASES_PREDICATE_TYPE.into(),
@@ -458,6 +682,7 @@ mod tests {
                     version: "2026.9.1".into(),
                     published_at: "2026-09-01T12:00:00Z".into(),
                     packslip: "https://dl.example/2026.9.1/packslip.sigstore.json".into(),
+                    ..ReleaseRef::default()
                 }],
             },
         }
@@ -482,7 +707,41 @@ mod tests {
             json.starts_with(r#"{"_type":"https://in-toto.io/Statement/v1","subject""#),
             "{json}"
         );
+        assert!(!json.contains("prerelease"), "defaults are omitted: {json}");
+        assert!(!json.contains("attested_by"), "{json}");
+        assert!(json.contains(r#""bin":["mise/bin/mise"]"#), "{json}");
         assert_eq!(serde_json::from_str::<Statement>(&json).unwrap(), s);
+    }
+
+    #[test]
+    fn a_v0_2_document_round_trips_byte_for_byte() {
+        let old = r#"{"_type":"https://in-toto.io/Statement/v1","subject":[{"name":"t-linux-x64.tar.xz","digest":{"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}],"predicateType":"https://packslip.dev/release/v1","predicate":{"project":"github.com/o/r","version":"1","published_at":"2026-09-01T00:00:00Z","artifacts":[{"name":"t-linux-x64.tar.xz","os":"linux","arch":"x86_64","libc":"gnu","size":5,"format":"tar.xz","bin":["t"]}],"identity":{"scheme":"sigstore-oidc","key_id":"https://github.com/o/r/.github/workflows/r.yml@refs/tags/v1","issuer":"https://token.actions.githubusercontent.com"}}}"#;
+        let parsed: Statement = serde_json::from_str(old).unwrap();
+        parsed.validate().unwrap();
+        assert_eq!(parsed.predicate.attested_by, Attestor::Vendor);
+        assert!(!parsed.predicate.prerelease);
+        assert_eq!(parsed.predicate.artifacts[0].bin, [Bin::new("t")]);
+        assert_eq!(String::from_utf8(parsed.canonical_bytes()).unwrap(), old);
+    }
+
+    #[test]
+    fn bins_take_both_forms() {
+        let named: Vec<Bin> = serde_json::from_str(
+            r#"["oxlint-x86_64", {"path":"bin/oxlint-x86_64","name":"oxlint"}]"#,
+        )
+        .unwrap();
+        assert_eq!(named[0], Bin::named("oxlint-x86_64", "oxlint-x86_64"));
+        assert_eq!(named[1], Bin::named("bin/oxlint-x86_64", "oxlint"));
+        assert_eq!(
+            serde_json::to_string(&named).unwrap(),
+            r#"["oxlint-x86_64",{"path":"bin/oxlint-x86_64","name":"oxlint"}]"#
+        );
+        assert_eq!(Bin::new("a/b/tool").name, "tool");
+        let mut s = sample();
+        s.predicate.artifacts[0].bin = vec![Bin::named("x", "a/b")];
+        assert!(matches!(s.validate(), Err(InvalidDocument::BinName(_, _))));
+        s.predicate.artifacts[0].bin = vec![Bin::named("", "a")];
+        assert!(matches!(s.validate(), Err(InvalidDocument::BinPath(_))));
     }
 
     #[test]
@@ -509,10 +768,16 @@ mod tests {
         s.subject[0].digest.sha256 = "A".repeat(64);
         assert!(matches!(s.validate(), Err(InvalidDocument::Sha256(_))));
         let mut s = sample();
+        s.subject[0].digest.sha512 = Some("f".repeat(127));
+        assert!(matches!(s.validate(), Err(InvalidDocument::Sha512(_))));
+        s.subject[0].digest.sha512 = Some("f".repeat(128));
+        s.validate().unwrap();
+        let mut s = sample();
         s.subject.push(Subject {
             name: "other".into(),
             digest: Digest {
                 sha256: "c".repeat(64),
+                sha512: None,
             },
         });
         assert!(matches!(
@@ -543,6 +808,18 @@ mod tests {
         l.validate().unwrap();
         assert!(l.is_current("2026-09-15T00:00:00Z".parse().unwrap()));
         assert!(!l.is_current("2026-10-02T00:00:00Z".parse().unwrap()));
+        assert!(!l.predicate.releases[0].is_yanked());
+        let json = serde_json::to_string(&l).unwrap();
+        assert!(!json.contains("security"), "{json}");
+        let mut yanked = sample_list();
+        yanked.predicate.releases[0].status = Some(ReleaseStatus::Yanked);
+        yanked.predicate.releases[0].status_reason = Some("bad build".into());
+        assert!(yanked.predicate.releases[0].is_yanked());
+        assert!(
+            serde_json::to_string(&yanked)
+                .unwrap()
+                .contains(r#""status":"yanked""#)
+        );
         let mut bad = sample_list();
         bad.predicate.expires_at = bad.predicate.generated_at.clone();
         assert_eq!(bad.validate(), Err(InvalidDocument::Expiry));
@@ -575,6 +852,7 @@ mod tests {
             "jdx.dev/mise",
             "gitlab.com/group/sub/proj",
             "example.org/tool_1.2~x",
+            "github.com/oxc-project/oxc/oxlint",
         ] {
             assert!(valid_project(ok), "{ok}");
         }
@@ -599,11 +877,40 @@ mod tests {
     }
 
     #[test]
+    fn forge_repositories_and_subpaths() {
+        assert_eq!(
+            repository("github.com/jdx/mise"),
+            Some(("github.com", "jdx", "mise"))
+        );
+        assert_eq!(
+            repository("github.com/oxc-project/oxc/oxlint"),
+            Some(("github.com", "oxc-project", "oxc"))
+        );
+        assert_eq!(repository("github.com/jdx"), None);
+        assert_eq!(repository("gitlab.com/group/sub/proj"), None);
+        assert_eq!(repository("mise.jdx.dev"), None);
+        assert_eq!(repository_subpath("github.com/jdx/mise"), None);
+        assert_eq!(
+            repository_subpath("github.com/oxc-project/oxc/oxlint"),
+            Some("oxlint")
+        );
+        assert_eq!(
+            repository_subpath("github.com/biomejs/biome/crates/cli"),
+            Some("crates/cli")
+        );
+    }
+
+    #[test]
     fn schema_has_the_required_fields() {
         let schema = Statement::schema();
         let required = schema["required"].as_array().unwrap();
         for field in ["_type", "subject", "predicateType", "predicate"] {
             assert!(required.iter().any(|r| r == field), "{field}");
         }
+        let text = schema.to_string();
+        assert!(
+            text.contains("attested_by") && text.contains("variant"),
+            "{text}"
+        );
     }
 }

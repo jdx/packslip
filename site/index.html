@@ -137,8 +137,8 @@
       <p>The vendor controls the domain and publishes a signed release list at <code>/.well-known/packslip.json</code>: the same bundle format, listing each release's packslip with its digest, an expiry, and a sequence number so a mirror cannot freeze or roll back what consumers see.</p>
     </div>
     <div>
-      <h3>No registry entry</h3>
-      <p>A consumer needs nothing but the name to start verifying. Short aliases like <code>mise</code> are a convenience a tool may layer on top; they are not part of the format.</p>
+      <h3><code>github.com/oxc-project/oxc/oxlint</code></h3>
+      <p>A monorepo names each tool with a subpath, like a nested Go module. Each tool gets its own packslip and version per release, the real tag lives in <code>source.tag</code>, and the pin stays the repository. No more guessing which of three binaries a release meant, or how <code>cli/v1.9.4</code> maps to a version.</p>
     </div>
   </div>
 </section>
@@ -198,7 +198,7 @@ packslip releases --project mytool.example.com \
   --sequence 42 --valid-for 30d --key release.key \
   --release "https://dl.example.com/mytool/$VERSION/packslip.sigstore.json=dist/packslip.sigstore.json" \
   --out site/.well-known/packslip.json</code></pre>
-      <p>Platforms are inferred from file names; write <code>path:os/arch[/libc]</code> to override one. Add <code>--provenance URL</code> once per artifact, in order, if you publish build provenance yourself.</p>
+      <p>Platforms are inferred from file names; write <code>path:os/arch[/libc]</code> to override one and <code>@fips</code>-style variants to tell two builds of one platform apart. <code>--bin oxlint=bin/oxlint-x86_64</code> names an executable differently from its file. Add <code>--provenance URL</code> once per artifact, in order, if you publish build provenance yourself. A monorepo runs the step once per tool with <code>--project github.com/owner/repo/&lt;tool&gt;</code>.</p>
     </div>
     <div id="consumers">
       <h3>For consumers</h3>
@@ -209,7 +209,8 @@ packslip releases --project mytool.example.com \
         <li><strong>Enforce no-downgrade.</strong> Refuse a release whose scheme is weaker than the last accepted one, whose signer changed without a human saying so, or that dropped provenance the last release carried. Compare keyless signers by workflow path, not ref.</li>
         <li><strong>Apply a minimum release age</strong> to the log's integration time, so a hijacked release is noticed before unattended installs pick it up.</li>
         <li><strong>Treat <code>supersedes</code> as the ordering hint</strong> for rollback detection. Never parse version strings.</li>
-        <li><strong>Refuse a stale release list:</strong> one past its expiry, or with a sequence below the last one accepted.</li>
+        <li><strong>Refuse a stale release list:</strong> one past its expiry, or with a sequence below the last one accepted. Never select a yanked release; skip prereleases unless asked.</li>
+        <li><strong>Never guess between two artifacts.</strong> Select by os, arch, libc, format, and variant; if two still match, stop.</li>
       </ol>
 <pre><code>packslip verify packslip.sigstore.json \
   --artifact mise-v2026.9.1-linux-x64.tar.xz --json

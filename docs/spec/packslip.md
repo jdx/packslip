@@ -35,7 +35,8 @@ The name is the location and, on a forge, the identity:
   of that repository through GitHub's OIDC issuer
   (`https://token.actions.githubusercontent.com`).
 - `gitlab.com/<path>`: likewise, signed by a pipeline of that project
-  through `https://gitlab.com`.
+  through `https://gitlab.com`. GitLab subgroups make paths arbitrary
+  depth, so the whole path is the pin.
 - Any other host: the vendor controls the domain and publishes a release
   list at the well-known URL below, signed with the key or identity the
   consumer pins.
@@ -44,13 +45,32 @@ A consumer needs nothing else to start verifying a project on a known
 forge. A short-name alias table (`mise` for `github.com/jdx/mise`) is a
 convenience a consumer may add; it is not part of the format.
 
+### Monorepos
+
+A repository that releases several tools names each one with a subpath,
+as Go names nested modules: `github.com/oxc-project/oxc/oxlint`,
+`github.com/bazelbuild/buildtools/buildifier`,
+`github.com/biomejs/biome/cli`. Each tool gets its own packslip per
+release, with its own `version`, and `source.tag` carries the real tag
+(`oxlint_v1.0.0`, `cli/v1.9.4`), so nobody has to guess how a tag maps to a
+version. The identity pin is still the repository: any workflow of
+`oxc-project/oxc` may sign a packslip for `oxc-project/oxc/oxlint`.
+
+When several tools share one GitHub release, each ships its own bundle,
+named `packslip.<subpath>.sigstore.json` with `/` in the subpath replaced
+by `-` (`packslip.oxlint.sigstore.json`, `packslip.crates-cli.sigstore.json`).
+A repository's own packslip stays `packslip.sigstore.json`. Consumers do
+not trust the file name: they read the `packslip*.sigstore.json` assets of
+a release and keep the one whose `predicateType` is `release/v1` and whose
+`project` is the name they asked for.
+
 ## The file
 
-A release ships one file, `packslip.sigstore.json`: a
-[sigstore bundle](https://github.com/sigstore/protobuf-specs) (v0.3)
-whose content is a DSSE envelope of type `application/vnd.in-toto+json`
-carrying the statement below, and whose verification material is either
-the signer's Fulcio certificate or a public-key hint, plus the Rekor
+A release ships one file per project, a
+[sigstore bundle](https://github.com/sigstore/protobuf-specs) (v0.3) whose
+content is a DSSE envelope of type `application/vnd.in-toto+json` carrying
+the statement below, and whose verification material is either the
+signer's Fulcio certificate or a public-key hint, plus the Rekor
 transparency log entry for the signature.
 
 Because the bundle carries the statement, there is no separate plain JSON
@@ -65,13 +85,15 @@ understand the bundle as-is.
 {
   "_type": "https://in-toto.io/Statement/v1",
   "subject": [
-    { "name": "mise-v2026.9.1-linux-x64.tar.xz", "digest": { "sha256": "..." } }
+    { "name": "mise-v2026.9.1-linux-x64.tar.xz",
+      "digest": { "sha256": "...", "sha512": "..." } }
   ],
   "predicateType": "https://packslip.dev/release/v1",
   "predicate": {
     "project": "github.com/jdx/mise",
     "version": "2026.9.1",
     "published_at": "2026-09-01T12:00:00Z",
+    "channel": "stable",
     "source": { "repo": "https://github.com/jdx/mise", "commit": "...", "tag": "v2026.9.1" },
     "artifacts": [
       {
@@ -81,6 +103,7 @@ understand the bundle as-is.
         "url": "https://github.com/jdx/mise/releases/download/v2026.9.1/mise-v2026.9.1-linux-x64.tar.xz",
         "format": "tar.xz",
         "bin": ["mise/bin/mise"],
+        "requires": { "glibc_min": "2.31" },
         "provenance": ["https://api.github.com/repos/jdx/mise/attestations/sha256:..."]
       }
     ],
@@ -89,6 +112,7 @@ understand the bundle as-is.
       "key_id": "https://github.com/jdx/mise/.github/workflows/release.yml@refs/tags/v2026.9.1",
       "issuer": "https://token.actions.githubusercontent.com"
     },
+    "notes_url": "https://github.com/jdx/mise/releases/tag/v2026.9.1",
     "sbom": "https://.../sbom.cdx.json",
     "supersedes": "2026.9.0"
   }
@@ -97,32 +121,77 @@ understand the bundle as-is.
 
 Rules:
 
-- `subject` lists every artifact by file name with its sha256; `artifacts`
-  carries the same names with platform, size, download URL, format,
-  executables, and provenance links. The two sets of names must match
-  exactly, and neither may contain a duplicate. At least one artifact is
-  required. Digests are 64 lowercase hex characters.
+- `subject` lists every artifact by file name with its digests;
+  `artifacts` carries the same names with platform, size, download URL,
+  format, executables, requirements, and provenance links. The two sets of
+  names must match exactly, and neither may contain a duplicate. At least
+  one artifact is required. `sha256` is required and is 64 lowercase hex
+  characters; `sha512` is optional and 128.
 - `project` is a name as defined above. `version` is the vendor's version
   string, compared as opaque text. `published_at` is RFC 3339 UTC.
+- `prerelease` (default false) marks a release not meant for general use;
+  consumers skip it unless asked for prereleases. `channel` is the vendor's
+  own word for the release track (`stable`, `beta`, `nightly`).
 - `os`, `arch`, and `libc` use the values `linux`, `darwin`, `windows`,
   `freebsd`; `x86_64`, `aarch64`, `armv7`, `riscv64`, `i686`; `gnu`,
-  `musl`. `format` is the archive or installer type.
-- `bin` lists the executables inside the artifact as paths relative to the
-  archive root, or the artifact's own name when it is a bare executable. A
-  consumer puts them on PATH. Windows entries carry their `.exe`.
+  `musl`. `format` is the archive or installer type: `tar.xz`, `tar.gz`,
+  `tar.zst`, `tar.bz2`, `tgz`, `zip`, `7z`, `deb`, `rpm`, `dmg`, `pkg`,
+  `msi`, `msix`, `exe`, `appimage`, or `raw` for a bare executable.
+- `variant` tells apart artifacts that share os, arch, libc, and format:
+  `fips`, `baseline`, `debug`, `installer`, `source`. A vendor must not
+  publish two artifacts that agree on all five; `packslip create` refuses
+  to. Consumers that find such a pair refuse to choose.
+- `bin` lists the executables inside the artifact. Each entry is a path
+  relative to the archive root, or the artifact's own name when it is a
+  bare executable. When the name to put on PATH differs from the file name,
+  the entry is `{ "path": "bin/oxlint-x86_64", "name": "oxlint" }`.
+  Windows entries carry their `.exe`.
+- `requires` states what the host needs: `os_min` in the OS's own terms
+  (`12` for macOS Monterey, `10.0.17763` for Windows) and `glibc_min` for a
+  `gnu` Linux build.
 - `provenance` holds URLs of SLSA build provenance statements for that
   artifact. The packslip proves the manifest; verified provenance proves
   the build, at whatever SLSA build level its builder establishes.
 - `supersedes` names the release this one replaces, so a consumer can
-  detect a rollback without a version-ordering scheme.
+  detect a rollback without a version-ordering scheme. `notes_url` points
+  at the release notes.
 - `identity` says how the document is signed and by whom, so a consumer
   can check what it pinned against what it received. For `sigstore-oidc`,
   `key_id` is the certificate's subject identity (a workflow URI for CI, an
   email for a person) and `issuer` the OIDC issuer. For `sigstore-key`,
   `key_id` is the key id in uppercase hex.
+- `attested_by` is `vendor` (default) or `repackager`. See below.
 
 The JSON schema is printed by `packslip schema` and published at
 `https://packslip.dev/schema/release-v1.json`.
+
+### Repackager attestation
+
+A repository or mirror that redistributes a vendor's artifacts, and whose
+vendor publishes no packslip, may sign one itself with
+`"attested_by": "repackager"`. The `project` still names the vendor's
+project and the artifacts are still the vendor's files, but `identity` is
+the repackager's, and `evidence` says what it checked before signing:
+
+```json
+"attested_by": "repackager",
+"evidence": [
+  { "kind": "apt-release-gpg", "detail": "3FEF9748469ADBE15DA7CA80AC2D62742012EA22" },
+  { "kind": "pkgbuild-checksums" }
+]
+```
+
+Documented kinds: `pkgbuild-checksums` (digests matched the packaging the
+repackager maintains), `checksum-file-over-tls` (the vendor's checksum
+file, unsigned), `apt-release-gpg` (an apt index signed with the given
+key), `vendor-signature` (a detached signature the vendor publishes),
+`github-attestation` (GitHub artifact attestations verified), `none`.
+
+A repackager document proves that the repackager published exactly these
+digests and checked the listed evidence. It does not prove anything the
+vendor did not sign. Consumers rank it below a vendor document, and a
+consumer that already holds a vendor document for a project refuses to
+replace it with a repackager one without a human's say-so.
 
 ## Signing
 
@@ -153,8 +222,8 @@ Ed25519 signature over the pre-authentication encoding of the payload.
 
 ## Discovery
 
-Publish `packslip.sigstore.json` next to the artifacts: as a release
-asset, or under the version directory of a download site.
+Publish the bundle next to the artifacts: as a release asset, or under the
+version directory of a download site.
 
 For a project on a known forge, the forge's release listing is the
 discovery mechanism and nothing more is needed. A project on its own
@@ -173,6 +242,8 @@ bundle of the same shape as a packslip, with the `releases/v1` predicate:
   "_type": "https://in-toto.io/Statement/v1",
   "subject": [
     { "name": "https://dl.example.com/2026.9.1/packslip.sigstore.json",
+      "digest": { "sha256": "...", "sha512": "..." } },
+    { "name": "https://dl.example.com/2026.9.0/packslip.sigstore.json",
       "digest": { "sha256": "..." } }
   ],
   "predicateType": "https://packslip.dev/releases/v1",
@@ -184,7 +255,11 @@ bundle of the same shape as a packslip, with the `releases/v1` predicate:
     "identity": { "scheme": "sigstore-key", "key_id": "5A0A0B8B9C6D7E1F" },
     "releases": [
       { "version": "2026.9.1", "published_at": "2026-09-01T12:00:00Z",
-        "packslip": "https://dl.example.com/2026.9.1/packslip.sigstore.json" }
+        "packslip": "https://dl.example.com/2026.9.1/packslip.sigstore.json",
+        "security": true },
+      { "version": "2026.9.0", "published_at": "2026-08-20T12:00:00Z",
+        "packslip": "https://dl.example.com/2026.9.0/packslip.sigstore.json",
+        "status": "yanked", "status_reason": "CVE-2026-1234" }
     ]
   }
 }
@@ -195,8 +270,15 @@ the list pins the exact documents it points at. `expires_at` and
 `sequence` are borrowed from TUF's timestamp role: a consumer refuses a
 list that has expired, or whose sequence is lower than one it has already
 accepted, so a mirror cannot freeze or roll back the vendor's view.
+
+Each entry may carry `prerelease` and `channel` (copied from the
+packslip), `status: "yanked"` with a `status_reason` when the vendor
+withdrew the release, and `security: true` when it fixes a vulnerability.
+A consumer never selects a yanked release, warns when it holds one, and
+may shorten its minimum release age for a security release.
+
 `packslip releases` produces the list from local copies of the released
-bundles and the JSON schema is at
+bundles; the JSON schema is at
 `https://packslip.dev/schema/releases-v1.json`.
 
 The list separates the name from where the bytes live, the way a Go vanity
@@ -215,14 +297,18 @@ be anywhere.
    subject digest and size of every artifact you downloaded.
 3. Enforce no-downgrade: refuse a release whose `identity.scheme` is
    weaker than the last accepted one, whose signer changed without a human
-   saying so, or that dropped per-artifact provenance the last release
-   carried. For a keyless signer, compare the workflow path, not the ref:
-   a new tag of the same workflow is the same signer.
+   saying so, whose `attested_by` went from vendor to repackager, or that
+   dropped per-artifact provenance the last release carried. For a keyless
+   signer, compare the workflow path, not the ref: a new tag of the same
+   workflow is the same signer.
 4. Apply any minimum release age to the log's integration time, falling
    back to `published_at` only for an unlogged bundle you chose to accept.
 5. Treat `supersedes` as the ordering hint for rollback detection.
 6. For a release list, refuse one that has expired or whose `sequence` is
-   below the last one accepted.
+   below the last one accepted; never select a yanked entry; skip
+   prereleases unless asked for them.
+7. Select one artifact by os, arch, libc, format, and, when needed,
+   variant. Refuse to guess between two artifacts that match.
 
 ## What a verified packslip proves
 
@@ -235,9 +321,9 @@ consumer verifies earns the SLSA build level its builder establishes
 L3). Consumers record what they verified as a SLSA Verification Summary
 or in their own terms; packslip defines no level scale of its own.
 
-`packslip verify` reports the scheme, the signer, the log time, and
-whether every artifact links provenance. It does not fetch or verify the
-provenance statements.
+`packslip verify` reports the scheme, the signer, who attested, the log
+time, and whether every artifact links provenance. It does not fetch or
+verify the provenance statements.
 
 ## Tooling
 
@@ -248,22 +334,28 @@ Action.
 - In a release job: `uses: jdx/packslip@v1` with `artifacts: dist/*`
   attests build provenance for the artifacts, signs the packslip
   keylessly, links the provenance from it, verifies the result, and
-  uploads `packslip.sigstore.json` to the release.
-- `packslip create --project github.com/o/r --version X --out dist
-  --url-base URL --source-repo URL --tag vX --bin NAME artifact...`
-  digests the artifacts, infers platforms from file names
-  (`path:os/arch[/libc]` overrides), and writes the signed bundle. Add
-  `--key release.key` to sign with a key; `--no-log` skips Rekor.
+  uploads the bundle to the release. A monorepo runs the step once per
+  tool with `project: github.com/owner/repo/<tool>`.
+- `packslip create --project NAME --version X --out dist --url-base URL
+  --source-repo URL --tag vX --bin NAME artifact...` digests the artifacts,
+  infers platforms from file names (`path:os/arch[/libc]` overrides,
+  `@variant` for a second build of one platform), and writes the signed
+  bundle. `--bin NAME=PATH` names an executable differently from its file,
+  `--url FILENAME=URL` sets one artifact's URL, `--prerelease`,
+  `--channel`, `--notes-url`, `--no-sha512`, `--attested-by repackager`
+  with `--evidence KIND[=DETAIL]`. Add `--key release.key` to sign with a
+  key; `--no-log` skips Rekor.
 - `packslip keygen -o release.key` writes an Ed25519 secret seed (mode
   0600) and `release.pub`.
-- `packslip verify packslip.sigstore.json [--artifact file...]` verifies
-  and exits 1 on any failure; `--json` prints the result. A keyless bundle
-  is checked against the policy its project name implies, or against
-  `--identity`, `--identity-prefix`, and `--issuer`; a key-signed bundle
-  against `--pubkey`. `--allow-unlogged` accepts a bundle with no log
-  entry; `--trusted-root` replaces the embedded sigstore root. The same
-  command verifies a release list.
-- `packslip show packslip.sigstore.json` prints the statement.
+- `packslip verify BUNDLE [--artifact file...]` verifies and exits 1 on
+  any failure; `--json` prints the result. A keyless bundle is checked
+  against the policy its project name implies, or against `--identity`,
+  `--identity-prefix`, and `--issuer`; a key-signed bundle against
+  `--pubkey`. `--allow-unlogged` accepts a bundle with no log entry;
+  `--trusted-root` replaces the embedded sigstore root. The same command
+  verifies a release list.
+- `packslip show BUNDLE` prints the statement.
 - `packslip releases --project NAME --sequence N --valid-for 30d
-  --release URL=PATH... --key release.key` writes a signed release list.
+  --release URL=PATH... [--yank URL=REASON] [--security URL] --key
+  release.key` writes a signed release list.
 - `packslip schema [--releases]` prints the JSON schemas.

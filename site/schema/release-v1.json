@@ -9,9 +9,9 @@
           ]
         },
         "bin": {
-          "description": "Executables inside the artifact, as paths relative to the archive\nroot, or the artifact's own name when it is a bare executable. A\nconsumer puts these on PATH.",
+          "description": "Executables inside the artifact, as paths relative to the archive\nroot, or the artifact's own name when it is a bare executable. A\nconsumer puts these on PATH under `name`.",
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/Bin"
           },
           "type": "array"
         },
@@ -43,12 +43,30 @@
           },
           "type": "array"
         },
+        "requires": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Requires"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the artifact needs from the host."
+        },
         "size": {
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "variant": {
+          "description": "Tells apart artifacts that share os, arch, libc, and format:\n`fips`, `baseline`, `debug`, `installer`, `source`.",
           "type": [
             "string",
             "null"
@@ -61,15 +79,79 @@
       ],
       "type": "object"
     },
+    "Attestor": {
+      "description": "Who signed the claim.",
+      "oneOf": [
+        {
+          "const": "vendor",
+          "description": "The project's own publisher.",
+          "type": "string"
+        },
+        {
+          "const": "repackager",
+          "description": "A repository or mirror describing a vendor's artifacts on the\nvendor's behalf, having checked whatever evidence the vendor gave.",
+          "type": "string"
+        }
+      ]
+    },
+    "Bin": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "name"
+          ],
+          "type": "object"
+        }
+      ],
+      "description": "An executable inside an artifact. Serialises as the bare path when the\nPATH name is the file's own name, else as `{ \"path\", \"name\" }`."
+    },
     "Digest": {
       "properties": {
         "sha256": {
           "description": "Lowercase hex.",
           "type": "string"
+        },
+        "sha512": {
+          "description": "Lowercase hex, for consumers that want it (electron-updater,\nBalrog, Scoop).",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "sha256"
+      ],
+      "type": "object"
+    },
+    "Evidence": {
+      "description": "One thing a repackager checked. Documented kinds:\n`pkgbuild-checksums`, `checksum-file-over-tls`, `apt-release-gpg`,\n`vendor-signature`, `github-attestation`, `none`.",
+      "properties": {
+        "detail": {
+          "description": "A key id, URL, or note that lets a reader check the claim.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
       ],
       "type": "object"
     },
@@ -105,11 +187,39 @@
           },
           "type": "array"
         },
+        "attested_by": {
+          "$ref": "#/$defs/Attestor",
+          "description": "Who is making the claim: the vendor itself, or a repackager that\nchecked the vendor's evidence and signed a document about it."
+        },
+        "channel": {
+          "description": "`stable`, `beta`, `nightly`, or whatever the vendor calls it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "evidence": {
+          "description": "What a repackager checked before signing.",
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "type": "array"
+        },
         "identity": {
           "$ref": "#/$defs/Identity"
         },
+        "notes_url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "prerelease": {
+          "description": "A release not meant for general use.",
+          "type": "boolean"
+        },
         "project": {
-          "description": "The project's name: a host path such as `github.com/jdx/mise` or\n`mise.jdx.dev`, the way Go names modules. The host is where a\nconsumer discovers releases and, for forge hosts, what identity is\nexpected to have signed them.",
+          "description": "The project's name: a host path such as `github.com/jdx/mise` or\n`mise.jdx.dev`, the way Go names modules. The host is where a\nconsumer discovers releases and, for forge hosts, what identity is\nexpected to have signed them. A tool in a monorepo adds a subpath:\n`github.com/oxc-project/oxc/oxlint`.",
           "type": "string"
         },
         "published_at": {
@@ -150,6 +260,26 @@
         "artifacts",
         "identity"
       ],
+      "type": "object"
+    },
+    "Requires": {
+      "description": "Host requirements a consumer can check before installing.",
+      "properties": {
+        "glibc_min": {
+          "description": "Minimum glibc for a `gnu` Linux build, such as `2.31`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "os_min": {
+          "description": "Minimum OS version, in the OS's own terms: `12` for macOS Monterey,\n`10.0.17763` for Windows.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
       "type": "object"
     },
     "Scheme": {
