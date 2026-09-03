@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>packslip — a signed release manifest</title>
+<meta name="description" content="packslip: one signed, machine-readable document per release that says what shipped and how to verify it. Any consumer verifies it with a single pinned key.">
+<meta property="og:title" content="packslip — a signed release manifest">
+<meta property="og:description" content="One signed document per release. One pinned key. Checksums, platform mapping, provenance links, and an evidence level, without per-vendor logic.">
+<meta property="og:url" content="https://packslip.dev/">
+<meta property="og:type" content="website">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header class="wrap top">
+  <a class="brand" href="/">
+    <svg viewBox="0 0 64 64" aria-hidden="true"><rect x="10" y="6" width="44" height="52" rx="4" fill="none" stroke="currentColor" stroke-width="3"/><path d="M18 20h28M18 30h28M18 40h18" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><circle cx="44" cy="44" r="9" fill="#b8321f"/><path d="M39.5 44l3 3 6-6" stroke="#fff" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    packslip
+  </a>
+  <nav>
+    <a href="#how">How it works</a>
+    <a href="#levels">Levels</a>
+    <a href="#vendors">Vendors</a>
+    <a href="#consumers">Consumers</a>
+    <a href="/release/v1/">Spec</a>
+    <a href="https://github.com/jdx/omapac/tree/main/crates/packslip">GitHub</a>
+  </nav>
+</header>
+
+<main class="wrap">
+
+<div class="hero">
+  <div>
+    <span class="eyebrow">Version 1 · draft</span>
+    <h1>The paper in the box that says what shipped.</h1>
+    <p class="lede">A vendor publishes one signed document per release. Any consumer verifies it with one pinned key and gets checksums, platforms, provenance links, and an evidence level.</p>
+    <div class="actions">
+      <a class="btn primary" href="/release/v1/">Read the spec</a>
+      <a class="btn" href="#vendors">Publish one in CI</a>
+    </div>
+  </div>
+
+  <div class="slip" aria-label="Example packslip document">
+    <div class="slip-head"><span>packslip.json · signed with packslip.json.minisig</span><span class="stamp">verified</span></div>
+<pre><code>{
+  <span class="k">"_type"</span>: <span class="s">"https://in-toto.io/Statement/v1"</span>,
+  <span class="k">"subject"</span>: [
+    { <span class="k">"name"</span>: <span class="s">"mise-v2026.9.1-linux-x64.tar.xz"</span>,
+      <span class="k">"digest"</span>: { <span class="k">"sha256"</span>: <span class="s">"3f9a…c21e"</span> } }
+  ],
+  <span class="k">"predicateType"</span>: <span class="s">"https://packslip.dev/release/v1"</span>,
+  <span class="k">"predicate"</span>: {
+    <span class="k">"project"</span>: <span class="s">"pkg:github/jdx/mise"</span>,
+    <span class="k">"version"</span>: <span class="s">"2026.9.1"</span>,
+    <span class="k">"published_at"</span>: <span class="s">"2026-09-01T12:00:00Z"</span>,
+    <span class="k">"source"</span>: { <span class="k">"repo"</span>: <span class="s">"https://github.com/jdx/mise"</span>,
+                <span class="k">"commit"</span>: <span class="s">"a1b2…"</span>, <span class="k">"tag"</span>: <span class="s">"v2026.9.1"</span> },
+    <span class="k">"artifacts"</span>: [
+      { <span class="k">"name"</span>: <span class="s">"mise-v2026.9.1-linux-x64.tar.xz"</span>,
+        <span class="k">"os"</span>: <span class="s">"linux"</span>, <span class="k">"arch"</span>: <span class="s">"x86_64"</span>, <span class="k">"libc"</span>: <span class="s">"gnu"</span>,
+        <span class="k">"size"</span>: <span class="n">12345678</span>,
+        <span class="k">"url"</span>: <span class="s">"https://github.com/jdx/mise/releases/download/…"</span>,
+        <span class="k">"format"</span>: <span class="s">"tar.xz"</span>,
+        <span class="k">"provenance"</span>: [<span class="s">"https://…/….sigstore.json"</span>] }
+    ],
+    <span class="k">"identity"</span>: { <span class="k">"scheme"</span>: <span class="s">"minisign"</span>,
+                  <span class="k">"key_id"</span>: <span class="s">"5A0A0B8B9C6D7E1F"</span> },
+    <span class="k">"sbom"</span>: <span class="s">"https://…/sbom.cdx.json"</span>,
+    <span class="k">"supersedes"</span>: <span class="s">"2026.9.0"</span>
+  }
+}</code></pre>
+  </div>
+</div>
+
+<section id="why">
+  <span class="num">01 · The problem</span>
+  <h2>Every installer re-invents release verification, badly.</h2>
+  <div class="cols">
+    <div>
+      <h3>Checksums over TLS prove nothing</h3>
+      <p>Most tools download a <code>SHASUMS256.txt</code> from the same place as the binary. If the release page is hijacked, the checksums are hijacked with it. The digest matches and the malware installs.</p>
+    </div>
+    <div>
+      <h3>Per-vendor logic does not scale</h3>
+      <p>Package managers, registries, and corporate mirrors each hand-code how vendor X signs, where vendor Y puts the checksum file, and which name means <code>aarch64</code>. It rots, and nobody audits it.</p>
+    </div>
+    <div>
+      <h3>No shared notion of evidence</h3>
+      <p>"Signed" means anything from a GPG signature on a checksum file to full SLSA provenance. Without a common scale, a consumer cannot enforce a floor or notice when a release quietly gets weaker.</p>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <span class="num">02 · How it works</span>
+  <h2>One document, one key, one verifier.</h2>
+  <div class="steps">
+    <div class="step">
+      <h3>The vendor creates it in CI</h3>
+      <p>After building release artifacts, one command digests them, infers platforms from file names, and signs the result with the vendor's release key.</p>
+<pre><code>packslip create \
+  --project pkg:github/o/r \
+  --version 1.2.3 \
+  --key release.key \
+  --out dist dist/*.tar.xz</code></pre>
+    </div>
+    <div class="step">
+      <h3>It ships beside the artifacts</h3>
+      <p><code>packslip.json</code> and <code>packslip.json.minisig</code> are uploaded as release assets, or placed under the version directory of a download site. Optionally a signed list of recent releases lives at a well-known URL on the vendor's domain.</p>
+    </div>
+    <div class="step">
+      <h3>The consumer pins the key once</h3>
+      <p>A registry entry, a repository's upstream declaration, or a tool option records the public key. Every release after that is verified against it. The key never comes from the document.</p>
+<pre><code>packslip verify packslip.json \
+  --pubkey vendor.pub \
+  --artifact r-1.2.3-linux-x64.tar.xz</code></pre>
+    </div>
+  </div>
+  <div class="prose" style="margin-top:2rem">
+    <p>The document is an <a href="https://github.com/in-toto/attestation">in-toto Statement v1</a> with a packslip predicate, so it fits the attestation tooling that already exists. The signature is a plain <a href="https://jedisct1.github.io/minisign/">minisign</a> signature over the file bytes, so <code>minisign -V -p vendor.pub -m packslip.json</code> verifies it with no packslip tooling at all.</p>
+  </div>
+</section>
+
+<section id="levels">
+  <span class="num">03 · Evidence levels</span>
+  <h2>A shared scale for what a release proves.</h2>
+  <div class="prose">
+    <p>Consumers use the level to enforce a floor and to refuse downgrades: a release that arrives with weaker evidence than the previous one is rejected until a human says otherwise.</p>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Level</th><th>Meaning</th><th>Who establishes it</th></tr></thead>
+      <tbody>
+        <tr><td><span class="lvl">L0</span></td><td>Checksums only, no signature.</td><td>Legacy releases.</td></tr>
+        <tr><td><span class="lvl">L1</span></td><td>Signed checksums or per-artifact signatures.</td><td>Legacy releases.</td></tr>
+        <tr><td><span class="lvl on">L2</span></td><td>A signed packslip.</td><td><code>packslip verify</code></td></tr>
+        <tr><td><span class="lvl on">L3</span></td><td>L2 plus per-artifact build provenance (SLSA, sigstore bundles) that the consumer verified.</td><td><code>packslip verify</code> reports L3 when every artifact links provenance; the consumer verifies the bundles.</td></tr>
+        <tr><td><span class="lvl on">L4</span></td><td>L3 plus reproducible or independently verified builds.</td><td>The consumer, from evidence it gathers elsewhere.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="vendors">
+  <span class="num">04 · Adoption</span>
+  <h2>Publishing takes one CI step. Consuming takes five rules.</h2>
+  <div class="split">
+    <div>
+      <h3>For vendors</h3>
+      <p>Install the tool, generate a release key once, and keep the secret half in your CI secret store.</p>
+<pre><code>cargo install --git https://github.com/jdx/omapac packslip
+
+packslip keygen -o release.key
+# wrote release.key and release.pub (key id 5A0A0B8B9C6D7E1F)</code></pre>
+      <p>Commit <code>release.pub</code> to your repository and mention it in your README, so consumers have somewhere to pin from. Then, in the release job, after the artifacts exist:</p>
+<pre><code>packslip create \
+  --project pkg:github/jdx/mise \
+  --version "$VERSION" \
+  --key release.key \
+  --out dist \
+  --url-base "https://github.com/jdx/mise/releases/download/v$VERSION" \
+  --source-repo https://github.com/jdx/mise \
+  --tag "v$VERSION" \
+  --commit "$GITHUB_SHA" \
+  --supersedes "$PREVIOUS_VERSION" \
+  dist/*.tar.xz dist/*.zip</code></pre>
+      <p>Platforms are inferred from file names; write <code>path:os/arch[/libc]</code> to override one. Add <code>--provenance URL</code> once per artifact, in the same order, if you publish build provenance. Upload <code>dist/packslip.json</code> and <code>dist/packslip.json.minisig</code> with the release.</p>
+      <div class="note">Optional: serve a signed list of recent releases at <code>https://&lt;your-domain&gt;/.well-known/packslip/&lt;project&gt;.json</code> so consumers can discover new versions without a registry.</div>
+    </div>
+    <div id="consumers">
+      <h3>For consumers</h3>
+      <p>Whether you are a package manager, a distribution repository, or a corporate mirror, the same rules apply.</p>
+      <ol>
+        <li><strong>Pin the identity once.</strong> Record the vendor's public key in your registry, upstream declaration, or tool config. Never take the key from the document.</li>
+        <li><strong>Verify in order.</strong> The signature, then the document structure, then the subject digest and size of every artifact you downloaded.</li>
+        <li><strong>Enforce no-downgrade.</strong> Refuse a release whose identity scheme is weaker than the last accepted one, or that dropped per-artifact provenance the last release carried.</li>
+        <li><strong>Apply a minimum release age</strong> to <code>published_at</code>, so a hijacked release has time to be noticed before unattended installs pick it up.</li>
+        <li><strong>Treat <code>supersedes</code> as the ordering hint</strong> for rollback detection. Never parse version strings.</li>
+      </ol>
+<pre><code>packslip verify packslip.json --pubkey vendor.pub \
+  --artifact mise-v2026.9.1-linux-x64.tar.xz --json
+{
+  "project": "pkg:github/jdx/mise",
+  "version": "2026.9.1",
+  "published_at": "2026-09-01T12:00:00Z",
+  "key_id": "5A0A0B8B9C6D7E1F",
+  "level": "l2",
+  "checked_artifacts": ["mise-v2026.9.1-linux-x64.tar.xz"],
+  "artifact_count": 6
+}</code></pre>
+      <p>The verifier is also a Rust library: <code>packslip::verify(document, signature, &amp;pubkey, &amp;artifacts)</code> returns the same structure, and <code>packslip schema</code> prints the <a href="/schema/release-v1.json">JSON schema</a> for other languages.</p>
+    </div>
+  </div>
+</section>
+
+<section id="who">
+  <span class="num">05 · Who uses it</span>
+  <h2>Built for the tools that install other people's binaries.</h2>
+  <div class="cols">
+    <div>
+      <h3>omapac and the Omarchy Package Repository</h3>
+      <p>Vendor-built packages are generated from the vendor's packslip instead of hand-edited checksum lines. The repository re-verifies against the pinned key, enforces a minimum release age and an evidence floor, and ships the packslip as a sidecar so clients can chain repository signature to vendor identity offline.</p>
+    </div>
+    <div>
+      <h3>mise</h3>
+      <p>mise's own release workflow is intended to be the first publisher and the reference implementation. Its <code>github</code> and <code>http</code> backends will verify a packslip when one is present and record the evidence level in <code>mise.lock</code>.</p>
+    </div>
+    <div>
+      <h3>Everyone else</h3>
+      <p>The name is neutral on purpose and the format carries no distro or vendor specifics. aqua, Homebrew, a corporate mirror, or a one-off install script can all verify the same document with the same pinned key.</p>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="wrap">
+  <span>packslip · version 1, draft · MIT licensed</span>
+  <nav>
+    <a href="/release/v1/">Specification</a>
+    <a href="/schema/release-v1.json">JSON schema</a>
+    <a href="https://github.com/jdx/omapac/tree/main/crates/packslip">Source</a>
+    <a href="https://github.com/jdx/packslip">This site</a>
+  </nav>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,227 @@
+{
+  "$defs": {
+    "Artifact": {
+      "properties": {
+        "arch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "format": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "libc": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "os": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provenance": {
+          "description": "URLs of build provenance statements for this artifact.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "size": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "size"
+      ],
+      "type": "object"
+    },
+    "Digest": {
+      "properties": {
+        "sha256": {
+          "description": "Lowercase hex.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sha256"
+      ],
+      "type": "object"
+    },
+    "Identity": {
+      "description": "How the document is signed, so a consumer can pin one identity.",
+      "properties": {
+        "key_id": {
+          "description": "The key id (minisign) or certificate identity (OIDC).",
+          "type": "string"
+        },
+        "scheme": {
+          "$ref": "#/$defs/Scheme"
+        }
+      },
+      "required": [
+        "scheme",
+        "key_id"
+      ],
+      "type": "object"
+    },
+    "Predicate": {
+      "properties": {
+        "artifacts": {
+          "items": {
+            "$ref": "#/$defs/Artifact"
+          },
+          "type": "array"
+        },
+        "identity": {
+          "$ref": "#/$defs/Identity"
+        },
+        "project": {
+          "description": "A package URL for the project, such as `pkg:github/jdx/mise`.",
+          "type": "string"
+        },
+        "published_at": {
+          "description": "RFC 3339 UTC.",
+          "type": "string"
+        },
+        "sbom": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Source"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "supersedes": {
+          "description": "The version this release replaces, for ordering.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "project",
+        "version",
+        "published_at",
+        "artifacts",
+        "identity"
+      ],
+      "type": "object"
+    },
+    "Scheme": {
+      "oneOf": [
+        {
+          "const": "minisign",
+          "description": "A detached minisign signature over the document bytes.",
+          "type": "string"
+        },
+        {
+          "const": "sigstore-key",
+          "description": "A sigstore bundle signed with a long-lived key.",
+          "type": "string"
+        },
+        {
+          "const": "sigstore-oidc",
+          "description": "A sigstore bundle signed with a workload identity.",
+          "type": "string"
+        }
+      ]
+    },
+    "Source": {
+      "properties": {
+        "commit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repo": {
+          "type": "string"
+        },
+        "tag": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "repo"
+      ],
+      "type": "object"
+    },
+    "Subject": {
+      "properties": {
+        "digest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "digest"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The whole document.",
+  "properties": {
+    "_type": {
+      "type": "string"
+    },
+    "predicate": {
+      "$ref": "#/$defs/Predicate"
+    },
+    "predicateType": {
+      "type": "string"
+    },
+    "subject": {
+      "description": "One entry per artifact, name and digests. Mirrors `predicate.artifacts`.",
+      "items": {
+        "$ref": "#/$defs/Subject"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "_type",
+    "subject",
+    "predicateType",
+    "predicate"
+  ],
+  "title": "Statement",
+  "type": "object"
+}
