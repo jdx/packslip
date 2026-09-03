@@ -1,5 +1,10 @@
 # packslip
 
+> **Under heavy development.** The format is a version 1 draft and still
+> changes between releases; the tooling is young and lightly deployed.
+> Expect breaking changes until it is declared stable. Feedback is welcome
+> in [issues](https://github.com/jdx/packslip/issues).
+
 A signed release manifest for vendor binaries. One file per release,
 `packslip.sigstore.json`, says what shipped and how to verify it; any
 consumer checks it against one pinned identity or key and gets checksums,
