@@ -43,6 +43,13 @@ jobs:
       - if: contains(matrix.target, 'musl')
         run: sudo apt-get update && sudo apt-get install -y musl-tools
       - run: cargo build --release --locked --target ${{ matrix.target }}
+        env:
+          # aws-lc-sys (rustls' crypto) builds C on every target: point cc
+          # at musl-gcc for the musl targets and use prebuilt NASM objects
+          # on Windows.
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CC_aarch64_unknown_linux_musl: musl-gcc
+          AWS_LC_SYS_PREBUILT_NASM: "1"
       - name: Package
         shell: bash
         run: |
