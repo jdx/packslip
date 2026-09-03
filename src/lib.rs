@@ -22,7 +22,7 @@ pub mod verify;
 
 pub use model::{
     Artifact, Attestor, Bin, Evidence, Identity, Predicate, ReleaseList, ReleaseListStatement,
-    ReleaseRef, ReleaseStatus, Requires, Scheme, Source, Statement, Subject,
+    ReleaseRef, ReleaseStatus, Requires, Scheme, Source, Statement, Subject, VersionOrder,
 };
 pub use sigstore::{Policy, Signer, Trust};
 pub use verify::{Options, Verified, VerifiedList, verify, verify_release_list};

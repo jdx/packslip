@@ -60,6 +60,9 @@ pub struct Predicate {
     /// `stable`, `beta`, `nightly`, or whatever the vendor calls it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel: Option<String>,
+    /// How consumers order this project's versions.
+    #[serde(default, skip_serializing_if = "VersionOrder::is_source")]
+    pub version_order: VersionOrder,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<Source>,
     pub artifacts: Vec<Artifact>,
@@ -103,6 +106,37 @@ impl std::fmt::Display for Attestor {
         f.write_str(match self {
             Attestor::Vendor => "vendor",
             Attestor::Repackager => "repackager",
+        })
+    }
+}
+
+/// How a project's versions are ordered, in mise's vocabulary. The vendor
+/// declares it; consumers never infer it from the strings.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum VersionOrder {
+    /// The order the release list gives, newest first: GitHub's releases
+    /// endpoint, or the vendor's signed list. For date versions,
+    /// two-component versions, mixed histories, and anything uncertain.
+    #[default]
+    Source,
+    /// Versions are strict `MAJOR.MINOR.PATCH` (calver such as `2026.9.1`
+    /// included) and sort as semver, so the highest is the latest and
+    /// range constraints have meaning.
+    Semver,
+}
+
+impl VersionOrder {
+    pub fn is_source(&self) -> bool {
+        *self == VersionOrder::Source
+    }
+}
+
+impl std::fmt::Display for VersionOrder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            VersionOrder::Source => "source",
+            VersionOrder::Semver => "semver",
         })
     }
 }
@@ -280,7 +314,10 @@ pub struct ReleaseList {
     /// than it has seen.
     pub sequence: u64,
     pub identity: Identity,
-    /// Newest first is conventional but not required.
+    /// How consumers order the versions listed.
+    #[serde(default, skip_serializing_if = "VersionOrder::is_source")]
+    pub version_order: VersionOrder,
+    /// Newest first: under `source` ordering this order is the ranking.
     pub releases: Vec<ReleaseRef>,
 }
 
@@ -625,6 +662,7 @@ mod tests {
                 published_at: "2026-09-01T12:00:00Z".into(),
                 prerelease: false,
                 channel: None,
+                version_order: VersionOrder::Semver,
                 source: Some(Source {
                     repo: "https://github.com/jdx/mise".into(),
                     commit: Some("b".repeat(40)),
@@ -678,6 +716,7 @@ mod tests {
                     key_id: "5A0A0B8B9C6D7E1F".into(),
                     issuer: None,
                 },
+                version_order: VersionOrder::Source,
                 releases: vec![ReleaseRef {
                     version: "2026.9.1".into(),
                     published_at: "2026-09-01T12:00:00Z".into(),
@@ -708,6 +747,7 @@ mod tests {
             "{json}"
         );
         assert!(!json.contains("prerelease"), "defaults are omitted: {json}");
+        assert!(json.contains(r#""version_order":"semver""#), "{json}");
         assert!(!json.contains("attested_by"), "{json}");
         assert!(json.contains(r#""bin":["mise/bin/mise"]"#), "{json}");
         assert_eq!(serde_json::from_str::<Statement>(&json).unwrap(), s);
@@ -719,6 +759,7 @@ mod tests {
         let parsed: Statement = serde_json::from_str(old).unwrap();
         parsed.validate().unwrap();
         assert_eq!(parsed.predicate.attested_by, Attestor::Vendor);
+        assert_eq!(parsed.predicate.version_order, VersionOrder::Source);
         assert!(!parsed.predicate.prerelease);
         assert_eq!(parsed.predicate.artifacts[0].bin, [Bin::new("t")]);
         assert_eq!(String::from_utf8(parsed.canonical_bytes()).unwrap(), old);

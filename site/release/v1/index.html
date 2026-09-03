@@ -36,6 +36,7 @@
     <li><a href="#repackager">Repackager attestation</a></li>
     <li><a href="#signing">Signing</a></li>
     <li><a href="#discovery">Discovery</a></li>
+    <li><a href="#ordering">Ordering versions</a></li>
     <li><a href="#consumer-rules">Consumer rules</a></li>
     <li><a href="#proves">What it proves</a></li>
     <li><a href="#tooling">Tooling</a></li>
@@ -110,7 +111,7 @@
   <ul>
     <li><code>subject</code> lists every artifact by file name with its digests; <code>artifacts</code> carries the same names with platform, size, download URL, format, executables, requirements, and provenance links. The two sets of names must match exactly, and neither may contain a duplicate. At least one artifact is required. <code>sha256</code> is required and is 64 lowercase hex characters; <code>sha512</code> is optional and 128.</li>
     <li><code>project</code> is a name as defined above. <code>version</code> is the vendor's version string, compared as opaque text. <code>published_at</code> is RFC 3339 UTC.</li>
-    <li><code>prerelease</code> (default false) marks a release not meant for general use; consumers skip it unless asked for prereleases. <code>channel</code> is the vendor's own word for the release track (<code>stable</code>, <code>beta</code>, <code>nightly</code>).</li>
+    <li><code>prerelease</code> (default false) marks a release not meant for general use; consumers skip it unless asked for prereleases. <code>channel</code> is the vendor's own word for the release track (<code>stable</code>, <code>beta</code>, <code>nightly</code>). <code>version_order</code> is <code>source</code> (default) or <code>semver</code>; see <a href="#ordering">Ordering versions</a>.</li>
     <li><code>os</code>, <code>arch</code>, and <code>libc</code> use the values <code>linux</code>, <code>darwin</code>, <code>windows</code>, <code>freebsd</code>; <code>x86_64</code>, <code>aarch64</code>, <code>armv7</code>, <code>riscv64</code>, <code>i686</code>; <code>gnu</code>, <code>musl</code>. <code>format</code> is the archive or installer type: <code>tar.xz</code>, <code>tar.gz</code>, <code>tar.zst</code>, <code>tar.bz2</code>, <code>tgz</code>, <code>zip</code>, <code>7z</code>, <code>deb</code>, <code>rpm</code>, <code>dmg</code>, <code>pkg</code>, <code>msi</code>, <code>msix</code>, <code>exe</code>, <code>appimage</code>, or <code>raw</code> for a bare executable.</li>
     <li><code>variant</code> tells apart artifacts that share os, arch, libc, and format: <code>fips</code>, <code>baseline</code>, <code>debug</code>, <code>installer</code>, <code>source</code>. A vendor must not publish two artifacts that agree on all five; <code>packslip create</code> refuses to. Consumers that find such a pair refuse to choose.</li>
     <li><code>bin</code> lists the executables inside the artifact. Each entry is a path relative to the archive root, or the artifact's own name when it is a bare executable. When the name to put on PATH differs from the file name, the entry is <code>{ "path": "bin/oxlint-x86_64", "name": "oxlint" }</code>. Windows entries carry their <code>.exe</code>.</li>
@@ -137,6 +138,7 @@
       <tr><td><code>predicate.published_at</code></td><td>string</td><td><span class="req">required</span></td><td>RFC 3339 UTC publish time.</td></tr>
       <tr><td><code>predicate.prerelease</code></td><td>boolean</td><td><span class="opt">optional</span></td><td>Not for general use. Default false.</td></tr>
       <tr><td><code>predicate.channel</code></td><td>string</td><td><span class="opt">optional</span></td><td>Release track: <code>stable</code>, <code>beta</code>, <code>nightly</code>.</td></tr>
+      <tr><td><code>predicate.version_order</code></td><td>string</td><td><span class="opt">optional</span></td><td><code>source</code> (default: the release list's order) or <code>semver</code>.</td></tr>
       <tr><td><code>predicate.source</code></td><td>object</td><td><span class="opt">optional</span></td><td>Where the release was built from.</td></tr>
       <tr><td><code>predicate.source.repo</code></td><td>string</td><td><span class="req">required</span></td><td>Source repository URL.</td></tr>
       <tr><td><code>predicate.source.commit</code></td><td>string</td><td><span class="opt">optional</span></td><td>Commit the release was built from.</td></tr>
@@ -186,9 +188,12 @@
 
   <h2 id="discovery">Discovery</h2>
   <p>Publish the bundle next to the artifacts: as a release asset, or under the version directory of a download site.</p>
-  <p>For a project on a known forge, the forge's release listing is the discovery mechanism and nothing more is needed. A project on its own domain advertises recent releases at</p>
-<pre><code>https://&lt;host&gt;/.well-known/packslip/&lt;path&gt;.json</code></pre>
-  <p>where <code>&lt;path&gt;</code> is the project name after the host, or <code>packslip.json</code> directly under <code>.well-known</code> when the name is a bare host. The list is a bundle of the same shape as a packslip, with the <code>releases/v1</code> predicate:</p>
+  <p>Every project has a release list, and it is what consumers order by:</p>
+  <ul>
+    <li>For <code>github.com/&lt;owner&gt;/&lt;repo&gt;[/&lt;tool&gt;]</code> the list is the repository's releases endpoint. Its order is the vendor's order. A release counts when it is not a draft and carries a packslip whose <code>project</code> matches; to yank one, remove its packslip asset or the release.</li>
+    <li>Any other project publishes a signed list at <code>https://&lt;host&gt;/.well-known/packslip/&lt;path&gt;.json</code>, where <code>&lt;path&gt;</code> is the project name after the host, or <code>packslip.json</code> directly under <code>.well-known</code> when the name is a bare host.</li>
+  </ul>
+  <p>The list is required: a consumer that finds none refuses the project rather than guessing at URLs. It is a bundle of the same shape as a packslip, with the <code>releases/v1</code> predicate:</p>
 <pre><code>{
   "_type": "https://in-toto.io/Statement/v1",
   "subject": [
@@ -204,6 +209,7 @@
     "expires_at": "2026-10-01T12:00:00Z",
     "sequence": 42,
     "identity": { "scheme": "sigstore-key", "key_id": "5A0A0B8B9C6D7E1F" },
+    "version_order": "semver",
     "releases": [
       { "version": "2026.9.1", "published_at": "2026-09-01T12:00:00Z",
         "packslip": "https://dl.example.com/2026.9.1/packslip.sigstore.json",
@@ -218,6 +224,14 @@
   <p>Each entry may carry <code>prerelease</code> and <code>channel</code> (copied from the packslip), <code>status: "yanked"</code> with a <code>status_reason</code> when the vendor withdrew the release, and <code>security: true</code> when it fixes a vulnerability. A consumer never selects a yanked release, warns when it holds one, and may shorten its minimum release age for a security release.</p>
   <p><code>packslip releases</code> produces the list from local copies of the released bundles. The list separates the name from where the bytes live, the way a Go vanity import does: the identity is anchored to the domain, and the artifacts can be anywhere.</p>
 
+  <h2 id="ordering">Ordering versions</h2>
+  <p><code>version</code> is the vendor's string and a consumer never infers a scheme from it: histories switch schemes, two-component versions parse and sort wrong, and date versions look like semver. The vendor declares how its versions order with <code>version_order</code>, on each release and on the list, in the two values mise's registry uses:</p>
+  <ul>
+    <li><code>source</code> (default): the release list's order, newest first, is the ranking. On GitHub that is the releases endpoint's order; on a vendor's own list it is the array order. "Latest" is the first eligible entry.</li>
+    <li><code>semver</code>: versions are strict <code>MAJOR.MINOR.PATCH</code> (calver such as <code>2026.9.1</code> qualifies) and sort as semver. "Latest" is the highest eligible version, so a backport such as 20.19.1 published after 22.0.0 never masquerades as the newest release, and range constraints (<code>^1.2</code>) have meaning.</li>
+  </ul>
+  <p>Eligible means not yanked, not a prerelease unless prereleases were asked for, and in the requested channel when one was given. A requested version matches as a prefix on dot-separated components under either order, so <code>20</code> and <code>3.12</code> mean what people expect; range constraints are refused under <code>source</code> rather than guessed. <code>supersedes</code> remains a rollback hint and takes no part in ordering.</p>
+
   <h2 id="consumer-rules">Consumer rules</h2>
   <ol>
     <li>Pin the identity once. For a forge project, the name is the pin: accept only the forge's issuer and an identity under the repository. For other projects, pin the public key or identity from a list of pins you maintain, or from the well-known list on first use. Never take a key from the document itself, and never trust a bundle's key hint.</li>
@@ -225,7 +239,7 @@
     <li>Enforce no-downgrade: refuse a release whose <code>identity.scheme</code> is weaker than the last accepted one, whose signer changed without a human saying so, whose <code>attested_by</code> went from vendor to repackager, or that dropped per-artifact provenance the last release carried. For a keyless signer, compare the workflow path, not the ref: a new tag of the same workflow is the same signer.</li>
     <li>Apply any minimum release age to the log's integration time, falling back to <code>published_at</code> only for an unlogged bundle you chose to accept.</li>
     <li>Treat <code>supersedes</code> as the ordering hint for rollback detection.</li>
-    <li>For a release list, refuse one that has expired or whose <code>sequence</code> is below the last one accepted; never select a yanked entry; skip prereleases unless asked for them.</li>
+    <li>Use the project's release list (GitHub's releases endpoint, or the signed list) and refuse a project that has neither. Refuse a signed list that has expired or whose <code>sequence</code> is below the last one accepted; never select a yanked entry; skip prereleases unless asked for them; order as <code>version_order</code> says.</li>
     <li>Select one artifact by os, arch, libc, format, and, when needed, variant. Refuse to guess between two artifacts that match.</li>
   </ol>
 

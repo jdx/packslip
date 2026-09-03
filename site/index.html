@@ -211,7 +211,7 @@ packslip releases --project mytool.example.com \
         <li><strong>Enforce no-downgrade.</strong> Refuse a release whose scheme is weaker than the last accepted one, whose signer changed without a human saying so, or that dropped provenance the last release carried. Compare keyless signers by workflow path, not ref.</li>
         <li><strong>Apply a minimum release age</strong> to the log's integration time, so a hijacked release is noticed before unattended installs pick it up.</li>
         <li><strong>Treat <code>supersedes</code> as the ordering hint</strong> for rollback detection. Never parse version strings.</li>
-        <li><strong>Refuse a stale release list:</strong> one past its expiry, or with a sequence below the last one accepted. Never select a yanked release; skip prereleases unless asked.</li>
+        <li><strong>Order by the vendor's word, never by parsing.</strong> Every project has a release list: GitHub's releases endpoint, or a signed list on the vendor's domain. <code>version_order</code> says whether that list's order or semver ranks releases. Refuse a stale signed list, never select a yanked release, skip prereleases unless asked.</li>
         <li><strong>Never guess between two artifacts.</strong> Select by os, arch, libc, format, and variant; if two still match, stop.</li>
       </ol>
 <pre><code>packslip verify packslip.sigstore.json \

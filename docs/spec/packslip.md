@@ -132,6 +132,7 @@ Rules:
 - `prerelease` (default false) marks a release not meant for general use;
   consumers skip it unless asked for prereleases. `channel` is the vendor's
   own word for the release track (`stable`, `beta`, `nightly`).
+  `version_order` is `source` (default) or `semver`; see Ordering versions.
 - `os`, `arch`, and `libc` use the values `linux`, `darwin`, `windows`,
   `freebsd`; `x86_64`, `aarch64`, `armv7`, `riscv64`, `i686`; `gnu`,
   `musl`. `format` is the archive or installer type: `tar.xz`, `tar.gz`,
@@ -225,17 +226,23 @@ Ed25519 signature over the pre-authentication encoding of the payload.
 Publish the bundle next to the artifacts: as a release asset, or under the
 version directory of a download site.
 
-For a project on a known forge, the forge's release listing is the
-discovery mechanism and nothing more is needed. A project on its own
-domain advertises recent releases at
+Every project has a release list, and it is what consumers order by:
+
+- For `github.com/<owner>/<repo>[/<tool>]` the list is the repository's
+  releases endpoint. Its order is the vendor's order. A release counts
+  when it is not a draft and carries a packslip whose `project` matches;
+  to yank one, remove its packslip asset or the release.
+- Any other project publishes a signed list at
 
 ```
 https://<host>/.well-known/packslip/<path>.json
 ```
 
 where `<path>` is the project name after the host, or `packslip.json`
-directly under `.well-known` when the name is a bare host. The list is a
-bundle of the same shape as a packslip, with the `releases/v1` predicate:
+directly under `.well-known` when the name is a bare host. The list is
+required: a consumer that finds none refuses the project rather than
+guessing at URLs. It is a bundle of the same shape as a packslip, with the
+`releases/v1` predicate:
 
 ```json
 {
@@ -253,6 +260,7 @@ bundle of the same shape as a packslip, with the `releases/v1` predicate:
     "expires_at": "2026-10-01T12:00:00Z",
     "sequence": 42,
     "identity": { "scheme": "sigstore-key", "key_id": "5A0A0B8B9C6D7E1F" },
+    "version_order": "semver",
     "releases": [
       { "version": "2026.9.1", "published_at": "2026-09-01T12:00:00Z",
         "packslip": "https://dl.example.com/2026.9.1/packslip.sigstore.json",
@@ -285,6 +293,30 @@ The list separates the name from where the bytes live, the way a Go vanity
 import does: the identity is anchored to the domain, and the artifacts can
 be anywhere.
 
+## Ordering versions
+
+`version` is the vendor's string and a consumer never infers a scheme from
+it: histories switch schemes, two-component versions parse and sort wrong,
+and date versions look like semver. The vendor declares how its versions
+order with `version_order`, on each release and on the list, in the two
+values mise's registry uses:
+
+- `source` (default): the release list's order, newest first, is the
+  ranking. On GitHub that is the releases endpoint's order; on a vendor's
+  own list it is the array order. "Latest" is the first eligible entry.
+- `semver`: versions are strict `MAJOR.MINOR.PATCH` (calver such as
+  `2026.9.1` qualifies) and sort as semver. "Latest" is the highest eligible
+  version, so a backport such as 20.19.1 published after 22.0.0 never
+  masquerades as the newest release, and range constraints (`^1.2`) have
+  meaning.
+
+Eligible means not yanked, not a prerelease unless prereleases were asked
+for, and in the requested channel when one was given. A requested version
+matches as a prefix on dot-separated components under either order, so
+`20` and `3.12` mean what people expect; range constraints are refused
+under `source` rather than guessed. `supersedes` remains a rollback hint
+and takes no part in ordering.
+
 ## Consumer rules
 
 1. Pin the identity once. For a forge project, the name is the pin: accept
@@ -304,9 +336,11 @@ be anywhere.
 4. Apply any minimum release age to the log's integration time, falling
    back to `published_at` only for an unlogged bundle you chose to accept.
 5. Treat `supersedes` as the ordering hint for rollback detection.
-6. For a release list, refuse one that has expired or whose `sequence` is
-   below the last one accepted; never select a yanked entry; skip
-   prereleases unless asked for them.
+6. Use the project's release list (GitHub's releases endpoint, or the
+   signed list) and refuse a project that has neither. Refuse a signed
+   list that has expired or whose `sequence` is below the last one
+   accepted; never select a yanked entry; skip prereleases unless asked
+   for them; order as `version_order` says.
 7. Select one artifact by os, arch, libc, format, and, when needed,
    variant. Refuse to guess between two artifacts that match.
 

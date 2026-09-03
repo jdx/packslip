@@ -29,6 +29,7 @@ pub struct Verified {
     pub key_id: String,
     /// Whether the vendor or a repackager made the claim.
     pub attested_by: crate::model::Attestor,
+    pub version_order: crate::model::VersionOrder,
     pub prerelease: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub channel: Option<String>,
@@ -193,6 +194,7 @@ pub fn verify(
         scheme,
         key_id,
         attested_by: statement.predicate.attested_by,
+        version_order: statement.predicate.version_order,
         prerelease: statement.predicate.prerelease,
         channel: statement.predicate.channel.clone(),
         issuer,

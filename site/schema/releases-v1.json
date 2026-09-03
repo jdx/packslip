@@ -61,7 +61,7 @@
           "type": "string"
         },
         "releases": {
-          "description": "Newest first is conventional but not required.",
+          "description": "Newest first: under `source` ordering this order is the ranking.",
           "items": {
             "$ref": "#/$defs/ReleaseRef"
           },
@@ -72,6 +72,10 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "version_order": {
+          "$ref": "#/$defs/VersionOrder",
+          "description": "How consumers order the versions listed."
         }
       },
       "required": [
@@ -169,6 +173,21 @@
         "digest"
       ],
       "type": "object"
+    },
+    "VersionOrder": {
+      "description": "How a project's versions are ordered, in mise's vocabulary. The vendor\ndeclares it; consumers never infer it from the strings.",
+      "oneOf": [
+        {
+          "const": "source",
+          "description": "The order the release list gives, newest first: GitHub's releases\nendpoint, or the vendor's signed list. For date versions,\ntwo-component versions, mixed histories, and anything uncertain.",
+          "type": "string"
+        },
+        {
+          "const": "semver",
+          "description": "Versions are strict `MAJOR.MINOR.PATCH` (calver such as `2026.9.1`\nincluded) and sort as semver, so the highest is the latest and\nrange constraints have meaning.",
+          "type": "string"
+        }
+      ]
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",

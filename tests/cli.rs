@@ -360,6 +360,8 @@ fn variants_urls_evidence_and_monorepo_names() {
             "--prerelease",
             "--channel",
             "beta",
+            "--version-order",
+            "semver",
             "--notes-url",
             "https://github.com/oxc-project/oxc/releases/tag/oxlint_v1.0.0",
             "--source-repo",
@@ -389,12 +391,15 @@ fn variants_urls_evidence_and_monorepo_names() {
     assert_eq!(arts[0]["bin"][0]["path"], "bin/oxlint-x86_64");
     assert_eq!(doc["predicate"]["prerelease"], true);
     assert_eq!(doc["predicate"]["channel"], "beta");
+    assert_eq!(doc["predicate"]["version_order"], "semver");
     assert_eq!(doc["predicate"]["source"]["tag"], "oxlint_v1.0.0");
     assert_eq!(
         doc["subject"][0]["digest"]["sha512"].as_str().map(str::len),
         Some(128)
     );
     assert!(doc["predicate"].get("attested_by").is_none());
+    let (code, out, _) = packslip(d, &["show", "repack/packslip.sigstore.json"]);
+    let _ = (code, out);
 
     let (code, out, err) = packslip(
         d,
