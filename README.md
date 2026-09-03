@@ -48,6 +48,15 @@ logging to Rekor; consumers then verify with `--pubkey release.pub`. A
 project on its own domain publishes a signed release list with
 `packslip releases`.
 
+Names are Go-module style host paths. A tool in a monorepo adds a subpath
+(`github.com/oxc-project/oxc/oxlint`) and gets its own packslip per
+release, named `packslip.oxlint.sigstore.json`; the identity pin stays
+the repository. Two builds for one platform take a variant
+(`tool-fips-linux-x64.tar.gz@fips`), an executable whose PATH name differs
+from its file is `--bin oxlint=bin/oxlint-x86_64`, and a repository that
+redistributes a vendor's artifacts without a vendor packslip signs one of
+its own with `--attested-by repackager --evidence apt-release-gpg=<key>`.
+
 ## Layout
 
 - `src/`, `tests/` — the `packslip` crate: schema, generator, verifier.
