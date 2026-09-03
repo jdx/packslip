@@ -1,7 +1,9 @@
 # packslip
 
-> **Under heavy development.** The format is a version 1 draft and still
-> changes between releases; the tooling is young and lightly deployed.
+> **Work-in-progress proposal.** packslip is a draft, not an adopted
+> standard: it is far from certain that mise or Omarchy will adopt it, and
+> nothing depends on it yet. The format is a version 1 draft that still
+> changes between releases, and the tooling is young and lightly deployed.
 > Expect breaking changes until it is declared stable. Feedback is welcome
 > in [issues](https://github.com/jdx/packslip/issues).
 
