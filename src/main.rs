@@ -528,12 +528,15 @@ impl RunWith<BinInfo> for Create {
             };
             urls.insert(name.to_string(), url.to_string());
         }
-        let mut extensions = Extensions::new();
+        // The manifest's extensions first; a flag naming the same key wins.
+        let mut extensions = manifest.extensions.clone();
+        let mut from_flags = Extensions::new();
         for spec in &self.extension {
             let (name, value) = parse_extension(spec)?;
-            if extensions.insert(name.clone(), value).is_some() {
+            if from_flags.insert(name.clone(), value.clone()).is_some() {
                 bail!("--extension {name:?} is given twice");
             }
+            extensions.insert(name, value);
         }
         let mut default_bins: Vec<Bin> = manifest.bin.clone();
         default_bins.extend(self.bin.iter().map(|s| parse_bin(s)));

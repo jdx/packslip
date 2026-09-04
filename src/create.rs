@@ -161,7 +161,16 @@ pub type Platform = (
 /// a manifest or `--format` settles any case the name leaves open.
 pub fn infer_platform(name: &str) -> Platform {
     let lower = name.to_ascii_lowercase();
-    let os = if lower.contains("linux")
+    // Android and iOS first: their triples also say `linux` and `apple`.
+    let os = if lower.contains("android") {
+        Some("android")
+    } else if lower.contains("-ios")
+        || lower.contains("_ios")
+        || lower.contains("ios-")
+        || lower.contains("apple-ios")
+    {
+        Some("ios")
+    } else if lower.contains("linux")
         || lower.ends_with(".deb")
         || lower.ends_with(".rpm")
         || lower.ends_with(".appimage")
@@ -192,8 +201,6 @@ pub fn infer_platform(name: &str) -> Platform {
         Some("openbsd")
     } else if lower.contains("illumos") {
         Some("illumos")
-    } else if lower.contains("android") {
-        Some("android")
     } else {
         None
     };
@@ -370,7 +377,10 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
             provenance: input.provenance.clone(),
             extensions: input.extensions.clone(),
         };
-        if let (Some(_), Some(_), Some(_)) = (&artifact.os, &artifact.arch, &artifact.format)
+        // Anything with a format is selectable, so two artifacts that agree
+        // on platform, variant, and format leave a consumer nothing to
+        // choose by, portable ones included.
+        if artifact.format.is_some()
             && let Some(other) = artifacts.iter().find(|a| {
                 a.os == artifact.os
                     && a.arch == artifact.arch
@@ -674,6 +684,15 @@ mod tests {
             (Some("linux"), Some("x86_64"), Some("gnu"), Some("tar"))
         );
         // Less common hosts and architectures.
+        // Android and iOS triples also say linux and apple.
+        assert_eq!(
+            infer_platform("tool-aarch64-linux-android.tar.gz"),
+            (Some("android"), Some("aarch64"), None, Some("tar.gz"))
+        );
+        assert_eq!(
+            infer_platform("tool-aarch64-apple-ios.zip"),
+            (Some("ios"), Some("aarch64"), None, Some("zip"))
+        );
         assert_eq!(
             infer_platform("tool-netbsd-i386.tar.gz"),
             (Some("netbsd"), Some("i686"), None, Some("tar.gz"))
@@ -1040,6 +1059,26 @@ mod tests {
         assert_eq!(arts[0].bin, [Bin::named("tool-universal", "tool")]);
         assert_eq!(arts[1].format.as_deref(), Some("raw"));
         assert_eq!(arts[1].bin, [Bin::named("tool-windows-x64", "tool.exe")]);
+        // Two portable artifacts of one format are as ambiguous as two
+        // builds for one platform.
+        let other_script = dir.path().join("tool-anywhere");
+        std::fs::write(&other_script, b"#!/bin/sh").unwrap();
+        let err = create(&request(
+            vec![
+                ArtifactInput {
+                    portable: true,
+                    ..ArtifactInput::new(&script)
+                },
+                ArtifactInput {
+                    portable: true,
+                    ..ArtifactInput::new(&other_script)
+                },
+            ],
+            None,
+            None,
+        ))
+        .unwrap_err();
+        assert!(matches!(err, Error::Ambiguous { .. }), "{err}");
 
         // A path read from a Windows archive is kept exactly; only the PATH
         // name takes .exe.

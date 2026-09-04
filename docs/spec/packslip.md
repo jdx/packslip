@@ -787,7 +787,7 @@ Action.
     settles a `.exe`. Artifacts on the command line join those the
     manifest lists, the manifest's entry winning for a file both name,
     and flags win over the manifest's `project`, `version`, `url_base`,
-    `notes_url`, `published_at`, and `source`.
+    `notes_url`, `published_at`, `source`, and, key by key, `extensions`.
   - Signing: `--key release.key` signs with a key; `--no-log` skips Rekor.
   - On a forge project, `create` warns when `--tag` does not name
     `--version`, since consumers list from tags.

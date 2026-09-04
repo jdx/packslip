@@ -774,6 +774,12 @@ requires = { glibc_min = "2.31" }
 repo = "https://github.com/example/tool"
 tag = "v1.2.3"
 
+[extensions."example.com"]
+build_id = "20260901.3"
+
+[extensions.mise]
+postinstall = "from the manifest"
+
 [[artifact]]
 path = "dist/tool-1.2.3-setup.exe"
 bin = []
@@ -804,6 +810,8 @@ asset = "dist/tool.cdx.json"
             "out",
             "--published-at",
             "2026-09-01T00:00:00Z",
+            "--extension",
+            r#"mise={"postinstall":"from the flag"}"#,
             "dist/tool-1.2.3-linux-x64.tar.gz",
             "dist/tool-1.2.3-windows-x64.zip",
             "dist/tool-1.2.3-windows-arm64.exe",
@@ -820,6 +828,16 @@ asset = "dist/tool.cdx.json"
     let doc: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(doc["predicate"]["project"], "github.com/example/tool");
     assert_eq!(doc["predicate"]["version"], "1.2.3");
+    // The manifest's extensions reach the document; a flag naming the
+    // same key wins.
+    assert_eq!(
+        doc["predicate"]["extensions"]["example.com"]["build_id"],
+        "20260901.3"
+    );
+    assert_eq!(
+        doc["predicate"]["extensions"]["mise"]["postinstall"],
+        "from the flag"
+    );
     let by_name = |name: &str| {
         doc["predicate"]["artifacts"]
             .as_array()

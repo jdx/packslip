@@ -1042,8 +1042,6 @@ impl Statement {
                     && a.libc == artifact.libc
                     && a.variant == artifact.variant
                     && a.format == artifact.format
-                    && a.os.is_some()
-                    && a.arch.is_some()
                     && a.format.is_some()
             }) {
                 return Err(InvalidDocument::AmbiguousArtifacts(
@@ -2274,6 +2272,36 @@ mod tests {
             json.contains(r#""tag":"v2026.9.1""#) && json.contains(r#""kind":"scan""#),
             "{json}"
         );
+    }
+
+    #[test]
+    fn portable_duplicates_are_ambiguous() {
+        let mut s = sample();
+        for artifact in &mut s.predicate.artifacts {
+            artifact.os = None;
+            artifact.arch = None;
+            artifact.libc = None;
+            artifact.format = Some("zip".into());
+        }
+        s.validate().unwrap();
+        s.subject.push(Subject {
+            name: "twin.zip".into(),
+            digest: s.subject[0].digest.clone(),
+        });
+        s.predicate.artifacts.push(Artifact {
+            name: "twin.zip".into(),
+            ..s.predicate.artifacts[0].clone()
+        });
+        assert!(matches!(
+            s.validate(),
+            Err(InvalidDocument::AmbiguousArtifacts(_, _))
+        ));
+        // Without a format neither is selectable, so nothing is ambiguous.
+        for artifact in &mut s.predicate.artifacts {
+            artifact.format = None;
+            artifact.bin.clear();
+        }
+        s.validate().unwrap();
     }
 
     #[test]

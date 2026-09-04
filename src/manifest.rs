@@ -36,7 +36,8 @@
 //! asset = "dist/tool.cdx.json"
 //! ```
 //!
-//! Anything the command line also sets wins over the manifest, and
+//! Anything the command line also sets wins over the manifest, an
+//! `--extension` over the manifest's `extensions` key by key, and
 //! artifacts given on the command line join those the manifest lists,
 //! with the manifest's entry taken for a file both name.
 
