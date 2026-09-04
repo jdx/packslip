@@ -123,6 +123,10 @@ pub enum Error {
     #[error("{path}: not a packslip bundle: {why}")]
     NotAPackslip { path: String, why: String },
     #[error(
+        "asset {path} is named {name:?}, but a different file with that name was already given"
+    )]
+    AssetCollision { name: String, path: String },
+    #[error(
         "artifacts {a:?} and {b:?} both describe {platform}; give one a variant so consumers can tell them apart"
     )]
     Ambiguous {
@@ -310,15 +314,28 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
         artifacts.push(artifact);
     }
     let mut asset_urls = std::collections::BTreeMap::new();
+    let mut asset_digests: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
     for asset in &request.assets {
         let name = file_name(asset.path);
-        if asset_urls.contains_key(&name) {
-            continue;
-        }
         let digests = crate::digest_file_all(asset.path).map_err(|source| Error::Io {
             path: asset.path.display().to_string(),
             source,
         })?;
+        // The same file given twice is one asset; two different files that
+        // share a name cannot both be the subject that name would carry.
+        match asset_digests.get(&name) {
+            Some(seen) if *seen == digests.sha256 => continue,
+            Some(_) => {
+                return Err(Error::AssetCollision {
+                    name,
+                    path: asset.path.display().to_string(),
+                });
+            }
+            None => {
+                asset_digests.insert(name.clone(), digests.sha256.clone());
+            }
+        }
         let url = asset.url.clone().or_else(|| {
             request
                 .url_base
@@ -652,6 +669,36 @@ mod tests {
         assert_eq!(swept.statement.predicate.artifacts.len(), 1);
         assert_eq!(swept.statement.subject.len(), 2);
         assert_eq!(swept.statement.subject[1].name, "tool-skill.tar.gz");
+
+        // Two different files sharing a name are refused, not collapsed.
+        let elsewhere = dir.path().join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        let other_skill = elsewhere.join("tool-skill.tar.gz");
+        std::fs::write(&other_skill, b"different bytes").unwrap();
+        let err = create(&Request {
+            artifacts: vec![ArtifactInput {
+                bin: vec![Bin::new("tool")],
+                ..ArtifactInput::new(&a)
+            }],
+            assets: vec![
+                AssetInput {
+                    path: &skill,
+                    url: None,
+                },
+                AssetInput {
+                    path: &other_skill,
+                    url: None,
+                },
+            ],
+            resources: vec![Resource {
+                name: Some("tool".into()),
+                asset: Some("tool-skill.tar.gz".into()),
+                ..Resource::new("skill")
+            }],
+            ..Request::new("tool.example.com", "1.0.0", key_identity(&key))
+        })
+        .unwrap_err();
+        assert!(matches!(err, Error::AssetCollision { .. }), "{err}");
 
         // The asset digest is checked like an artifact's, and a resource
         // whose asset was not given is refused.
