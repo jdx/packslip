@@ -9,13 +9,12 @@ Author: Jeff Dickey ([@jdx](https://github.com/jdx)).
 
 A vendor publishes one signed, machine-readable document per release that
 says what the artifacts are and how to verify them. A consumer, whether that
-is mise, omapac and the Omarchy Package Repository, aqua, Homebrew, or a
-corporate mirror, verifies it against one pinned identity or key. In return
-it gets checksums, platform mapping, executables, provenance links, and
-whatever else ships with the release: completions, man pages, a CLI spec, a
-skill, a desktop entry. It needs no per-vendor logic and no registry entry.
-The name is neutral on purpose: a packing slip is the paper in the box
-listing exactly what shipped.
+is mise, pacvamp, aqua, Homebrew, or a corporate mirror, verifies it against
+one pinned identity or key. In return it gets checksums, platform mapping,
+executables, provenance links, and whatever else ships with the release:
+completions, man pages, a CLI spec, a skill, a desktop entry. It needs no
+per-vendor logic and no registry entry. The name is neutral on purpose: a
+packing slip is the paper in the box listing exactly what shipped.
 
 packslip invents as little as it can. The document is an in-toto statement
 in a sigstore bundle, the same shape GitHub artifact attestations, npm

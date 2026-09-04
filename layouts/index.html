@@ -18,7 +18,7 @@
 
 <main class="wrap">
 
-<p class="notice"><strong>Work in progress.</strong> packslip is a draft, not a standard. mise ships experimental support for it, but the format and the tooling still change between releases, so use it for testing and nothing you depend on. Whether Omarchy adopts it is undecided. Expect breaking changes until it is declared stable.</p>
+<p class="notice"><strong>Work in progress.</strong> packslip is a draft, not a standard. mise ships experimental support for it, but the format and the tooling still change between releases, so use it for testing and nothing you depend on. Expect breaking changes until it is declared stable.</p>
 
 <div class="hero">
   <div>
@@ -228,8 +228,8 @@ packslip releases --project mytool.example.com \
   <h2>Built for the tools that install other people's binaries.</h2>
   <div class="cols">
     <div>
-      <h3>omapac and the Omarchy Package Repository</h3>
-      <p>The plan is to generate vendor-built packages from the vendor's packslip instead of hand-edited checksum lines. The repository would re-verify against the project's identity, enforce a minimum release age and no-downgrade, and ship the packslip beside the package so a client can chain the repository's signature back to the vendor offline.</p>
+      <h3><a href="https://pacvamp.com">pacvamp</a></h3>
+      <p><a href="https://github.com/jdx/pacvamp">pacvamp</a> is a trust-focused package manager for pacman-based distributions. It is meant to build vendor packages from the vendor's packslip instead of hand-edited checksum lines, re-verify against the project's identity, enforce a minimum release age and no-downgrade, and ship the packslip beside the package so a client can chain the repository's signature back to the vendor offline.</p>
     </div>
     <div>
       <h3>mise</h3>

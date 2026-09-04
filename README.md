@@ -8,9 +8,8 @@
 > **Work in progress.** packslip is a draft, not a standard. mise ships
 > experimental support for it, but the format and the tooling still change
 > between releases, so use it for testing and nothing you depend on.
-> Whether Omarchy adopts it is undecided. Expect breaking changes until it
-> is declared stable. Feedback is welcome in
-> [issues](https://github.com/jdx/packslip/issues).
+> Expect breaking changes until it is declared stable. Feedback is welcome
+> in [issues](https://github.com/jdx/packslip/issues).
 
 A signed release manifest for vendor binaries. One file per release,
 `packslip.sigstore.json`, says what shipped and how to verify it; any
