@@ -140,6 +140,8 @@ impl ArtifactSpec {
 #[serde(deny_unknown_fields)]
 pub struct ResourceSpec {
     pub kind: String,
+    /// Exact release artifact filename, not a local path.
+    pub artifact: Option<String>,
     /// Limit the entry to artifacts of this platform.
     pub os: Option<String>,
     pub arch: Option<String>,
@@ -178,6 +180,7 @@ impl ResourceSpec {
         };
         let resource = Resource {
             kind: self.kind.clone(),
+            artifact: self.artifact.clone(),
             os: self.os.clone(),
             arch: self.arch.clone(),
             libc: self.libc.clone(),

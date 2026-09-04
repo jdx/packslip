@@ -285,17 +285,22 @@ pub fn normalize_version(text: &str) -> Option<String> {
 }
 
 /// Whether a resource applies to an artifact: each of the resource's
-/// `os`, `arch`, and `libc` is absent or equal to the artifact's. A
+/// `os`, `arch`, and `libc` is absent or equal to the artifact's, and
+/// an `artifact` selector names it. A
 /// consumer choosing among entries for the same thing takes the one
 /// naming the most of those fields; [`select_resources`] does that.
 pub fn resource_fits(resource: &Resource, artifact: &Artifact) -> bool {
-    [
-        (&resource.os, &artifact.os),
-        (&resource.arch, &artifact.arch),
-        (&resource.libc, &artifact.libc),
-    ]
-    .into_iter()
-    .all(|(scope, value)| scope.is_none() || scope == value)
+    resource
+        .artifact
+        .as_ref()
+        .is_none_or(|name| name == &artifact.name)
+        && [
+            (&resource.os, &artifact.os),
+            (&resource.arch, &artifact.arch),
+            (&resource.libc, &artifact.libc),
+        ]
+        .into_iter()
+        .all(|(scope, value)| scope.is_none() || scope == value)
 }
 
 /// The resources to use with one artifact, as the specification's
@@ -320,10 +325,13 @@ fn select_among<'a>(
     identities_of: impl Fn(&Resource) -> Vec<ResourceIdentity>,
 ) -> Vec<&'a Resource> {
     let specificity = |r: &Resource| {
-        [&r.os, &r.arch, &r.libc]
-            .iter()
-            .filter(|f| f.is_some())
-            .count()
+        (
+            r.artifact.is_some(),
+            [&r.os, &r.arch, &r.libc]
+                .iter()
+                .filter(|f| f.is_some())
+                .count(),
+        )
     };
     let identities: Vec<Vec<ResourceIdentity>> = resources.iter().map(&identities_of).collect();
     let mut keep = vec![false; resources.len()];
@@ -343,7 +351,7 @@ fn select_among<'a>(
                 .iter()
                 .map(|&i| specificity(&resources[i]))
                 .max()
-                .unwrap_or(0);
+                .unwrap_or_default();
             for i in fitting {
                 if specificity(&resources[i]) == best {
                     keep[i] = true;
@@ -730,6 +738,9 @@ fn valid_min_version(min: &str) -> bool {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Resource {
     pub kind: String,
+    /// Exact artifact name. More specific than any platform-only scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact: Option<String>,
     /// Limits the entry to artifacts of this `os`, when layouts differ by
     /// platform. Absent means any artifact. See [`resource_fits`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1149,6 +1160,8 @@ pub enum InvalidDocument {
     NoArtifacts,
     #[error("a resource has an empty kind")]
     ResourceKind,
+    #[error("resource {0:?} names artifact {1:?}, which is absent or outside its platform scope")]
+    ResourceArtifact(String, String),
     #[error("resource {0:?} must have exactly one of archive, asset, repo, exec")]
     ResourceSource(String),
     #[error("resource {0:?}: {1} path must be relative with no empty or .. segments")]
@@ -1423,6 +1436,11 @@ impl Statement {
                 return Err(InvalidDocument::ResourceKind);
             }
             check_extensions(&format!("resource {label:?}"), &resource.extensions)?;
+            if let Some(name) = &resource.artifact
+                && !p.artifacts.iter().any(|a| resource_fits(resource, a))
+            {
+                return Err(InvalidDocument::ResourceArtifact(label, name.clone()));
+            }
             let Some(source) = resource.source() else {
                 return Err(InvalidDocument::ResourceSource(label));
             };
@@ -2734,6 +2752,62 @@ mod tests {
             !resource_fits(&windows, &artifacts[4]),
             "a portable artifact is not a Windows one"
         );
+    }
+
+    #[test]
+    fn resource_artifact_scope_distinguishes_formats_and_variants() {
+        let mut s = sample();
+        let target = s.predicate.artifacts[0].clone();
+        let fallback = Resource {
+            os: target.os.clone(),
+            arch: target.arch.clone(),
+            libc: target.libc.clone(),
+            shell: Some("zsh".into()),
+            archive: Some("share/_mise".into()),
+            ..Resource::new("completion")
+        };
+        let exact = Resource {
+            artifact: Some(target.name.clone()),
+            os: None,
+            arch: None,
+            libc: None,
+            archive: Some("other-layout/_mise".into()),
+            ..fallback.clone()
+        };
+        s.predicate.resources = vec![fallback.clone(), exact.clone()];
+        s.validate().unwrap();
+        assert_eq!(
+            select_resources(&s, &target),
+            vec![&s.predicate.resources[1]]
+        );
+        for (name, format, variant) in [
+            ("mise.zip", "zip", None),
+            ("mise-fips.tar.xz", "tar.xz", Some("fips")),
+            ("mise", "raw", None),
+        ] {
+            let other = Artifact {
+                name: name.into(),
+                format: Some(format.into()),
+                variant: variant.map(Into::into),
+                ..target.clone()
+            };
+            assert!(!resource_fits(&exact, &other));
+            assert_eq!(
+                select_resources(&s, &other),
+                vec![&s.predicate.resources[0]]
+            );
+        }
+        s.predicate.resources[1].artifact = Some("missing.tar.xz".into());
+        assert!(matches!(
+            s.validate(),
+            Err(InvalidDocument::ResourceArtifact(_, _))
+        ));
+        s.predicate.resources[1].artifact = Some(target.name);
+        s.predicate.resources[1].os = Some("windows".into());
+        assert!(matches!(
+            s.validate(),
+            Err(InvalidDocument::ResourceArtifact(_, _))
+        ));
     }
 
     #[test]

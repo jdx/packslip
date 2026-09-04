@@ -344,6 +344,13 @@
             "null"
           ]
         },
+        "artifact": {
+          "description": "Exact artifact name. More specific than any platform-only scope.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "asset": {
           "description": "The name of a separate release file, listed in `subject` with its\ndigest.",
           "type": [
