@@ -109,6 +109,9 @@ For a project on its own domain: lists released packslips with their digests so 
     flag --sequence help="Increases with every list published" required=#true {
         arg <SEQUENCE>
     }
+    flag --latest help="Recommend this exact listed version for unconstrained latest requests" {
+        arg <LATEST>
+    }
     flag --valid-for help="How long the list stays current: 30d, 12h, 2w" default="30d" {
         arg <VALID_FOR>
     }

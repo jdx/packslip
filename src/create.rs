@@ -585,6 +585,8 @@ pub struct ListRequest<'a> {
     /// How long the list stays current.
     pub valid_for: std::time::Duration,
     pub sequence: u64,
+    /// Exact listed version recommended for unconstrained latest requests.
+    pub latest: Option<&'a str>,
     pub releases: Vec<ListedRelease<'a>>,
     pub identity: Identity,
 }
@@ -674,6 +676,7 @@ pub fn create_release_list(request: &ListRequest<'_>) -> Result<CreatedList, Err
             generated_at: generated.to_string(),
             expires_at: expires.to_string(),
             sequence: request.sequence,
+            latest: request.latest.map(str::to_owned),
             identity: request.identity.clone(),
             releases,
             extensions: Extensions::new(),
@@ -1345,6 +1348,7 @@ mod tests {
             generated_at: Some("2026-09-01T01:00:00Z"),
             valid_for: std::time::Duration::from_secs(30 * 86_400),
             sequence: 3,
+            latest: Some("1.0.0"),
             releases: vec![ListedRelease {
                 url: "https://dl.example.com/1.0.0/packslip.sigstore.json",
                 bundle_path: &bundle_path,
@@ -1356,6 +1360,7 @@ mod tests {
         })
         .unwrap();
         assert_eq!(list.statement.predicate.expires_at, "2026-10-01T01:00:00Z");
+        assert_eq!(list.statement.predicate.latest.as_deref(), Some("1.0.0"));
         let entry = &list.statement.predicate.releases[0];
         assert_eq!(entry.version, "1.0.0");
         assert_eq!(entry.tag.as_deref(), Some("v1.0.0"));
@@ -1378,6 +1383,10 @@ mod tests {
             crate::verify::verify_release_list(&list_bundle, &Trust::Key(&public), options)
                 .unwrap();
         assert_eq!(verified_list.list.predicate.sequence, 3);
+        assert_eq!(
+            verified_list.list.predicate.latest.as_deref(),
+            Some("1.0.0")
+        );
         assert!(
             verified_list
                 .list
@@ -1389,6 +1398,7 @@ mod tests {
             generated_at: None,
             valid_for: std::time::Duration::from_secs(60),
             sequence: 4,
+            latest: None,
             releases: vec![
                 ListedRelease {
                     url: "https://x/a.sigstore.json",
@@ -1414,6 +1424,7 @@ mod tests {
             generated_at: None,
             valid_for: std::time::Duration::from_secs(60),
             sequence: 1,
+            latest: None,
             releases: vec![ListedRelease {
                 url: "https://x/packslip.sigstore.json",
                 bundle_path: &bundle_path,

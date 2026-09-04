@@ -1027,6 +1027,11 @@ pub struct ReleaseList {
     /// than it has seen.
     pub sequence: u64,
     pub identity: Identity,
+    /// The vendor's recommended default: an exact version in `releases`.
+    /// Consumers still apply all eligibility checks before selecting it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(regex(pattern = SEMVER_PATTERN))]
+    pub latest: Option<String>,
     /// In any order; consumers rank by semver precedence.
     pub releases: Vec<ReleaseRef>,
     /// Vendor- or consumer-defined data about the list. See
@@ -1208,6 +1213,8 @@ pub enum InvalidDocument {
     NoReleases,
     #[error("release {0:?} appears more than once")]
     DuplicateRelease(String),
+    #[error("latest {0:?} does not name a version in the release list")]
+    UnknownLatest(String),
     #[error("release {0:?} has no subject carrying its packslip digest")]
     OrphanRelease(String),
     #[error("expires_at is not after generated_at")]
@@ -1641,6 +1648,12 @@ impl ReleaseListStatement {
                 return Err(InvalidDocument::OrphanRelease(release.version.clone()));
             }
         }
+        if let Some(latest) = &p.latest {
+            parse_version(latest)?;
+            if !seen.contains(latest.as_str()) {
+                return Err(InvalidDocument::UnknownLatest(latest.clone()));
+            }
+        }
         Ok(())
     }
 
@@ -1826,6 +1839,7 @@ mod tests {
                 generated_at: "2026-09-01T12:00:00Z".into(),
                 expires_at: "2026-10-01T12:00:00Z".into(),
                 sequence: 7,
+                latest: None,
                 identity: Identity {
                     scheme: Scheme::SigstoreKey,
                     key_id: "5A0A0B8B9C6D7E1F".into(),
@@ -1839,6 +1853,37 @@ mod tests {
                 }],
                 extensions: Extensions::new(),
             },
+        }
+    }
+
+    #[test]
+    fn latest_is_an_optional_exact_listed_version() {
+        let mut list = sample_list();
+        let json = serde_json::to_value(&list).unwrap();
+        assert!(json["predicate"].get("latest").is_none());
+        let old: ReleaseListStatement = serde_json::from_value(json).unwrap();
+        old.validate().unwrap();
+        assert_eq!(old.predicate.latest, None);
+
+        list.predicate.latest = Some("2026.9.1".into());
+        list.validate().unwrap();
+        // Eligibility is consumer policy: withdrawing the recommended release
+        // does not invalidate the list or erase the withdrawal.
+        list.predicate.releases[0].status = Some(ReleaseStatus::Yanked);
+        list.validate().unwrap();
+        let roundtrip: ReleaseListStatement =
+            serde_json::from_slice(&list.canonical_bytes()).unwrap();
+        assert_eq!(roundtrip, list);
+        for invalid in ["latest", "v2026.9.1", "2026.9", ""] {
+            list.predicate.latest = Some(invalid.into());
+            assert!(list.validate().is_err());
+        }
+        for missing in ["3.0.0", "2026.9.1+other"] {
+            list.predicate.latest = Some(missing.into());
+            assert_eq!(
+                list.validate(),
+                Err(InvalidDocument::UnknownLatest(missing.into()))
+            );
         }
     }
 
