@@ -176,7 +176,12 @@ pub fn infer_platform(name: &str) -> Platform {
             .windows(2)
             .any(|pair| pair[0] == first && pair[1] == second)
     };
-    let os = if follows("linux", "android") || (has("android") && !has("linux")) {
+    let android = |word: &str| word == "android" || word == "androideabi";
+    let os = if tokens
+        .windows(2)
+        .any(|pair| pair[0] == "linux" && android(pair[1]))
+        || (tokens.iter().any(|t| android(t)) && !has("linux"))
+    {
         Some("android")
     } else if follows("apple", "ios")
         || (has("ios") && !has("apple") && !has("darwin") && !has("macos"))
@@ -708,6 +713,10 @@ mod tests {
         assert_eq!(
             infer_platform("tool-android-arm64.tar.gz"),
             (Some("android"), Some("aarch64"), None, Some("tar.gz"))
+        );
+        assert_eq!(
+            infer_platform("tool-armv7-linux-androideabi.tar.gz"),
+            (Some("android"), Some("armv7"), None, Some("tar.gz"))
         );
         assert_eq!(
             infer_platform("tool-ios-arm64.zip"),
