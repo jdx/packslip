@@ -3,25 +3,36 @@
     "Artifact": {
       "properties": {
         "arch": {
+          "description": "`x86_64`, `aarch64`, `armv7`, `armv6`, `riscv64`, `i686`,\n`powerpc64le`, `s390x`, `loongarch64`. Absent when the artifact\nruns on any architecture.",
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
           "type": [
             "string",
             "null"
           ]
         },
         "bin": {
-          "description": "Executables inside the artifact, as paths relative to the archive\nroot, or the artifact's own name when it is a bare executable. A\nconsumer puts these on PATH under `name`.",
+          "description": "Executables inside the artifact, as paths relative to the archive\nroot, or the artifact's own name (minus any compression suffix)\nwhen it is a bare executable. A consumer puts these on PATH under\n`name`.",
           "items": {
             "$ref": "#/$defs/Bin"
           },
           "type": "array"
         },
+        "extensions": {
+          "additionalProperties": true,
+          "description": "Vendor- or consumer-defined data about this artifact. See\n[`Extensions`].",
+          "type": "object"
+        },
         "format": {
+          "description": "The archive type (`tar.xz`, `tar.gz`, `tar.zst`, `tar.bz2`, `tgz`,\n`tar`, `zip`, `7z`), a single compressed executable (`gz`, `xz`,\n`zst`, `bz2`), an installer (`deb`, `rpm`, `dmg`, `pkg`, `msi`,\n`msix`, `exe`, `appimage`), or `raw` for a bare executable. Two\nartifacts that differ only in format carry the same build, and a\nconsumer takes whichever it prefers.",
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
           "type": [
             "string",
             "null"
           ]
         },
         "libc": {
+          "description": "`gnu` or `musl`, for a Linux build. Absent when the artifact does\nnot depend on one.",
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
           "type": [
             "string",
             "null"
@@ -31,6 +42,8 @@
           "type": "string"
         },
         "os": {
+          "description": "`linux`, `darwin`, `windows`, `freebsd`, `netbsd`, `openbsd`,\n`illumos`, `android`, `ios`. Absent when the artifact runs on any\nOS.",
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
           "type": [
             "string",
             "null"
@@ -66,7 +79,8 @@
           ]
         },
         "variant": {
-          "description": "Tells apart artifacts that share os, arch, libc, and format:\n`fips`, `baseline`, `debug`, `installer`, `source`.",
+          "description": "Tells apart builds that share os, arch, and libc: `fips`,\n`baseline`, `debug`, `installer`, `source`. A consumer selects only\nartifacts without a variant unless asked for one.",
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
           "type": [
             "string",
             "null"
@@ -121,10 +135,12 @@
       "properties": {
         "sha256": {
           "description": "Lowercase hex.",
+          "pattern": "^[0-9a-f]{64}$",
           "type": "string"
         },
         "sha512": {
           "description": "Lowercase hex, for consumers that want it (electron-updater,\nBalrog, Scoop).",
+          "pattern": "^[0-9a-f]{128}$",
           "type": [
             "string",
             "null"
@@ -137,10 +153,10 @@
       "type": "object"
     },
     "Evidence": {
-      "description": "One thing a repackager checked. Documented kinds:\n`pkgbuild-checksums`, `checksum-file-over-tls`, `apt-release-gpg`,\n`vendor-signature`, `github-attestation`, `none`.",
+      "description": "One thing a repackager or a release list's publisher checked.\nDocumented kinds: `pkgbuild-checksums`, `checksum-file-over-tls`,\n`apt-release-gpg`, `vendor-signature`, `vendor-packslip`,\n`github-attestation`, `provenance-verified`, `scan`, `none`.",
       "properties": {
         "detail": {
-          "description": "A key id, URL, or note that lets a reader check the claim.",
+          "description": "A key id, URL, or note that lets a reader check the claim: the\nvendor packslip's digest, a scan report's URL.",
           "type": [
             "string",
             "null"
@@ -198,6 +214,11 @@
           },
           "type": "array"
         },
+        "extensions": {
+          "additionalProperties": true,
+          "description": "Vendor- or consumer-defined data about the release. See\n[`Extensions`].",
+          "type": "object"
+        },
         "identity": {
           "$ref": "#/$defs/Identity"
         },
@@ -213,6 +234,7 @@
         },
         "published_at": {
           "description": "RFC 3339 UTC.",
+          "format": "date-time",
           "type": "string"
         },
         "resources": {
@@ -221,12 +243,6 @@
             "$ref": "#/$defs/Resource"
           },
           "type": "array"
-        },
-        "sbom": {
-          "type": [
-            "string",
-            "null"
-          ]
         },
         "source": {
           "anyOf": [
@@ -239,7 +255,8 @@
           ]
         },
         "version": {
-          "description": "Semver 2.0.0 (calver such as `2026.9.1` qualifies). Its prerelease\npart, if any, marks a prerelease, and the first identifier of that\npart names the channel: see [`channel`].",
+          "description": "Semver 2.0.0 (calver such as `2026.9.1` qualifies). Its prerelease\npart, if any, marks a prerelease, and the first identifier of that\npart names the channel: see [`channel`]. On a forge, the release\ntag names this version: see [`tag_version`].",
+          "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$",
           "type": "string"
         }
       },
@@ -273,8 +290,16 @@
       "type": "object"
     },
     "Resource": {
-      "description": "Something the release ships besides its executables, and where to get\nit. The kind says what it is; exactly one of `archive`, `asset`,\n`repo`, and `exec` says where it comes from. Documented kinds:\n`completion`, `man`, `cli-spec`, `skill`, `desktop`, `icon`, `app`.\nConsumers ignore kinds they do not know.",
+      "description": "Something the release ships besides its executables, and where to get\nit. The kind says what it is; exactly one of `archive`, `asset`,\n`repo`, and `exec` says where it comes from. Documented kinds:\n`completion`, `man`, `cli-spec`, `skill`, `desktop`, `icon`, `app`,\n`sbom`. Consumers ignore kinds they do not know.",
       "properties": {
+        "arch": {
+          "description": "Likewise for `arch`.",
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "archive": {
           "description": "A path inside the selected artifact, relative to the archive root.",
           "type": [
@@ -303,8 +328,13 @@
           },
           "type": "array"
         },
+        "extensions": {
+          "additionalProperties": true,
+          "description": "Vendor- or consumer-defined data about this resource. See\n[`Extensions`].",
+          "type": "object"
+        },
         "format": {
-          "description": "For `cli-spec`: the spec format. `usage` is documented.",
+          "description": "For `cli-spec`: the spec format, of which `usage` is documented.\nFor `sbom`: `cyclonedx` or `spdx`.",
           "type": [
             "string",
             "null"
@@ -313,8 +343,24 @@
         "kind": {
           "type": "string"
         },
+        "libc": {
+          "description": "Likewise for `libc`.",
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "name": {
           "description": "For `skill`: the skill's name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "os": {
+          "description": "Limits the entry to artifacts of this `os`, when layouts differ by\nplatform. Absent means any artifact. See [`resource_fits`].",
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
           "type": [
             "string",
             "null"

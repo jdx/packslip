@@ -80,7 +80,9 @@ What ships besides the executables is a `resources` entry with a kind and
 one source: `--resource completion/zsh=archive:share/zsh/site-functions/_mytool`
 for a file inside every archive, `--resource skill/mytool=repo:skills/mytool`
 for a path at the release commit, `--resource skill/mytool=asset:dist/skill.tar.gz`
-for a separate release file digested alongside the artifacts, and
+for a separate release file digested alongside the artifacts,
+`--resource sbom/cyclonedx=asset:dist/mytool.cdx.json` for a bill of
+materials that verifies like an artifact, and
 `--resource 'completion/bash,zsh,fish=exec:mytool completion {shell}'` for
 a command consumers may run. A `cli-spec/usage` entry points at a
 [usage](https://usage.jdx.dev) spec, from which a consumer derives
@@ -94,16 +96,44 @@ vendor's own data, or a consumer's name such as `mise` for hints that
 consumer documents. packslip never assigns meaning to a key there, so it
 cannot collide with a field a later revision adds.
 
+`--bin mytool` is looked up inside each archive, so the packslip records
+the true path (`mytool-1.2.3-linux-x64/mytool`), and a bare executable
+such as `mytool-linux-arm64` or `mytool.exe` gets that name on PATH. What
+the flags cannot say per artifact, such as executables at different paths
+in different archives, a `.exe` that is the program rather than an
+installer, host requirements, or an artifact that runs anywhere, goes in
+a TOML manifest passed as `--manifest release.toml`:
+
+```toml
+bin = ["mytool"]
+requires = { glibc_min = "2.31" }
+
+[[artifact]]
+path = "dist/mytool-1.2.3-windows-x64.exe"
+format = "raw"
+
+[[resource]]
+kind = "man"
+os = "linux"
+archive = "mytool-1.2.3-linux-x64/share/man/man1/mytool.1"
+```
+
+Consumers list a GitHub project's versions from its tags, so a tag is the
+version, optionally after a `v` and the tool's or repository's name
+(`v1.2.3`, `oxlint_v1.0.0`, `jq-1.7.1`). A vendor that needs to withdraw
+a release, or whose tags name no version, commits a signed release list
+at `.well-known/packslip.json` on the default branch.
+
 ## Layout
 
 - `src/`, `tests/` — the `packslip` crate: schema, generator, verifier.
 - `action.yml` — the composite GitHub Action.
 - `docs/spec/packslip.md` — the specification's canonical text.
-- `packslip.usage.kdl`, `content/cli/` — the generated usage spec and CLI reference.
+- `packslip.usage.kdl`, `content/cli/`, `content/spec.md`, `static/schema/` — the generated usage spec, CLI reference, spec page, and JSON schemas.
 - `content/`, `layouts/`, `static/` — the Hugo source for packslip.dev, served by GitHub Pages.
 
-Run `mise run render` after changing CLI arguments or help text, and commit the
-updated spec and pages. Run `mise run docs` to regenerate them and preview the
+Run `mise run render` after changing CLI arguments, help text, the schema, or
+the specification, and commit the updated spec and pages. Run `mise run docs` to regenerate them and preview the
 site locally; `mise run docs:build` performs the production build. The Pages
 workflow fetches the current GitHub star count into `data/github.json` before
 building, so visitors receive it in the rendered HTML.

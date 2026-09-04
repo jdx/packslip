@@ -3,10 +3,13 @@ locale = "en-US"
 title = "packslip"
 disableKinds = ["rss", "sitemap", "taxonomy", "term"]
 
-[markup]
-  [markup.highlight]
-    noClasses = false
-
 [caches]
   [caches.images]
     dir = ":cacheDir/images"
+
+[markup]
+  [markup.tableOfContents]
+    startLevel = 2
+    endLevel = 3
+  [markup.highlight]
+    noClasses = false

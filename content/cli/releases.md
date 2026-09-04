@@ -17,6 +17,7 @@ For a project on its own domain: lists released packslips with their digests so 
 - **`--release <RELEASE>`** — A released packslip as URL=PATH: where consumers fetch it, and the local copy to read (repeatable)
 - **`--yank <YANK>`** — Mark a listed release withdrawn, as URL=REASON (repeatable)
 - **`--security <SECURITY>`** — Mark a listed release as a security fix, by URL (repeatable)
+- **`--evidence <EVIDENCE>`** — What a publisher other than the vendor checked about a listed release, as URL=KIND or URL=KIND=DETAIL (repeatable)
 - **`-k --key <KEY>`** — Sign with this secret key instead of a CI identity
 - **`--sign <SIGN>`** — How to sign; defaults to key when --key is given, else oidc
 - **`--no-log`** — With --key: do not record the signature in Rekor

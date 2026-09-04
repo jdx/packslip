@@ -381,6 +381,34 @@ fn variants_urls_evidence_and_monorepo_names() {
     assert_ne!(code, 0);
     assert!(err.contains("semver"), "{err}");
 
+    // The bare executable cannot carry the archives' bin path; a manifest
+    // gives it its own, and the tag names the version.
+    std::fs::write(
+        d.join("release.toml"),
+        "[[artifact]]\npath = \"oxlint-linux-arm64\"\nbin = [\"oxlint\"]\n",
+    )
+    .unwrap();
+    let (code, _, err) = packslip(
+        d,
+        &[
+            "create",
+            "--project",
+            "github.com/oxc-project/oxc/oxlint",
+            "--version",
+            "1.0.0-beta.1",
+            "--key",
+            "k.key",
+            "--no-log",
+            "--out",
+            "dist",
+            "--bin",
+            "oxlint=bin/oxlint-x86_64",
+            "oxlint-linux-x64.tar.gz",
+            "oxlint-linux-arm64",
+        ],
+    );
+    assert_ne!(code, 0);
+    assert!(err.contains("bare executable"), "{err}");
     let (code, out, err) = packslip(
         d,
         &[
@@ -394,30 +422,35 @@ fn variants_urls_evidence_and_monorepo_names() {
             "--no-log",
             "--out",
             "dist",
+            "--manifest",
+            "release.toml",
             "--url-base",
-            "https://github.com/oxc-project/oxc/releases/download/oxlint_v1.0.0",
+            "https://github.com/oxc-project/oxc/releases/download/oxlint_v1.0.0-beta.1",
             "--url",
             "oxlint-linux-arm64=https://cdn.example.com/oxlint-linux-arm64",
             "--bin",
             "oxlint=bin/oxlint-x86_64",
             "--notes-url",
-            "https://github.com/oxc-project/oxc/releases/tag/oxlint_v1.0.0",
+            "https://github.com/oxc-project/oxc/releases/tag/oxlint_v1.0.0-beta.1",
             "--source-repo",
             "https://github.com/oxc-project/oxc",
             "--tag",
-            "oxlint_v1.0.0",
+            "oxlint_v1.0.0-beta.1",
             "--published-at",
             "2026-09-01T00:00:00Z",
             "--extension",
             r#"example.com={"build_id":"20260901.3"}"#,
             "--extension",
             "mise=true",
+            "--provenance",
+            "oxlint-linux-arm64=https://api.example.com/attestations/sha256:abc",
             "oxlint-linux-x64.tar.gz",
             "oxlint-fips-linux-x64.tar.gz@fips",
             "oxlint-linux-arm64",
         ],
     );
     assert_eq!(code, 0, "{err}");
+    assert!(!err.contains("warning"), "{err}");
     assert!(
         out.contains("wrote dist/packslip.oxlint.sigstore.json (3 artifact(s)"),
         "{out}"
@@ -448,15 +481,49 @@ fn variants_urls_evidence_and_monorepo_names() {
     assert_eq!(code, 0, "{err}");
     let doc: serde_json::Value = serde_json::from_str(&out).unwrap();
     let arts = &doc["predicate"]["artifacts"];
-    assert_eq!(arts[1]["variant"], "fips");
-    assert_eq!(arts[2]["format"], "raw");
-    assert_eq!(arts[2]["url"], "https://cdn.example.com/oxlint-linux-arm64");
+    // The manifest's artifact comes first, with its own bin and provenance.
+    assert_eq!(arts[0]["name"], "oxlint-linux-arm64");
+    assert_eq!(arts[0]["format"], "raw");
+    assert_eq!(arts[0]["url"], "https://cdn.example.com/oxlint-linux-arm64");
+    assert_eq!(arts[0]["bin"][0]["path"], "oxlint-linux-arm64");
     assert_eq!(arts[0]["bin"][0]["name"], "oxlint");
-    assert_eq!(arts[0]["bin"][0]["path"], "bin/oxlint-x86_64");
+    assert_eq!(
+        arts[0]["provenance"][0],
+        "https://api.example.com/attestations/sha256:abc"
+    );
+    assert_eq!(arts[1]["bin"][0]["name"], "oxlint");
+    assert_eq!(arts[1]["bin"][0]["path"], "bin/oxlint-x86_64");
+    assert!(arts[1].get("provenance").is_none());
+    assert_eq!(arts[2]["variant"], "fips");
     assert_eq!(doc["predicate"]["version"], "1.0.0-beta.1");
     assert!(doc["predicate"].get("prerelease").is_none());
     assert!(doc["predicate"].get("channel").is_none());
-    assert_eq!(doc["predicate"]["source"]["tag"], "oxlint_v1.0.0");
+    assert_eq!(doc["predicate"]["source"]["tag"], "oxlint_v1.0.0-beta.1");
+
+    // A tag that names another version is a warning, since consumers list
+    // from tags.
+    let (code, _, err) = packslip(
+        d,
+        &[
+            "create",
+            "--project",
+            "github.com/oxc-project/oxc/oxlint",
+            "--version",
+            "1.0.0",
+            "--key",
+            "k.key",
+            "--no-log",
+            "--out",
+            "warned",
+            "--source-repo",
+            "https://github.com/oxc-project/oxc",
+            "--tag",
+            "oxlint_v1.0.1",
+            "oxlint-linux-x64.tar.gz",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert!(err.contains("does not name version 1.0.0"), "{err}");
     assert_eq!(
         doc["predicate"]["extensions"]["example.com"]["build_id"],
         "20260901.3"
@@ -618,6 +685,266 @@ fn variants_urls_evidence_and_monorepo_names() {
     );
     assert_ne!(code, 0);
     assert!(err.contains("not among the --release entries"), "{err}");
+
+    // A list from someone other than the vendor says what it checked.
+    let (code, _, err) = packslip(
+        d,
+        &[
+            "releases",
+            "--project",
+            "packages.example.com/tool",
+            "--sequence",
+            "2",
+            "--release",
+            "https://x/a=repack/packslip.sigstore.json",
+            "--evidence",
+            "https://x/a=scan=https://scans.example.com/1",
+            "--evidence",
+            "https://x/a=provenance-verified",
+            "--key",
+            "k.key",
+            "--no-log",
+            "--out",
+            "scanned.sigstore.json",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    let (_, out, _) = packslip(d, &["show", "scanned.sigstore.json"]);
+    let list: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let evidence = &list["predicate"]["releases"][0]["evidence"];
+    assert_eq!(evidence[0]["kind"], "scan");
+    assert_eq!(evidence[0]["detail"], "https://scans.example.com/1");
+    assert_eq!(evidence[1]["kind"], "provenance-verified");
+}
+
+#[test]
+fn manifests_and_real_archives() {
+    use std::io::Write as _;
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let (code, _, err) = packslip(d, &["keygen", "-o", "k.key"]);
+    assert_eq!(code, 0, "{err}");
+    // A real archive with the executable under a versioned directory, a
+    // Windows zip, a bare .exe, an installer, and an SBOM.
+    let tar_gz = |entries: &[(&str, &[u8])]| {
+        let mut builder = tar::Builder::new(Vec::new());
+        for (name, data) in entries {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(data.len() as u64);
+            header.set_mode(0o755);
+            header.set_cksum();
+            builder.append_data(&mut header, name, *data).unwrap();
+        }
+        let tar = builder.into_inner().unwrap();
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        gz.write_all(&tar).unwrap();
+        gz.finish().unwrap()
+    };
+    std::fs::create_dir_all(d.join("dist")).unwrap();
+    std::fs::write(
+        d.join("dist/tool-1.2.3-linux-x64.tar.gz"),
+        tar_gz(&[
+            ("tool-1.2.3-linux-x64/tool", b"bin"),
+            ("tool-1.2.3-linux-x64/share/man/man1/tool.1", b"man"),
+        ]),
+    )
+    .unwrap();
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    zip.start_file("tool.exe", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    zip.write_all(b"exe").unwrap();
+    std::fs::write(
+        d.join("dist/tool-1.2.3-windows-x64.zip"),
+        zip.finish().unwrap().into_inner(),
+    )
+    .unwrap();
+    std::fs::write(d.join("dist/tool-1.2.3-windows-arm64.exe"), b"bare").unwrap();
+    std::fs::write(d.join("dist/tool-1.2.3-setup.exe"), b"installer").unwrap();
+    std::fs::write(d.join("dist/tool.cdx.json"), b"{}").unwrap();
+    std::fs::write(
+        d.join("release.toml"),
+        r#"
+project = "github.com/example/tool"
+version = "1.2.3"
+url_base = "https://github.com/example/tool/releases/download/v1.2.3"
+bin = ["tool"]
+requires = { glibc_min = "2.31" }
+
+[source]
+repo = "https://github.com/example/tool"
+tag = "v1.2.3"
+
+[extensions."example.com"]
+build_id = "20260901.3"
+
+[extensions.mise]
+postinstall = "from the manifest"
+
+[[artifact]]
+path = "dist/tool-1.2.3-setup.exe"
+bin = []
+requires = { os_min = "10.0.17763" }
+
+[[resource]]
+kind = "man"
+archive = "tool-1.2.3-linux-x64/share/man/man1/tool.1"
+os = "linux"
+
+[[resource]]
+kind = "sbom"
+format = "cyclonedx"
+asset = "dist/tool.cdx.json"
+"#,
+    )
+    .unwrap();
+    let (code, out, err) = packslip(
+        d,
+        &[
+            "create",
+            "--manifest",
+            "release.toml",
+            "--key",
+            "k.key",
+            "--no-log",
+            "--out",
+            "out",
+            "--published-at",
+            "2026-09-01T00:00:00Z",
+            "--extension",
+            r#"mise={"postinstall":"from the flag"}"#,
+            "dist/tool-1.2.3-linux-x64.tar.gz",
+            "dist/tool-1.2.3-windows-x64.zip",
+            "dist/tool-1.2.3-windows-arm64.exe",
+            "dist/tool-1.2.3-setup.exe",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.contains("(4 artifact(s), 2 resource(s), signed by"),
+        "{out}"
+    );
+    let (code, out, err) = packslip(d, &["show", "out/packslip.sigstore.json"]);
+    assert_eq!(code, 0, "{err}");
+    let doc: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(doc["predicate"]["project"], "github.com/example/tool");
+    assert_eq!(doc["predicate"]["version"], "1.2.3");
+    // The manifest's extensions reach the document; a flag naming the
+    // same key wins.
+    assert_eq!(
+        doc["predicate"]["extensions"]["example.com"]["build_id"],
+        "20260901.3"
+    );
+    assert_eq!(
+        doc["predicate"]["extensions"]["mise"]["postinstall"],
+        "from the flag"
+    );
+    let by_name = |name: &str| {
+        doc["predicate"]["artifacts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["name"] == name)
+            .unwrap()
+            .clone()
+    };
+    // The manifest's entry comes with its own bins and requirements; the
+    // rest inherit the defaults, and the archives are read for the path.
+    let setup = by_name("tool-1.2.3-setup.exe");
+    assert_eq!(setup["format"], "exe");
+    assert!(setup.get("bin").is_none());
+    assert_eq!(setup["requires"]["os_min"], "10.0.17763");
+    let linux = by_name("tool-1.2.3-linux-x64.tar.gz");
+    assert_eq!(linux["bin"][0], "tool-1.2.3-linux-x64/tool");
+    assert_eq!(linux["requires"]["glibc_min"], "2.31");
+    assert_eq!(
+        linux["url"],
+        "https://github.com/example/tool/releases/download/v1.2.3/tool-1.2.3-linux-x64.tar.gz"
+    );
+    let windows_zip = by_name("tool-1.2.3-windows-x64.zip");
+    assert_eq!(windows_zip["bin"][0], "tool.exe");
+    let bare = by_name("tool-1.2.3-windows-arm64.exe");
+    assert_eq!(bare["format"], "raw");
+    assert_eq!(bare["bin"][0]["path"], "tool-1.2.3-windows-arm64.exe");
+    assert_eq!(bare["bin"][0]["name"], "tool.exe");
+    let res = &doc["predicate"]["resources"];
+    assert_eq!(res[0]["kind"], "man");
+    assert_eq!(res[0]["os"], "linux");
+    assert_eq!(res[1]["kind"], "sbom");
+    assert_eq!(res[1]["format"], "cyclonedx");
+    assert_eq!(res[1]["asset"], "tool.cdx.json");
+    assert_eq!(
+        res[1]["url"],
+        "https://github.com/example/tool/releases/download/v1.2.3/tool.cdx.json"
+    );
+    assert!(doc["predicate"].get("sbom").is_none());
+    let (code, out, err) = packslip(
+        d,
+        &[
+            "verify",
+            "out/packslip.sigstore.json",
+            "--pubkey",
+            "k.pub",
+            "--allow-unlogged",
+            "--artifact",
+            "dist/tool.cdx.json",
+            "--artifact",
+            "dist/tool-1.2.3-linux-x64.tar.gz",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("2 of 4 artifact(s) checked"), "{out}");
+    assert!(out.contains("2 resource(s)"), "{out}");
+
+    // An executable the archive does not hold is refused, as is a manifest
+    // that names no version and a command line without one.
+    let (code, _, err) = packslip(
+        d,
+        &[
+            "create",
+            "--project",
+            "github.com/example/tool",
+            "--version",
+            "1.2.3",
+            "--key",
+            "k.key",
+            "--no-log",
+            "--bin",
+            "other",
+            "dist/tool-1.2.3-linux-x64.tar.gz",
+        ],
+    );
+    assert_ne!(code, 0);
+    assert!(err.contains("no file named \"other\""), "{err}");
+    std::fs::write(d.join("bare.toml"), "bin = [\"tool\"]\n").unwrap();
+    let (code, _, err) = packslip(
+        d,
+        &[
+            "create",
+            "--manifest",
+            "bare.toml",
+            "--key",
+            "k.key",
+            "--no-log",
+            "dist/tool-1.2.3-linux-x64.tar.gz",
+        ],
+    );
+    assert_ne!(code, 0);
+    assert!(err.contains("--project is required"), "{err}");
+    let (code, _, err) = packslip(
+        d,
+        &[
+            "create",
+            "--project",
+            "github.com/example/tool",
+            "--version",
+            "1.2.3",
+            "--key",
+            "k.key",
+            "--no-log",
+        ],
+    );
+    assert_ne!(code, 0);
+    assert!(err.contains("no artifacts"), "{err}");
 }
 
 #[test]
