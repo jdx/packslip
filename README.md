@@ -1,4 +1,9 @@
-# packslip
+<p>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="static/logo-dark.svg">
+    <img src="static/logo.svg" alt="packslip" width="300" height="78">
+  </picture>
+</p>
 
 > **Work-in-progress proposal.** packslip is a draft, not an adopted
 > standard: it is far from certain that mise or Omarchy will adopt it, and
