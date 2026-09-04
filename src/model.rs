@@ -305,26 +305,38 @@ pub fn resource_fits(resource: &Resource, artifact: &Artifact) -> bool {
 /// another. Document order is kept, and an entry that describes several
 /// things, such as an `exec` completion for several shells, appears
 /// once.
-pub fn select_resources<'a>(resources: &'a [Resource], artifact: &Artifact) -> Vec<&'a Resource> {
+pub fn select_resources<'a>(statement: &'a Statement, artifact: &Artifact) -> Vec<&'a Resource> {
+    let sole_bin = statement.sole_bin();
+    select_among(&statement.predicate.resources, artifact, |r| {
+        r.identities_for(sole_bin)
+    })
+}
+
+/// [`select_resources`] over a slice, with the identities of each entry
+/// given by `identities_of`.
+fn select_among<'a>(
+    resources: &'a [Resource],
+    artifact: &Artifact,
+    identities_of: impl Fn(&Resource) -> Vec<ResourceIdentity>,
+) -> Vec<&'a Resource> {
     let specificity = |r: &Resource| {
         [&r.os, &r.arch, &r.libc]
             .iter()
             .filter(|f| f.is_some())
             .count()
     };
+    let identities: Vec<Vec<ResourceIdentity>> = resources.iter().map(&identities_of).collect();
     let mut keep = vec![false; resources.len()];
     let mut seen = std::collections::BTreeSet::new();
-    for resource in resources {
-        for identity in resource.identities(Some(artifact)) {
+    for own in &identities {
+        for identity in own {
             if !seen.insert(identity.clone()) {
                 continue;
             }
             let fitting: Vec<usize> = resources
                 .iter()
                 .enumerate()
-                .filter(|(_, r)| {
-                    r.identities(Some(artifact)).contains(&identity) && resource_fits(r, artifact)
-                })
+                .filter(|(i, r)| identities[*i].contains(identity) && resource_fits(r, artifact))
                 .map(|(i, _)| i)
                 .collect();
             let best = fitting
@@ -800,6 +812,28 @@ impl std::fmt::Display for ResourceSource {
     }
 }
 
+/// What a resource is an entry for. Entries with equal identities compete
+/// over platform scope and entries with different ones never do; see
+/// [`Resource::identities`] and [`select_resources`]. Structured rather
+/// than joined into one string, so a kind of the vendor's own containing
+/// a slash cannot collide with a documented kind's parts.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ResourceIdentity {
+    pub kind: String,
+    /// The naming fields of the kind, in the order Resources gives them.
+    pub parts: Vec<String>,
+}
+
+impl std::fmt::Display for ResourceIdentity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.kind)?;
+        for part in &self.parts {
+            write!(f, "/{part}")?;
+        }
+        Ok(())
+    }
+}
+
 impl Resource {
     /// A resource of `kind` with no source or qualifiers yet.
     pub fn new(kind: impl Into<String>) -> Resource {
@@ -833,28 +867,30 @@ impl Resource {
 
     /// What this entry is an entry for, so that only entries for the same
     /// thing compete over platform scope: `bin` and the shell of a
-    /// completion (one per shell an `exec` entry generates), `bin` and
-    /// `format` of a cli-spec, the name of a skill, the format of an
-    /// SBOM, and for every other kind `bin`, if any, and the file name of
-    /// the source, or the kind alone for an `exec` source. Each is
-    /// prefixed by the kind.
-    pub fn identities(&self, artifact: Option<&Artifact>) -> Vec<String> {
-        // The executable this entry is for, canonicalized as validation
-        // canonicalizes a bin name (no `.exe`), and resolved to the
-        // artifact's sole executable when the entry leaves `bin` out, so
-        // an omitted name and the explicit one are the same thing.
-        let canonical = |name: &str| name.strip_suffix(".exe").unwrap_or(name).to_string();
-        let bin = self.bin.as_deref().map(canonical).or_else(|| {
-            artifact
-                .filter(|_| matches!(self.kind.as_str(), "completion" | "man" | "cli-spec"))
-                .filter(|a| a.bin.len() == 1)
-                .map(|a| canonical(&a.bin[0].name))
-        });
-        let kind = match &bin {
-            Some(bin) if self.kind != "cli-spec" => format!("{}/{bin}", self.kind),
-            _ => self.kind.clone(),
+    /// completion (one per shell an `exec` entry generates), `format` and
+    /// `bin` of a cli-spec, the name of a skill, the format of an SBOM,
+    /// and for every other kind `bin`, if any, and the file name of the
+    /// source, or nothing for an `exec` source. A completion or man page
+    /// that leaves `bin` out is for the release's only executable; see
+    /// [`Resource::identities_for`], which [`select_resources`] uses.
+    pub fn identities(&self) -> Vec<ResourceIdentity> {
+        self.identities_for(None)
+    }
+
+    /// [`Resource::identities`] in a release whose only executable is
+    /// `sole_bin`: a completion or man page that leaves `bin` out is for
+    /// that one, and competes with an entry that names it.
+    pub fn identities_for(&self, sole_bin: Option<&str>) -> Vec<ResourceIdentity> {
+        // The bare name, as `sole_bin` and validation compare it, so an
+        // entry naming the Windows form is for the same executable.
+        let bin = match self.kind.as_str() {
+            "cli-spec" | "skill" | "sbom" => None,
+            _ => self.bin.as_deref().or(sole_bin).map(command_name),
         };
-        let kind = &kind;
+        let id = |parts: Vec<&str>| ResourceIdentity {
+            kind: self.kind.clone(),
+            parts: bin.into_iter().chain(parts).map(str::to_string).collect(),
+        };
         match self.kind.as_str() {
             "completion" => {
                 let shells: Vec<&str> = self
@@ -864,24 +900,17 @@ impl Resource {
                     .map(String::as_str)
                     .collect();
                 if shells.is_empty() {
-                    vec![kind.clone()]
+                    vec![id(vec![])]
                 } else {
-                    shells.iter().map(|s| format!("{kind}/{s}")).collect()
+                    shells.into_iter().map(|s| id(vec![s])).collect()
                 }
             }
-            "cli-spec" => vec![format!(
-                "{kind}/{}/{}",
+            "cli-spec" => vec![id(vec![
                 self.format.as_deref().unwrap_or_default(),
-                bin.as_deref().unwrap_or_default()
-            )],
-            "skill" => vec![format!(
-                "{kind}/{}",
-                self.name.as_deref().unwrap_or_default()
-            )],
-            "sbom" => vec![format!(
-                "{kind}/{}",
-                self.format.as_deref().unwrap_or_default()
-            )],
+                self.bin.as_deref().map(command_name).unwrap_or_default(),
+            ])],
+            "skill" => vec![id(vec![self.name.as_deref().unwrap_or_default()])],
+            "sbom" => vec![id(vec![self.format.as_deref().unwrap_or_default()])],
             _ => {
                 let path = self
                     .archive
@@ -889,8 +918,8 @@ impl Resource {
                     .or(self.asset.as_deref())
                     .or(self.repo.as_deref());
                 match path {
-                    Some(path) => vec![format!("{kind}/{}", file_name(path))],
-                    None => vec![kind.clone()],
+                    Some(path) => vec![id(vec![file_name(path)])],
+                    None => vec![id(vec![])],
                 }
             }
         }
@@ -1521,6 +1550,23 @@ impl Statement {
             }
         }
         Ok(())
+    }
+
+    /// The release's only executable, by name, when every artifact's
+    /// `bin` entries name the same one (a Windows `.exe` counting as the
+    /// same). A completion or man page may then leave `bin` out.
+    pub fn sole_bin(&self) -> Option<&str> {
+        let names: std::collections::BTreeSet<&str> = self
+            .predicate
+            .artifacts
+            .iter()
+            .flat_map(|a| a.bin.iter())
+            .map(|b| command_name(&b.name))
+            .collect();
+        match names.iter().collect::<Vec<_>>().as_slice() {
+            [one] => Some(one),
+            _ => None,
+        }
     }
 
     /// The host part of the project name: `github.com` for
@@ -2683,35 +2729,47 @@ mod tests {
         ));
         // Two entries for different executables are different things.
         assert_ne!(
-            completion(Some("mise")).identities(None),
-            completion(Some("other")).identities(None)
+            completion(Some("mise")).identities(),
+            completion(Some("other")).identities()
         );
         assert_eq!(
-            completion(Some("other")).identities(None),
+            completion(Some("other"))
+                .identities()
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
             ["completion/other/zsh"]
         );
-        // A `.exe` name is the same command as the bare one, and an
-        // omitted name resolves to a single-executable artifact's own, so
-        // all three name the same completion.
-        let art = |bins: &[&str]| -> Artifact {
-            serde_json::from_value(serde_json::json!({
-                "name": "m.tar.gz", "size": 1, "format": "tar.gz",
-                "bin": bins,
-            }))
-            .unwrap()
-        };
-        let one = art(&["mise"]);
+        // A `.exe` name is the same command as the bare one, and in a
+        // release with one executable an omitted name is that one, so all
+        // three name the same completion.
         assert_eq!(
-            completion(Some("mise.exe")).identities(Some(&one)),
-            completion(Some("mise")).identities(Some(&one))
+            completion(Some("mise.exe")).identities(),
+            completion(Some("mise")).identities()
         );
         assert_eq!(
-            completion(None).identities(Some(&one)),
-            completion(Some("mise")).identities(Some(&one))
+            completion(None).identities_for(Some("mise")),
+            completion(Some("mise")).identities()
         );
-        // With more than one executable an omitted name cannot be resolved.
-        let two = art(&["mise", "rtx"]);
-        assert_eq!(completion(None).identities(Some(&two)), ["completion/zsh"]);
+        assert_eq!(s.sole_bin(), None, "mise and other");
+        s.predicate.artifacts[0].bin.pop();
+        assert_eq!(s.sole_bin(), Some("mise"));
+        s.predicate.resources = vec![
+            completion(None),
+            Resource {
+                os: Some("linux".into()),
+                ..completion(Some("mise"))
+            },
+        ];
+        let linux: Artifact = serde_json::from_value(serde_json::json!({
+            "name": "t-linux.tar.gz", "os": "linux", "size": 1
+        }))
+        .unwrap();
+        assert_eq!(
+            select_resources(&s, &linux),
+            [&s.predicate.resources[1]],
+            "the scoped entry that names the sole executable hides the unnamed one"
+        );
     }
 
     #[test]
@@ -2756,8 +2814,11 @@ mod tests {
             archive("man", "share/man/t.1"),
             scoped(archive("man", "man/t.1"), "darwin"),
         ];
+        let mut doc = sample();
+        doc.predicate.resources = resources;
+        let resources = &doc.predicate.resources;
         let names = |artifact: &Artifact| -> Vec<String> {
-            select_resources(&resources, artifact)
+            select_resources(&doc, artifact)
                 .iter()
                 .map(|r| {
                     let mut label = r.label();
@@ -2794,13 +2855,30 @@ mod tests {
             ],
             "the darwin man page hides the unscoped one of the same file name"
         );
-        assert_eq!(
-            resources[7].identities(None),
-            ["completion/bash", "completion/zsh"]
+        let ids = |r: &Resource| -> Vec<String> {
+            r.identities().iter().map(ToString::to_string).collect()
+        };
+        assert_eq!(ids(&resources[7]), ["completion/bash", "completion/zsh"]);
+        assert_eq!(ids(&resources[3]), ["skill/both"]);
+        assert_eq!(ids(&resources[8]), ["man/t.1"]);
+        assert_eq!(ids(&Resource::new("man")), ["man"]);
+        // A kind of the vendor's own may contain a slash without colliding
+        // with a documented kind's parts.
+        let spec = Resource {
+            format: Some("usage".into()),
+            bin: Some("tool".into()),
+            ..Resource::new("cli-spec")
+        };
+        let custom = Resource {
+            archive: Some("tool".into()),
+            ..Resource::new("cli-spec/usage")
+        };
+        assert_eq!(ids(&spec), ids(&custom), "they print alike");
+        assert_ne!(
+            spec.identities(),
+            custom.identities(),
+            "but are not the same thing"
         );
-        assert_eq!(resources[3].identities(None), ["skill/both"]);
-        assert_eq!(resources[8].identities(None), ["man/t.1"]);
-        assert_eq!(Resource::new("man").identities(None), ["man"]);
     }
 
     #[test]

@@ -339,7 +339,8 @@ Documented kinds:
   `"env": { "COMPLETE": "{shell}" }` for clap's dynamic completions,
   `"env": { "_TOOL_COMPLETE": "{shell}_source" }` for click. `bin` names
   the executable the script completes; a release with one executable may
-  leave it out.
+  leave it out, and an entry that does is for that executable, competing
+  with one that names it.
 - `man`: a man page. The section is the file's suffix, as in `mise.1`.
   `bin` names the executable it documents, as for a completion.
 - `cli-spec`: a machine-readable description of the executable named by
