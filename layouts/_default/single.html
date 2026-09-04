@@ -45,7 +45,7 @@
   <p>packslip invents as little as it can. The document is an in-toto statement in a sigstore bundle, the same shape GitHub artifact attestations, npm provenance, and Homebrew bottles use. Identity comes from sigstore's certificate authority and transparency log. What packslip adds is the predicate: the release manifest that a registry entry would otherwise hold.</p>
 
   <h2 id="names">Names</h2>
-  <p>A project is named the way Go names a module: a host, optionally followed by a path. <code>github.com/jdx/mise</code>, <code>gitlab.com/group/tool</code>, <code>mise.jdx.dev</code>. No scheme, lowercase host with at least one dot, no empty or dot segments, no trailing slash.</p>
+  <p>A project is named by a host, optionally followed by a path. <code>github.com/jdx/mise</code>, <code>gitlab.com/group/tool</code>, <code>mise.jdx.dev</code>. No scheme, lowercase host with at least one dot, no empty or dot segments, no trailing slash.</p>
   <p>The name is the location and, on a forge, the identity:</p>
   <ul>
     <li><code>github.com/&lt;owner&gt;/&lt;repo&gt;</code>: releases and their packslips are GitHub release assets, and the packslip is expected to be signed by a workflow of that repository through GitHub's OIDC issuer (<code>https://token.actions.githubusercontent.com</code>).</li>
@@ -55,7 +55,7 @@
   <p>A consumer needs nothing else to start verifying a project on a known forge. A short-name alias table (<code>mise</code> for <code>github.com/jdx/mise</code>) is a convenience a consumer may add; it is not part of the format.</p>
 
   <h2 id="monorepos">Monorepos</h2>
-  <p>A repository that releases several tools names each one with a subpath, as Go names nested modules: <code>github.com/oxc-project/oxc/oxlint</code>, <code>github.com/bazelbuild/buildtools/buildifier</code>, <code>github.com/biomejs/biome/cli</code>. Each tool gets its own packslip per release, with its own <code>version</code>, and <code>source.tag</code> carries the real tag (<code>oxlint_v1.0.0</code>, <code>cli/v1.9.4</code>), so nobody has to guess how a tag maps to a version. The identity pin is still the repository: any workflow of <code>oxc-project/oxc</code> may sign a packslip for <code>oxc-project/oxc/oxlint</code>.</p>
+  <p>A repository that releases several tools names each one with a subpath: <code>github.com/oxc-project/oxc/oxlint</code>, <code>github.com/bazelbuild/buildtools/buildifier</code>, <code>github.com/biomejs/biome/cli</code>. Each tool gets its own packslip per release, with its own <code>version</code>, and <code>source.tag</code> carries the real tag (<code>oxlint_v1.0.0</code>, <code>cli/v1.9.4</code>), so nobody has to guess how a tag maps to a version. The identity pin is still the repository: any workflow of <code>oxc-project/oxc</code> may sign a packslip for <code>oxc-project/oxc/oxlint</code>.</p>
   <p>When several tools share one GitHub release, each ships its own bundle, named <code>packslip.&lt;subpath&gt;.sigstore.json</code> with <code>/</code> in the subpath replaced by <code>-</code> (<code>packslip.oxlint.sigstore.json</code>, <code>packslip.crates-cli.sigstore.json</code>). A repository's own packslip stays <code>packslip.sigstore.json</code>. Consumers do not trust the file name: they read the <code>packslip*.sigstore.json</code> assets of a release and keep the one whose <code>predicateType</code> is <code>release/v1</code> and whose <code>project</code> is the name they asked for.</p>
 
   <h2 id="file">The file</h2>
@@ -251,7 +251,7 @@
 }</code></pre>
   <p>Each subject is a listed packslip's URL with the digest of that file, so the list pins the exact documents it points at. <code>expires_at</code> and <code>sequence</code> are borrowed from TUF's timestamp role: a consumer refuses a list that has expired, or whose sequence is lower than one it has already accepted, so a mirror cannot freeze or roll back the vendor's view.</p>
   <p>Each entry may carry <code>prerelease</code> and <code>channel</code> (copied from the packslip), <code>status: "yanked"</code> with a <code>status_reason</code> when the vendor withdrew the release, and <code>security: true</code> when it fixes a vulnerability. A consumer never selects a yanked release, warns when it holds one, and may shorten its minimum release age for a security release.</p>
-  <p><code>packslip releases</code> produces the list from local copies of the released bundles. The list separates the name from where the bytes live, the way a Go vanity import does: the identity is anchored to the domain, and the artifacts can be anywhere.</p>
+  <p><code>packslip releases</code> produces the list from local copies of the released bundles. The list separates the name from where the bytes live: the identity is anchored to the domain, and the artifacts can be anywhere.</p>
 
   <h2 id="ordering">Ordering versions</h2>
   <p><code>version</code> is the vendor's string, and a consumer never infers an ordering scheme from it. Projects switch schemes over their history, two-component versions parse and sort wrong, and date versions look like semver. Instead the vendor declares how its versions order with <code>version_order</code>, on each release and on the list, using the two values mise's registry uses:</p>

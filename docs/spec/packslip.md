@@ -23,10 +23,10 @@ predicate: the release manifest that a registry entry would otherwise hold.
 
 ## Names
 
-A project is named the way Go names a module: a host, optionally followed
-by a path. `github.com/jdx/mise`, `gitlab.com/group/tool`, `mise.jdx.dev`.
-No scheme, lowercase host with at least one dot, no empty or dot segments,
-no trailing slash.
+A project is named by a host, optionally followed by a path.
+`github.com/jdx/mise`, `gitlab.com/group/tool`, `mise.jdx.dev`. No scheme,
+lowercase host with at least one dot, no empty or dot segments, no trailing
+slash.
 
 The name is the location and, on a forge, the identity:
 
@@ -47,8 +47,8 @@ convenience a consumer may add; it is not part of the format.
 
 ### Monorepos
 
-A repository that releases several tools names each one with a subpath,
-as Go names nested modules: `github.com/oxc-project/oxc/oxlint`,
+A repository that releases several tools names each one with a subpath:
+`github.com/oxc-project/oxc/oxlint`,
 `github.com/bazelbuild/buildtools/buildifier`,
 `github.com/biomejs/biome/cli`. Each tool gets its own packslip per
 release, with its own `version`, and `source.tag` carries the real tag
@@ -362,9 +362,8 @@ may shorten its minimum release age for a security release.
 bundles; the JSON schema is at
 `https://packslip.dev/schema/releases-v1.json`.
 
-The list separates the name from where the bytes live, the way a Go vanity
-import does: the identity is anchored to the domain, and the artifacts can
-be anywhere.
+The list separates the name from where the bytes live: the identity is
+anchored to the domain, and the artifacts can be anywhere.
 
 ## Ordering versions
 

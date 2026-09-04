@@ -67,7 +67,7 @@ logging to Rekor; consumers then verify with `--pubkey release.pub`. A
 project on its own domain publishes a signed release list with
 `packslip releases`.
 
-Names are Go-module style host paths. A tool in a monorepo adds a subpath
+Names are host paths. A tool in a monorepo adds a subpath
 (`github.com/oxc-project/oxc/oxlint`) and gets its own packslip per
 release, named `packslip.oxlint.sigstore.json`; the identity pin stays
 the repository. Two builds for one platform take a variant
