@@ -42,7 +42,7 @@
 
   <h2 id="goal">Goal</h2>
   <p>A vendor publishes one signed, machine-readable document per release that says what the artifacts are and how to verify them. A consumer, whether that is <a href="https://mise.jdx.dev">mise</a>, <a href="https://pacvamp.com">pacvamp</a>, or a corporate mirror, verifies it against one pinned identity or key. In return it gets checksums, platform mapping, executables, provenance links, and whatever else ships with the release: completions, man pages, a CLI spec, a skill, a desktop entry.</p>
-  <p>packslip invents as little as it can. The document is an in-toto statement in a sigstore bundle, the same shape GitHub artifact attestations, npm provenance, and Homebrew bottles use. Identity comes from sigstore's certificate authority and transparency log. What packslip adds is the predicate: the release manifest that a registry entry would otherwise hold.</p>
+  <p>packslip invents as little as it can. The document is an in-toto statement in a sigstore bundle, the same shape GitHub artifact attestations, npm provenance, and Homebrew bottles use. Identity comes from sigstore's certificate authority and transparency log. What packslip adds is the predicate: the release manifest itself.</p>
 
   <h2 id="names">Names</h2>
   <p>A project is named by a host, optionally followed by a path. <code>github.com/jdx/mise</code>, <code>gitlab.com/group/tool</code>, <code>mise.jdx.dev</code>. No scheme, lowercase host with at least one dot, no empty or dot segments, no trailing slash.</p>
@@ -176,7 +176,7 @@
   </div>
 
   <h2 id="resources">Resources</h2>
-  <p>A release usually ships more than its executables: shell completions, a man page, a spec of the CLI, an agent skill, and, for a desktop application, the entry, icons, or app bundle a launcher needs. A registry entry would hold all of these, so <code>resources</code> does. Each entry names a <code>kind</code> and exactly one source. The sources differ in what a consumer can verify, and a consumer prefers them in this order:</p>
+  <p>A release usually ships more than its executables: shell completions, a man page, a spec of the CLI, an agent skill, and, for a desktop application, the entry, icons, or app bundle a launcher needs. <code>resources</code> lists them. Each entry names a <code>kind</code> and exactly one source. The sources differ in what a consumer can verify, and a consumer prefers them in this order:</p>
   <ul>
     <li><code>archive</code>: a path inside the artifact the consumer selected, relative to the archive root. The artifact's digest already covers it. Most vendors use one layout on every platform; one that does not uses another source for the platforms that differ.</li>
     <li><code>asset</code>: a separate release file. It is listed in <code>subject</code> with its digest and the entry carries its download <code>url</code>, so it verifies exactly as an artifact does. A skill directory ships this way as an archive of its own.</li>

@@ -19,7 +19,7 @@ packslip invents as little as it can. The document is an in-toto statement
 in a sigstore bundle, the same shape GitHub artifact attestations, npm
 provenance, and Homebrew bottles use. Identity comes from sigstore's
 certificate authority and transparency log. What packslip adds is the
-predicate: the release manifest that a registry entry would otherwise hold.
+predicate: the release manifest itself.
 
 ## Names
 
@@ -177,9 +177,8 @@ The JSON schema is printed by `packslip schema` and published at
 
 A release usually ships more than its executables: shell completions, a
 man page, a spec of the CLI, an agent skill, and, for a desktop
-application, the entry, icons, or app bundle a launcher needs. A registry
-entry would hold all of these, so `resources` does. Each entry names a
-`kind` and exactly one source. The sources differ in what a consumer can
+application, the entry, icons, or app bundle a launcher needs. `resources`
+lists them. Each entry names a `kind` and exactly one source. The sources differ in what a consumer can
 verify, and a consumer prefers them in this order:
 
 - `archive`: a path inside the artifact the consumer selected, relative to
