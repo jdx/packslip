@@ -17,7 +17,11 @@ A consumer, whether that is [mise](https://mise.jdx.dev),
 one pinned identity or key. In return
 it gets checksums, platform mapping, executables, provenance links, and
 whatever else ships with the release: completions, man pages, a CLI spec, a
-skill, a desktop entry.
+skill, a desktop entry, an SBOM.
+
+There is no per-vendor recipe. A consumer pins one identity per vendor, or
+one repackager host that describes many vendors on their behalf, and the
+documents say the rest.
 
 packslip invents as little as it can. The document is an
 [in-toto statement](https://github.com/in-toto/attestation/blob/main/spec/v1/statement.md) in a
@@ -95,7 +99,9 @@ prints them; so does `jq -r .dsseEnvelope.payload | base64 -d`.
   "_type": "https://in-toto.io/Statement/v1",
   "subject": [
     { "name": "mise-v2026.9.1-linux-x64.tar.xz",
-      "digest": { "sha256": "...", "sha512": "..." } }
+      "digest": { "sha256": "...", "sha512": "..." } },
+    { "name": "mise-v2026.9.1.cdx.json",
+      "digest": { "sha256": "..." } }
   ],
   "predicateType": "https://packslip.dev/release/v1",
   "predicate": {
@@ -119,15 +125,16 @@ prints them; so does `jq -r .dsseEnvelope.payload | base64 -d`.
       { "kind": "completion", "shell": "zsh", "archive": "mise/share/zsh/site-functions/_mise" },
       { "kind": "man", "archive": "mise/man/man1/mise.1" },
       { "kind": "cli-spec", "format": "usage", "bin": "mise", "archive": "mise/share/usage/mise.kdl" },
-      { "kind": "skill", "name": "mise", "repo": "skills/mise" }
+      { "kind": "skill", "name": "mise", "repo": "skills/mise" },
+      { "kind": "sbom", "format": "cyclonedx", "asset": "mise-v2026.9.1.cdx.json",
+        "url": "https://github.com/jdx/mise/releases/download/v2026.9.1/mise-v2026.9.1.cdx.json" }
     ],
     "identity": {
       "scheme": "sigstore-oidc",
       "key_id": "https://github.com/jdx/mise/.github/workflows/release.yml@refs/tags/v2026.9.1",
       "issuer": "https://token.actions.githubusercontent.com"
     },
-    "notes_url": "https://github.com/jdx/mise/releases/tag/v2026.9.1",
-    "sbom": "https://.../sbom.cdx.json"
+    "notes_url": "https://github.com/jdx/mise/releases/tag/v2026.9.1"
   }
 }
 ```
@@ -144,20 +151,31 @@ Rules:
 - `project` is a name as defined above. `version` is [semver 2.0.0](https://semver.org/spec/v2.0.0.html); its
   prerelease part, if any, says whether the release is a prerelease and
   which channel it is on. See Versions. `published_at` is [RFC 3339](https://www.rfc-editor.org/rfc/rfc3339) UTC.
-- `os`, `arch`, and `libc` use the values `linux`, `darwin`, `windows`,
-  `freebsd`; `x86_64`, `aarch64`, `armv7`, `riscv64`, `i686`; `gnu`,
-  `musl`. `format` is the archive or installer type: `tar.xz`, `tar.gz`,
-  `tar.zst`, `tar.bz2`, `tgz`, `zip`, `7z`, `deb`, `rpm`, `dmg`, `pkg`,
-  `msi`, `msix`, `exe`, `appimage`, or `raw` for a bare executable.
-- `variant` tells apart artifacts that share os, arch, libc, and format:
-  `fips`, `baseline`, `debug`, `installer`, `source`. A vendor must not
-  publish two artifacts that agree on all five; `packslip create` refuses
-  to. Consumers that find such a pair refuse to choose.
+- `os`, `arch`, `libc`, `format`, and `variant` are lowercase words of
+  letters, digits, `_`, `-`, and `.`, starting with a letter or digit.
+  The documented values are the ones consumers know; see Vocabularies. A
+  value outside them is well-formed but matches no host and unpacks with
+  nothing, so a vendor uses one only for a platform or format this
+  document has not named yet. An absent `os`, `arch`, or `libc` means the
+  artifact does not depend on it: a universal macOS binary has `os` and
+  no `arch`, a script or a jar has none of the three.
+- `format` is the archive or installer type, or `raw` for a bare
+  executable. Two artifacts that differ only in format carry the same
+  build, and a consumer takes whichever it prefers. A vendor must not
+  publish two artifacts that agree on `os`, `arch`, `libc`, `variant`,
+  and `format`; `packslip create` refuses to, and a consumer that finds
+  such a pair refuses to choose.
+- `variant` tells apart builds that share `os`, `arch`, and `libc`:
+  `fips`, `baseline`, `debug`, `installer`, `source`. A consumer selects
+  only artifacts without a variant unless asked for one.
 - `bin` lists the executables inside the artifact. Each entry is a path
-  relative to the archive root, or the artifact's own name when it is a
-  bare executable. When the name to put on PATH differs from the file name,
-  the entry is `{ "path": "bin/oxlint-x86_64", "name": "oxlint" }`.
-  Windows entries carry their `.exe`.
+  from the true archive root, with no top-level directory stripped, or,
+  for a bare executable, the artifact's own name without its compression
+  suffix. When the name to put on PATH differs from the file name, the
+  entry is `{ "path": "bin/oxlint-x86_64", "name": "oxlint" }`. Two
+  entries may share a path under different names, which is how a vendor
+  declares an alias such as `pnpx` for `pnpm`; a consumer may link or
+  copy. Windows entries carry their `.exe`.
 - `requires` states what the host needs: `os_min` in the OS's own terms
   (`12` for macOS Monterey, `10.0.17763` for Windows) and `glibc_min` for a
   `gnu` Linux build.
@@ -167,8 +185,7 @@ Rules:
   its builder establishes.
 - `resources` lists what the release ships besides its executables, each
   entry a `kind` and one source. See Resources.
-- `notes_url` points at the release notes. `sbom` points at a software
-  bill of materials for the release.
+- `notes_url` points at the release notes.
 - `extensions` carries what the specification has no field for, keyed by
   who defines it. See Extensions.
 - `identity` says how the document is signed and by whom, so a consumer
@@ -179,20 +196,94 @@ Rules:
 - `attested_by` is `vendor` (default) or `repackager`. See below.
 
 The JSON schema is printed by `packslip schema` and published at
-`https://packslip.dev/schema/release-v1.json`.
+`https://packslip.dev/schema/release-v1.json`. It enforces everything
+above that a schema can: the value patterns, the semver grammar, the
+digest lengths. The validator in the reference implementation enforces
+the rest.
+
+### Vocabularies
+
+After Rust's target triples, so that a vendor's build matrix maps onto
+them without a table:
+
+- `os`: `linux`, `darwin`, `windows`, `freebsd`, `netbsd`, `openbsd`,
+  `illumos`, `android`, `ios`.
+- `arch`: `x86_64`, `aarch64`, `armv7`, `armv6`, `riscv64`, `i686`,
+  `powerpc64le`, `s390x`, `loongarch64`.
+- `libc`: `gnu`, `musl`, for Linux builds.
+- `format`, archives: `tar.xz`, `tar.gz`, `tar.zst`, `tar.bz2`, `tgz`,
+  `tar`, `zip`, `7z`. Single compressed executables: `gz`, `xz`, `zst`,
+  `bz2`. Installers: `deb`, `rpm`, `dmg`, `pkg`, `msi`, `msix`, `exe`,
+  `appimage`. A bare executable: `raw`.
+
+A consumer unpacks archives and bare executables, decompressing a single
+compressed executable to the file its `bin` names. Installers are listed
+so a consumer can hand them to the platform's installer or a launcher;
+a package manager that installs into its own directory does not unpack
+them. A `.exe` that is the program itself is `raw`; `exe` means a
+Windows installer.
+
+### Field reference
+
+| Field | Type | | Meaning |
+|---|---|---|---|
+| `_type` | string | required | Always `https://in-toto.io/Statement/v1`. |
+| `subject[]` | array | required | One entry per artifact and per resource asset. |
+| `subject[].name` | string | required | The file name. |
+| `subject[].digest.sha256` | string | required | SHA-256 of the file, lowercase hex. |
+| `subject[].digest.sha512` | string | optional | SHA-512 of the file, lowercase hex. |
+| `predicateType` | string | required | Always `https://packslip.dev/release/v1`. |
+| `predicate.project` | string | required | Host path naming the project, such as `github.com/jdx/mise` or `github.com/oxc-project/oxc/oxlint`. |
+| `predicate.version` | string | required | Semver 2.0.0. Its prerelease part marks a prerelease and names the channel. |
+| `predicate.published_at` | string | required | RFC 3339 UTC publish time. |
+| `predicate.source` | object | optional | Where the release was built from. |
+| `predicate.source.repo` | string | required | Source repository URL. |
+| `predicate.source.commit` | string | optional | Commit the release was built from. |
+| `predicate.source.tag` | string | optional | Tag the release was built from, as the vendor spells it. |
+| `predicate.artifacts[]` | array | required | One entry per artifact; at least one. |
+| `artifacts[].name` | string | required | File name, matching a `subject` entry. |
+| `artifacts[].os` | string | optional | `linux`, `darwin`, `windows`, ... Absent: any OS. |
+| `artifacts[].arch` | string | optional | `x86_64`, `aarch64`, ... Absent: any architecture. |
+| `artifacts[].libc` | string | optional | `gnu` or `musl`; Linux only. Absent: no dependence on one. |
+| `artifacts[].variant` | string | optional | Distinguishes builds sharing os, arch, and libc: `fips`, `baseline`, `debug`, `installer`, `source`. |
+| `artifacts[].size` | integer | required | File size in bytes. Verified alongside the digest. |
+| `artifacts[].url` | string | optional | Download URL. |
+| `artifacts[].format` | string | optional | Archive, compression, or installer type, or `raw` for a bare executable. |
+| `artifacts[].bin[]` | array of string or object | optional | Executables inside the artifact: a path from the archive root, or `{ path, name }` when the PATH name differs. |
+| `artifacts[].requires` | object | optional | `os_min` and `glibc_min`. |
+| `artifacts[].provenance[]` | array of string | optional | URLs of SLSA build provenance statements for this artifact. |
+| `predicate.resources[]` | array of object | optional | What ships besides the executables. See Resources. |
+| `resources[].kind` | string | required | `completion`, `man`, `cli-spec`, `skill`, `sbom`, `desktop`, `icon`, `app`, or a kind consumers may not know yet. |
+| `resources[].os`, `arch`, `libc` | string | optional | Limit the entry to artifacts of that platform, when layouts differ. |
+| `resources[].archive` | string | one source | Path inside the selected artifact, from the archive root. |
+| `resources[].asset` | string | one source | Name of a separate release file, listed in `subject` with its digest. |
+| `resources[].url` | string | optional | Download URL of the asset. Only with `asset`. |
+| `resources[].repo` | string | one source | Path in the source repository at `source.commit`, which is then required. |
+| `resources[].exec[]` | array of string | one source | An argv whose first element is a `bin` name and whose stdout is the file. Consumers may decline to run it. |
+| `resources[].shell` | string | completion | The shell a static completion is for. |
+| `resources[].shells[]` | array of string | completion | Every shell an `exec` completion generates, substituted for `{shell}` in the argv. |
+| `resources[].format` | string | cli-spec, sbom | The spec format (`usage`) or the SBOM format (`cyclonedx`, `spdx`). |
+| `resources[].bin` | string | cli-spec | The executable the spec describes, by its `bin` name. |
+| `resources[].name` | string | skill | The skill's name. |
+| `predicate.identity.scheme` | string | required | `sigstore-oidc` or `sigstore-key`. |
+| `predicate.identity.key_id` | string | required | The certificate identity, or the key id in uppercase hex. |
+| `predicate.identity.issuer` | string | optional | The OIDC issuer, for `sigstore-oidc`. |
+| `predicate.attested_by` | string | optional | `vendor` (default) or `repackager`. |
+| `predicate.evidence[]` | array of object | optional | What a repackager checked: `{ kind, detail }`. |
+| `predicate.notes_url` | string | optional | URL of the release notes. |
+| `extensions` | object | optional | Vendor- or consumer-defined data, keyed by who defines it, on the release, each artifact, each resource, the release list, and each list entry. See Extensions. |
 
 ### Resources
 
 A release usually ships more than its executables: shell completions, a man
-page, a spec of the CLI, an agent skill, and, for a desktop application, the
-entry, icons, or app bundle a launcher needs. `resources` lists them. Each
-entry names a `kind` and exactly one source. The sources differ in what a
-consumer can verify, and a consumer prefers them in this order:
+page, a spec of the CLI, an agent skill, a software bill of materials, and,
+for a desktop application, the entry, icons, or app bundle a launcher
+needs. `resources` lists them. Each entry names a `kind` and exactly one
+source. The sources differ in what a consumer can verify, and a consumer
+prefers them in this order:
 
-- `archive`: a path inside the artifact the consumer selected, relative to
-  the archive root. The artifact's digest already covers it. Most vendors
-  use one layout on every platform; one that does not uses another source
-  for the platforms that differ.
+- `archive`: a path inside the artifact the consumer selected, from the
+  true archive root. The artifact's digest already covers it.
 - `asset`: a separate release file. It is listed in `subject` with its
   digest and the entry carries its download `url`, so it verifies exactly
   as an artifact does. A skill directory ships this way as an archive of
@@ -205,6 +296,14 @@ consumer can verify, and a consumer prefers them in this order:
   install time rather than at first use. A consumer may decline to run
   anything; one that declines treats the entry as absent rather than
   failing. A vendor lists a static source first and an `exec` entry last.
+
+Layouts differ by platform more often than by file, so an entry may carry
+`os`, `arch`, or `libc` to say which artifacts it describes; an entry
+without them describes every artifact. A resource applies to the selected
+artifact when each field it carries equals the artifact's. For one need,
+a consumer keeps the applicable entries, takes the most specific of them
+(the one naming the most of those three fields), and only then applies
+the source order above.
 
 Documented kinds:
 
@@ -227,6 +326,10 @@ Documented kinds:
 - `skill`: an agent skill in the [Agent Skills](https://agentskills.io) format: a directory holding
   `SKILL.md` and whatever it references, named by `name`. With `exec`, the
   command prints a single `SKILL.md`.
+- `sbom`: a software bill of materials in `format`, `cyclonedx` or `spdx`,
+  from an `archive`, `asset`, or `repo` source so that its digest or
+  commit covers it. Never from `exec`. A release with one SBOM per
+  platform lists one entry per `os` or per artifact's archive.
 - `desktop`: a freedesktop [desktop entry](https://specifications.freedesktop.org/desktop-entry-spec/latest/), for a Linux launcher. AppImage,
   deb, rpm, and the Windows installer formats carry their own.
 - `icon`: an icon file. A hicolor path (`share/icons/hicolor/512x512/...`)
@@ -278,8 +381,8 @@ keeps working beside it.
 
 ### Repackager attestation
 
-A repository or mirror that redistributes a vendor's artifacts, and whose
-vendor publishes no packslip, may sign one itself with
+A repository, registry, or mirror that describes a vendor's artifacts, and
+whose vendor publishes no packslip, may sign one itself with
 `"attested_by": "repackager"`. The `project` still names the vendor's
 project and the artifacts are still the vendor's files, but `identity` is
 the repackager's, and `evidence` says what it checked before signing:
@@ -296,13 +399,22 @@ Documented kinds: `pkgbuild-checksums` (digests matched the packaging the
 repackager maintains), `checksum-file-over-tls` (the vendor's checksum
 file, unsigned), `apt-release-gpg` (an apt index signed with the given
 key), `vendor-signature` (a detached signature the vendor publishes),
-`github-attestation` (GitHub artifact attestations verified), `none`.
+`vendor-packslip` (the vendor's own packslip, verified; `detail` is its
+sha256), `github-attestation` (GitHub artifact attestations verified),
+`provenance-verified` (SLSA provenance verified against the builder),
+`scan` (the artifacts were scanned; `detail` points at the report),
+`none`.
 
 A repackager document proves that the repackager published exactly these
 digests and checked the listed evidence. It does not prove anything the
 vendor did not sign. Consumers rank it below a vendor document, and a
 consumer that already holds a vendor document for a project refuses to
 replace it with a repackager one without a human's say-so.
+
+A mirror is a repackager whose documents carry the vendor's digests with
+the mirror's own URLs and `vendor-packslip` evidence. A consumer pointed at
+a mirror gets the same bytes under the mirror's pin and can still fetch
+and verify the vendor's document if it wants both.
 
 ## Signing
 
@@ -336,24 +448,11 @@ Publish the bundle next to the artifacts: as a release asset, or under the
 version directory of a download site.
 
 Every project has a release list, and it is where consumers find what
-was released and what was withdrawn:
+was released and what was withdrawn. Two kinds exist.
 
-- For `github.com/<owner>/<repo>[/<tool>]` the list is the repository's
-  releases endpoint. A release counts when it is not a draft and carries
-  a packslip whose `project` matches. The endpoint's order and its
-  prerelease flag are not consulted; the version says both. To yank a
-  release, delete it, or delete its packslip asset where the repository
-  still permits that.
-- Any other project publishes a signed list at
+### The signed list
 
-```
-https://<host>/.well-known/packslip/<path>.json
-```
-
-where `<path>` is the project name after the host, or `packslip.json`
-directly under `.well-known` when the name is a bare host. The list is
-required: a consumer that finds none refuses the project rather than
-guessing at URLs. It is a bundle of the same shape as a packslip, with the
+A signed list is a bundle of the same shape as a packslip, with the
 `releases/v1` predicate:
 
 ```json
@@ -373,10 +472,10 @@ guessing at URLs. It is a bundle of the same shape as a packslip, with the
     "sequence": 42,
     "identity": { "scheme": "sigstore-key", "key_id": "5A0A0B8B9C6D7E1F" },
     "releases": [
-      { "version": "2026.9.1", "published_at": "2026-09-01T12:00:00Z",
+      { "version": "2026.9.1", "tag": "v2026.9.1", "published_at": "2026-09-01T12:00:00Z",
         "packslip": "https://dl.example.com/2026.9.1/packslip.sigstore.json",
         "security": true },
-      { "version": "2026.9.0", "published_at": "2026-08-20T12:00:00Z",
+      { "version": "2026.9.0", "tag": "v2026.9.0", "published_at": "2026-08-20T12:00:00Z",
         "packslip": "https://dl.example.com/2026.9.0/packslip.sigstore.json",
         "status": "yanked", "status_reason": "CVE-2026-1234" }
     ]
@@ -390,18 +489,88 @@ the list pins the exact documents it points at. `expires_at` and
 list that has expired, or whose sequence is lower than one it has already
 accepted, so a mirror cannot freeze or roll back the vendor's view.
 
-Each entry may carry `status: "yanked"` with a `status_reason` when the
-vendor withdrew the release, and `security: true` when it fixes a
-vulnerability. A consumer never selects a yanked release, warns when it
-holds one, and may shorten its minimum release age for a security release.
+Each entry carries the release's `version`, its `tag` as the vendor
+spells it, and `published_at`, copied from the packslip. It may carry
+`status: "yanked"` with a `status_reason` when the release was withdrawn,
+`security: true` when it fixes a vulnerability, and, on a list from
+someone other than the vendor, `evidence` saying what the publisher
+checked. A consumer never selects a yanked release, warns when it holds
+one, and may shorten its minimum release age for a security release.
 Nothing else about a release lives on the list: its version says the rest.
 
-`packslip releases` produces the list from local copies of the released
-bundles; the JSON schema is at
-`https://packslip.dev/schema/releases-v1.json`.
+The list is published at
+
+```
+https://<host>/.well-known/packslip/<path>.json
+```
+
+where `<host>` and `<path>` are the project name's host and the rest of
+it, or `https://<host>/.well-known/packslip.json` when the name is a bare
+host. For `mise.jdx.dev` that is
+`https://mise.jdx.dev/.well-known/packslip.json`; for `jdx.dev/mise`,
+`https://jdx.dev/.well-known/packslip/mise.json`; for
+`github.com/jdx/mise`, `https://github.com/.well-known/packslip/jdx/mise.json`,
+which github.com does not serve, and the next section says what a
+consumer does there. A forge that does serve it needs nothing else.
+
+A project on its own domain must publish the list: a consumer that finds
+none refuses the project rather than guessing at URLs. `packslip releases`
+produces the list from local copies of the released bundles; the JSON
+schema is at `https://packslip.dev/schema/releases-v1.json`.
 
 The list separates the name from where the bytes live: the identity is
-anchored to the domain, and the artifacts can be anywhere.
+anchored to the domain, and the artifacts can be anywhere. A vendor with
+only a git repository keeps the list and the bundles in it, at paths its
+host serves as raw files, and points the artifact URLs wherever the bytes
+are, an LFS store included. Nothing about a forge's release API is
+required.
+
+### GitHub
+
+For `github.com/<owner>/<repo>[/<tool>]` the list is the repository's
+releases endpoint, which every consumer can read without the vendor
+publishing anything more:
+
+- A release counts when it is not a draft and carries a packslip whose
+  `project` matches.
+- Its tag names its version, as Versions defines: the version, optionally
+  after a `v`, and optionally after the tool's subpath, its last segment,
+  or the repository name plus a separator. A consumer lists versions from
+  tags without downloading a bundle per release, and on install verifies
+  the packslip and refuses it when its `version` differs. A tag that names
+  no version is invisible here.
+- The endpoint's order and its prerelease flag are not consulted; the
+  version says both.
+
+The repository may also carry a signed list, at `.well-known/packslip.json`
+or `.well-known/packslip/<tool>.json` on its default branch, which GitHub
+serves at `https://raw.githubusercontent.com/<owner>/<repo>/HEAD/<path>`.
+It is signed by the same identity the packslips are, and it is
+supplementary: a version it names is taken as it says, yanked or flagged,
+and pinned to the packslip digest it gives; a version it omits still comes
+from the endpoint. So a vendor touches it only to withdraw a release, to
+mark a security fix, or to list a release whose tag names no version, and
+a vendor that never needs those never writes it. Withdrawing a release
+this way works on a repository with immutable releases, where the release
+and its packslip cannot be deleted.
+
+### Lists from other publishers
+
+A list need not come from the vendor. A registry, a mirror, or a scanning
+service publishes lists under its own host, one per vendor project it
+covers, at the well-known path with the vendor's project name:
+`https://registry.example/.well-known/packslip/github.com/jdx/mise.json`.
+A consumer configures which such hosts it trusts, one setting per host.
+
+Each entry points at a packslip and pins its digest. The packslip may be
+the vendor's own, signed by the vendor's identity, or a repackager
+document the publisher signed; either is verified against the pin its
+own `project` and `attested_by` imply. The list's signature proves who
+selected these releases and what the entry's `evidence` says they
+checked, not who built them. A consumer that trusts such a host selects
+only versions the host lists, which is how a registry that scans releases
+before admitting them, or an organization that curates versions, applies
+its judgement without a per-tool recipe.
 
 ## Versions
 
@@ -434,9 +603,12 @@ it:
 Eligible means not yanked, not a prerelease unless prereleases were asked
 for, and on the requested channel when one was given. A requested version
 matches as a prefix on dot-separated components, so `20` and `3.12` mean
-what people expect and `1.2.0-beta` means the betas of 1.2.0. Rollback
-protection comes from the release list's `sequence`, not from anything a
-single release says.
+what people expect and `1.2.0-beta` means the betas of 1.2.0. A request
+may also be the tag as the vendor spells it, with or without its leading
+`v`; a consumer matches it against `source.tag` or the list entry's `tag`,
+so a user who knows a release by the vendor's name still finds it.
+Rollback protection comes from the release list's `sequence`, not from
+anything a single release says.
 
 A packslip carries none of this as a field, on purpose. It is signed once,
 and on a GitHub repository with immutable releases it can never be
@@ -448,13 +620,74 @@ the release list's job. An earlier draft let a vendor declare list order
 instead of semver; it went, because the prerelease and channel fields it
 then needed had no honest home.
 
+### Spelling a version
+
+A vendor whose versions are not semver as written picks the semver
+spelling once and keeps it; the tag keeps the vendor's own spelling.
+
+- A prefix (`jq-1.7.1`, `release-1.2.3`) is the tag's business and is
+  not part of the version.
+- A missing patch component is `0`: `4.1` is `4.1.0`.
+- Leading zeros go: `25.07.1` is `25.7.1`, and a date `2026.08.31` is
+  the calver `2026.8.31`. A date with dashes, `2026-08-31`, is respelled
+  the same way.
+- A fourth ordered component has no semver spelling, so a scheme that
+  needs one is not served by this document; build metadata does not order
+  and a prerelease part means something else.
+
+Two releases must not share a version. A vendor whose spelling would
+collide, two releases on one day under a date scheme, adds a component it
+can order rather than build metadata.
+
+### Tags
+
+A forge release's tag names its version when, after removing an optional
+prefix and an optional `v`, what remains is the version, or spells it as
+the rules above say. The prefix is the tool's subpath, the last segment
+of the subpath, or the repository name, followed by `/`, `-`, `_`, or
+`@`. So `v1.2.3` names `1.2.3`; `oxlint_v1.0.0` names `1.0.0` for
+`github.com/oxc-project/oxc/oxlint`; `cli/v1.9.4` names `1.9.4` for
+`github.com/biomejs/biome/crates/cli`; `jq-1.7.1` names `1.7.1` for
+`github.com/jqlang/jq`; `v4.1` names `4.1.0`.
+
+A consumer derives a version from a tag only to list releases without
+fetching every bundle. The packslip is the authority: when its `version`
+is not what the tag named, the consumer refuses the release. Of the
+GitHub projects in the aqua registry, this names a version for 96 of every
+100 from the latest tag alone; the rest publish a signed list, whose
+entries carry the version outright.
+
+## Selecting an artifact
+
+A consumer selects one artifact for its host by the following rule,
+which the reference implementation provides as `select_artifact`.
+
+1. An artifact fits the host when each of its `os`, `arch`, and `libc`
+   is either absent or equal to the host's. A host that does not know its
+   libc takes only artifacts that name none. A consumer may add a
+   fallback of its own, such as a `gnu` host taking a `musl` build or an
+   `aarch64` macOS host taking `x86_64` under Rosetta, but it ranks the
+   exact match first and says what it did.
+2. With a requested variant, only artifacts carrying it fit; with none,
+   only artifacts without one.
+3. Only artifacts whose `format` the consumer handles fit.
+4. Among those that fit, the artifact naming the most of `os`, `arch`,
+   and `libc` wins, so a build for the host beats a portable one.
+5. Among equally specific artifacts, the consumer's own format preference
+   decides. A typical order is `tar.xz`, `tar.zst`, `tar.gz`, `tgz`,
+   `tar.bz2`, `tar`, `zip`, `7z`, then the single compressed executables,
+   then `raw`.
+6. Two artifacts that still tie are a vendor error, and the consumer
+   refuses to guess between them.
+
 ## Consumer rules
 
 1. Pin the identity once. For a forge project, the name is the pin: accept
    only the forge's issuer and an identity under the repository. For other
    projects, pin the public key or identity from a list of pins you
-   maintain, or from the well-known list on first use. Never take a key
-   from the document itself, and never trust a bundle's key hint.
+   maintain, or from the well-known list on first use. A list from another
+   publisher is trusted per host, by configuration. Never take a key from
+   the document itself, and never trust a bundle's key hint.
 2. Verify the bundle: signature, certificate chain and log entry as
    sigstore defines them, then the statement's structure, then the
    subject digest of every artifact or asset you downloaded, and the size
@@ -467,16 +700,19 @@ then needed had no honest home.
    workflow is the same signer.
 4. Apply any minimum release age to the log's integration time, falling
    back to `published_at` only for an unlogged bundle you chose to accept.
-5. Use the project's release list (GitHub's releases endpoint, or the
-   signed list) and refuse a project that has neither. Refuse a signed
+5. Use the project's release list: GitHub's releases endpoint with the
+   repository's signed list if it has one, or the signed list at the
+   well-known URL; refuse a project that has neither. Refuse a signed
    list that has expired or whose `sequence` is below the last one
    accepted; never select a yanked entry; skip prereleases unless asked
-   for them; rank by semver precedence.
-6. Select one artifact by os, arch, libc, format, and, when needed,
-   variant. Refuse to guess between two artifacts that match.
+   for them; rank by semver precedence; refuse a packslip whose version is
+   not the one its tag or list entry named.
+6. Select one artifact as Selecting an artifact says. Refuse to guess
+   between two artifacts that tie.
 7. Take each resource from the most verifiable source offered, in the
-   order Resources gives; run an `exec` entry only if you have chosen to
-   run vendor code at install time; ignore kinds you do not know.
+   order Resources gives, among the entries whose scope fits the selected
+   artifact; run an `exec` entry only if you have chosen to run vendor
+   code at install time; ignore kinds you do not know.
 
 ## What a verified packslip proves
 
@@ -509,30 +745,52 @@ Action.
 - In a release job: `uses: jdx/packslip@v1` with `artifacts: dist/*`
   attests build provenance for the artifacts, signs the packslip
   keylessly, links the provenance from it, verifies the result, and
-  uploads the bundle to the release. `bin` names the executables and
-  `resources`, one `--resource` value per line, the rest. A monorepo runs
-  the step once per tool with `project: github.com/owner/repo/<tool>`.
+  uploads the bundle to the release. `bin` names the executables,
+  `resources`, one `--resource` value per line, the rest, and `manifest`
+  points at a manifest for what those cannot say. A monorepo runs the
+  step once per tool with `project: github.com/owner/repo/<tool>`.
 - `packslip create --project NAME --version X --out dist --url-base URL
   --source-repo URL --tag vX --bin NAME artifact...` digests the artifacts,
   infers platforms from file names, and writes the signed bundle.
   - Platforms: `path:os/arch[/libc]` overrides what the file name implies;
-    `path@variant` marks a second build of one platform.
-  - Executables: `--bin NAME=PATH` when the name on PATH differs from the
-    file.
+    `path:any` marks an artifact that runs anywhere; `path@variant` marks
+    a second build of one platform.
+  - Executables: `--bin NAME` is looked up inside each archive, so it
+    records the true path (`tool-1.2.3-linux-x64/tool`), and refuses a
+    name the archive does not hold or holds twice at one depth. `--bin
+    NAME=PATH` gives the path outright when the name on PATH differs from
+    the file. For a bare executable, `--bin NAME` is the name the file
+    gets on PATH.
   - URLs: `--url FILENAME=URL` sets one artifact's or asset's URL.
-  - Metadata: `--notes-url`, `--sbom`, `--no-sha512`, `--extension
-    NAME=JSON` for a release-level extension, and `--attested-by
-    repackager` with `--evidence KIND[=DETAIL]`.
+  - Provenance: `--provenance FILENAME=URL` links a provenance statement
+    to one artifact; a bare URL applies to the artifact at the same
+    position.
+  - Metadata: `--notes-url`, `--no-sha512`, `--extension NAME=JSON` for a
+    release-level extension, and `--attested-by repackager` with
+    `--evidence KIND[=DETAIL]`.
   - Resources: `--resource KIND[/QUALIFIER]=SOURCE:VALUE`, as in
     `completion/zsh=archive:share/zsh/site-functions/_tool`,
     `completion/bash,zsh,fish=exec:tool completion {shell}`,
     `man=archive:man/man1/tool.1`, `cli-spec/usage=exec:tool usage`,
     `skill/NAME=repo:skills/tool`, `skill/NAME=asset:dist/tool-skill.tar.gz`,
-    `desktop=archive:...`, `icon=archive:...`, or `app=archive:Tool.app`. A
-    `cli-spec` describes the sole `--bin` unless named as
-    `cli-spec/usage/NAME`. An `asset` is a local file digested into the
-    subject; a file given as both an artifact and an asset is the asset.
+    `sbom/cyclonedx=asset:dist/tool.cdx.json`, `desktop=archive:...`,
+    `icon=archive:...`, or `app=archive:Tool.app`. A `cli-spec` describes
+    the sole `--bin` unless named as `cli-spec/usage/NAME`. An `asset` is
+    a local file digested into the subject; a file given as both an
+    artifact and an asset is the asset.
+  - A manifest: `--manifest release.toml` carries per-artifact
+    executables, formats, requirements, platforms, variants, and URLs,
+    plus resources with their scope, for a release the flags cannot
+    describe. Its top-level `bin` and `requires` are the defaults every
+    artifact inherits; an `[[artifact]]` entry overrides them for one
+    file, `portable = true` clears the platform, and `format = "raw"`
+    settles a `.exe`. Artifacts on the command line join those the
+    manifest lists, the manifest's entry winning for a file both name,
+    and flags win over the manifest's `project`, `version`, `url_base`,
+    `notes_url`, `published_at`, and `source`.
   - Signing: `--key release.key` signs with a key; `--no-log` skips Rekor.
+  - On a forge project, `create` warns when `--tag` does not name
+    `--version`, since consumers list from tags.
 - `packslip keygen -o release.key` writes an Ed25519 secret seed (mode
   0600) and `release.pub`.
 - `packslip verify BUNDLE [--artifact file...]` verifies and exits 1 on
@@ -544,6 +802,7 @@ Action.
   verifies a release list.
 - `packslip show BUNDLE` prints the statement.
 - `packslip releases --project NAME --sequence N --valid-for 30d
-  --release URL=PATH... [--yank URL=REASON] [--security URL] --key
-  release.key` writes a signed release list.
+  --release URL=PATH... [--yank URL=REASON] [--security URL]
+  [--evidence URL=KIND[=DETAIL]] --key release.key` writes a signed
+  release list, copying each bundle's version and tag.
 - `packslip schema [--releases]` prints the JSON schemas.

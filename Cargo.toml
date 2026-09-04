@@ -19,11 +19,14 @@ path = "src/main.rs"
 [dependencies]
 base64 = "0.22"
 blake2 = "0.10"
+bzip2 = "0.6"
 color-eyre = "0.6"
 ed25519-dalek = "2"
 eyre = "0.6"
+flate2 = "1"
 getrandom = "0.3"
 jiff = "0.2"
+lzma-rs = "0.3"
 schemars = "1"
 semver = "1"
 serde = { version = "1", features = ["derive"] }
@@ -35,9 +38,13 @@ sigstore-rekor = { version = "0.11", default-features = false, features = ["rust
 sigstore-sign = { version = "0.11", default-features = false, features = ["rustls"] }
 sigstore-trust-root = { version = "0.11", default-features = false, features = ["rustls"] }
 sigstore-types = "0.11"
+ruzstd = "0.9"
 sigstore-verify = { version = "0.11", default-features = false, features = ["rustls"] }
+tar = "0.4"
 thiserror = "2"
 tokio = { version = "1", features = ["rt"] }
+toml = "1"
+zip = { version = "8", default-features = false, features = ["deflate"] }
 # usage-rs derives scan this table line by line for the alias below.
 usage_rs = { package = "usage-rs", version = "6", features = ["completions"] }
 

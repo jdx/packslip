@@ -12,18 +12,21 @@
 
 #![forbid(unsafe_code)]
 
+pub mod archive;
 pub mod cli;
 pub mod create;
 pub mod dsse;
+pub mod manifest;
 pub mod minisign;
 pub mod model;
 pub mod sigstore;
 pub mod verify;
 
+pub use manifest::Manifest;
 pub use model::{
-    Artifact, Attestor, Bin, Evidence, Identity, Predicate, ReleaseList, ReleaseListStatement,
-    ReleaseRef, ReleaseStatus, Requires, Resource, ResourceSource, Scheme, Source, Statement,
-    Subject,
+    Artifact, Attestor, Bin, Evidence, Host, Identity, Predicate, ReleaseList,
+    ReleaseListStatement, ReleaseRef, ReleaseStatus, Requires, Resource, ResourceSource, Scheme,
+    Selection, Source, Statement, Subject, select_artifact, tag_version,
 };
 pub use sigstore::{Policy, Signer, Trust};
 pub use verify::{Options, Verified, VerifiedList, verify, verify_release_list};

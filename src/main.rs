@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use eyre::{Context as _, Result, bail};
 use packslip::cli::{BinInfo, Version};
 use packslip::create::{ArtifactInput, AssetInput, ListRequest, ListedRelease, Request};
+use packslip::manifest::Manifest;
 use packslip::minisign::{PublicKey, SecretKey, key_id_hex};
 use packslip::model::{
     Attestor, Bin, Evidence, Extensions, RELEASES_PREDICATE_TYPE, ReleaseListStatement, Resource,
@@ -267,23 +268,32 @@ fn signer(key: &Option<PathBuf>, sign: Option<SignWith>, no_log: bool) -> Result
 /// Create and sign a packslip for a release
 ///
 /// Digests every artifact, infers os/arch/libc/format from file names
-/// (override with path:os/arch[/libc], add @variant to tell apart two
-/// builds for one platform), and writes packslip.sigstore.json into --out.
-/// Inside a CI job the document is signed keylessly with the job's
-/// identity. With --key it is signed with an Ed25519 key from `packslip
-/// keygen`. Either way the signature is logged to Rekor.
+/// (override with path:os/arch[/libc], path:any for an artifact that runs
+/// anywhere, add @variant to tell apart two builds for one platform), and
+/// writes packslip.sigstore.json into --out. What the command line cannot
+/// say per artifact, such as executables at different paths in different
+/// archives or a format the name gets wrong, goes in a --manifest. Inside
+/// a CI job the document is signed keylessly with the job's identity. With
+/// --key it is signed with an Ed25519 key from `packslip keygen`. Either
+/// way the signature is logged to Rekor.
 #[derive(Debug, usage_rs::Args)]
 struct Create {
     /// The project's name: a host path such as github.com/owner/repo, or
-    /// github.com/owner/repo/tool for one tool of a monorepo
+    /// github.com/owner/repo/tool for one tool of a monorepo. Required
+    /// unless the manifest names it
     #[usage(long)]
-    project: String,
-    /// The release version
+    project: Option<String>,
+    /// The release version, semver. Required unless the manifest names it
     #[usage(long)]
-    version: String,
-    /// Artifact files, optionally as path[:os/arch[/libc]][@variant]
-    #[usage(required = true)]
+    version: Option<String>,
+    /// Artifact files, optionally as path[:os/arch[/libc]|:any][@variant].
+    /// Added to those the manifest lists
     artifacts: Vec<String>,
+    /// A TOML manifest giving per-artifact executables, formats,
+    /// requirements, platforms, and the release's resources; see
+    /// https://packslip.dev/release/v1/#tooling
+    #[usage(short = 'm', long, value_hint = usage_rs::ValueHint::FilePath)]
+    manifest: Option<PathBuf>,
     /// Sign with this secret key instead of a CI identity
     #[usage(short = 'k', long, value_hint = usage_rs::ValueHint::FilePath)]
     key: Option<PathBuf>,
@@ -318,16 +328,14 @@ struct Create {
     /// URL of the release notes
     #[usage(long)]
     notes_url: Option<String>,
-    /// SBOM URL
-    #[usage(long)]
-    sbom: Option<String>,
     /// Release-level extension as NAME=JSON, where NAME is who defines it
     /// (a consumer such as mise, or a domain the vendor controls) and JSON
     /// is its value. Example: 'example.com={"build_id":"20260901.3"}'
     /// (repeatable)
     #[usage(long)]
     extension: Vec<String>,
-    /// Executable inside every archive, as PATH or NAME=PATH (repeatable)
+    /// Executable inside every artifact, as PATH or NAME=PATH; for a bare
+    /// executable, the name it gets on PATH (repeatable)
     #[usage(long)]
     bin: Vec<String>,
     /// Something else the release ships, as KIND[/QUALIFIER]=SOURCE:VALUE
@@ -335,12 +343,13 @@ struct Create {
     /// separate release file, by local path), repo (a path at --commit),
     /// or exec (a command whose stdout is the file). Kinds: completion/SHELL
     /// (or completion/SHELL,SHELL with exec and a {shell} placeholder),
-    /// man, cli-spec/FORMAT[/BIN], skill/NAME, desktop, icon, app.
-    /// Example: 'completion/zsh=archive:share/zsh/site-functions/_tool'
+    /// man, cli-spec/FORMAT[/BIN], skill/NAME, sbom/FORMAT, desktop, icon,
+    /// app. Example: 'completion/zsh=archive:share/zsh/site-functions/_tool'
     /// (repeatable)
     #[usage(long)]
     resource: Vec<String>,
-    /// Provenance URL for every artifact (repeatable, positional order)
+    /// Provenance URL for an artifact, as FILENAME=URL, or bare URLs in
+    /// the order the artifacts are given (repeatable)
     #[usage(long)]
     provenance: Vec<String>,
     /// Who makes the claim: vendor (default) or repackager
@@ -410,6 +419,8 @@ fn parse_resource(spec: &str, default_bin: Option<&str>) -> Result<ResourceSpec>
         ("cli-spec", _) => bail!("--resource {spec:?}: cli-spec wants cli-spec/FORMAT[/BIN]"),
         ("skill", [name]) => resource.name = Some(name.to_string()),
         ("skill", _) => bail!("--resource {spec:?}: skill wants skill/NAME"),
+        ("sbom", [format]) => resource.format = Some(format.to_string()),
+        ("sbom", _) => bail!("--resource {spec:?}: sbom wants sbom/FORMAT (cyclonedx, spdx)"),
         (_, []) => {}
         (_, [name]) => resource.name = Some(name.to_string()),
         (_, _) => bail!("--resource {spec:?}: {kind} takes at most one qualifier"),
@@ -466,11 +477,43 @@ fn parse_extension(spec: &str) -> Result<(String, serde_json::Value)> {
     Ok((name.to_string(), value))
 }
 
+/// The file name of a local path, for matching `--url`, `--provenance`,
+/// and manifest entries against command-line artifacts.
+fn file_name_of(path: &Path) -> &str {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default()
+}
+
 impl RunWith<BinInfo> for Create {
     type Output = Result<()>;
 
     fn run_with(self, _: BinInfo) -> Self::Output {
-        if self.source_repo.is_none() && (self.commit.is_some() || self.tag.is_some()) {
+        let manifest = match &self.manifest {
+            Some(path) => Manifest::read(path)?,
+            None => Manifest::default(),
+        };
+        // The command line wins over the manifest wherever both speak.
+        let Some(project) = self.project.clone().or_else(|| manifest.project.clone()) else {
+            bail!("--project is required unless the manifest names the project");
+        };
+        let Some(version) = self.version.clone().or_else(|| manifest.version.clone()) else {
+            bail!("--version is required unless the manifest names the version");
+        };
+        let manifest_source = manifest.source.as_ref();
+        let source_repo = self
+            .source_repo
+            .clone()
+            .or_else(|| manifest_source.map(|s| s.repo.clone()));
+        let commit = self
+            .commit
+            .clone()
+            .or_else(|| manifest_source.and_then(|s| s.commit.clone()));
+        let tag = self
+            .tag
+            .clone()
+            .or_else(|| manifest_source.and_then(|s| s.tag.clone()));
+        if source_repo.is_none() && (commit.is_some() || tag.is_some()) {
             bail!("--commit and --tag require --source-repo");
         }
         let attested_by = self.attested_by.map(|a| a.0).unwrap_or_default();
@@ -492,87 +535,171 @@ impl RunWith<BinInfo> for Create {
                 bail!("--extension {name:?} is given twice");
             }
         }
-        let bins: Vec<Bin> = self.bin.iter().map(|s| parse_bin(s)).collect();
-        let parsed: Vec<ArtifactSpec> = self.artifacts.iter().map(|s| parse_spec(s)).collect();
-        let artifacts: Vec<ArtifactInput<'_>> = parsed
-            .iter()
-            .enumerate()
-            .map(|(i, spec)| {
-                let file_name = spec
-                    .path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or_default();
-                ArtifactInput {
-                    path: &spec.path,
-                    os: spec.os.as_deref(),
-                    arch: spec.arch.as_deref(),
-                    libc: spec.libc.as_deref(),
-                    variant: spec.variant.clone(),
-                    url: urls.get(file_name).cloned(),
-                    bin: bins.clone(),
-                    requires: None,
-                    provenance: self.provenance.get(i).cloned().into_iter().collect(),
-                    extensions: Extensions::new(),
+        let mut default_bins: Vec<Bin> = manifest.bin.clone();
+        default_bins.extend(self.bin.iter().map(|s| parse_bin(s)));
+        let parsed: Vec<ArtifactArg> = self.artifacts.iter().map(|s| parse_spec(s)).collect();
+
+        // Provenance: `FILENAME=URL`, or a bare URL for the artifact at the
+        // same position on the command line.
+        let mut provenance: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+        let mut positional = Vec::new();
+        for spec in &self.provenance {
+            match spec.split_once('=') {
+                Some((name, url))
+                    if !name.is_empty() && !name.contains('/') && !name.contains(':') =>
+                {
+                    provenance.insert(name.to_string(), url.to_string());
                 }
-            })
-            .collect();
-        let default_bin = match bins.as_slice() {
+                _ => positional.push(spec.clone()),
+            }
+        }
+        for (arg, url) in parsed.iter().zip(positional) {
+            provenance
+                .entry(file_name_of(&arg.path).to_string())
+                .or_insert(url);
+        }
+        let provenance_of = |name: &str, own: &[String]| -> Vec<String> {
+            let mut all = own.to_vec();
+            if let Some(url) = provenance.get(name)
+                && !all.contains(url)
+            {
+                all.push(url.clone());
+            }
+            all
+        };
+
+        // The manifest's artifacts, then those on the command line that it
+        // does not already describe, so `dist/*` and a manifest coexist.
+        let mut artifacts: Vec<ArtifactInput<'_>> = Vec::new();
+        for entry in &manifest.artifacts {
+            let name = file_name_of(&entry.path);
+            artifacts.push(ArtifactInput {
+                path: &entry.path,
+                os: entry.os.as_deref(),
+                arch: entry.arch.as_deref(),
+                libc: entry.libc.as_deref(),
+                portable: entry.portable,
+                variant: entry.variant.clone(),
+                url: entry.url.clone().or_else(|| urls.get(name).cloned()),
+                format: entry.format.clone(),
+                bin: entry.bins(&default_bins).to_vec(),
+                requires: entry.requirements(manifest.requires.as_ref()),
+                provenance: provenance_of(name, &entry.provenance),
+                extensions: entry.extensions.clone(),
+            });
+        }
+        for arg in &parsed {
+            let name = file_name_of(&arg.path);
+            if manifest
+                .artifacts
+                .iter()
+                .any(|entry| file_name_of(&entry.path) == name)
+            {
+                continue;
+            }
+            artifacts.push(ArtifactInput {
+                path: &arg.path,
+                os: arg.os.as_deref(),
+                arch: arg.arch.as_deref(),
+                libc: arg.libc.as_deref(),
+                portable: arg.portable,
+                variant: arg.variant.clone(),
+                url: urls.get(name).cloned(),
+                format: None,
+                bin: default_bins.clone(),
+                requires: manifest.requires.clone(),
+                provenance: provenance_of(name, &[]),
+                extensions: Extensions::new(),
+            });
+        }
+        if artifacts.is_empty() {
+            bail!("no artifacts: give files on the command line or list them in the manifest");
+        }
+        for name in provenance.keys() {
+            if !artifacts.iter().any(|a| file_name_of(a.path) == name) {
+                bail!("--provenance names {name:?}, which is not among the artifacts");
+            }
+        }
+
+        let default_bin = match default_bins.as_slice() {
             [only] => Some(only.name.as_str()),
             _ => None,
         };
         let mut resources = Vec::new();
         let mut asset_paths: Vec<PathBuf> = Vec::new();
-        for spec in &self.resource {
-            let parsed = parse_resource(spec, default_bin)?;
-            if let Some(path) = parsed.asset_path
+        let mut add_asset = |path: Option<PathBuf>| {
+            if let Some(path) = path
                 && !asset_paths.contains(&path)
             {
                 asset_paths.push(path);
             }
+        };
+        for entry in &manifest.resources {
+            let (resource, asset_path) = entry.resolve()?;
+            add_asset(asset_path);
+            resources.push(resource);
+        }
+        for spec in &self.resource {
+            let parsed = parse_resource(spec, default_bin)?;
+            add_asset(parsed.asset_path);
             resources.push(parsed.resource);
         }
         let assets: Vec<AssetInput<'_>> = asset_paths
             .iter()
             .map(|path| AssetInput {
                 path,
-                url: path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .and_then(|name| urls.get(name).cloned()),
+                url: urls.get(file_name_of(path)).cloned(),
             })
             .collect();
         for name in urls.keys() {
-            let is_file = |path: &Path| path.file_name().and_then(|n| n.to_str()) == Some(name);
-            if !parsed.iter().any(|s| is_file(&s.path)) && !asset_paths.iter().any(|p| is_file(p)) {
+            if !artifacts.iter().any(|a| file_name_of(a.path) == name)
+                && !asset_paths.iter().any(|p| file_name_of(p) == name)
+            {
                 bail!("--url names {name:?}, which is not among the artifacts or assets");
             }
         }
-        let source = self.source_repo.as_ref().map(|repo| Source {
-            repo: repo.clone(),
-            commit: self.commit.clone(),
-            tag: self.tag.clone(),
+        let source = source_repo.map(|repo| Source {
+            repo,
+            commit,
+            tag: tag.clone(),
         });
+        // On a forge, consumers list versions from tags and only then read
+        // the packslip; a tag that names no version, or another one, makes
+        // this release invisible to them unless a release list names it.
+        if let Some(tag) = &tag
+            && packslip::model::repository(&project).is_some()
+            && packslip::model::tag_version(tag, &project).as_deref() != Some(version.as_str())
+        {
+            eprintln!(
+                "warning: tag {tag:?} does not name version {version} (a tag is the version, optionally after a v and the tool's or repository's name); consumers listing {project} from its tags will not see this release unless a signed release list names it"
+            );
+        }
+        let url_base = self.url_base.as_deref().or(manifest.url_base.as_deref());
+        let notes_url = self.notes_url.as_deref().or(manifest.notes_url.as_deref());
+        let published_at = self
+            .published_at
+            .as_deref()
+            .or(manifest.published_at.as_deref());
         let created = packslip::create::create(&Request {
-            published_at: self.published_at.as_deref(),
+            published_at,
             source,
             artifacts,
             resources,
             assets,
-            url_base: self.url_base.as_deref(),
-            notes_url: self.notes_url.as_deref(),
-            sbom: self.sbom.as_deref(),
+            url_base,
+            notes_url,
             extensions,
             attested_by,
             evidence: self.evidence.iter().map(|s| parse_evidence(s)).collect(),
             sha512: !self.no_sha512,
-            ..Request::new(&self.project, &self.version, signer.identity())
+            ..Request::new(&project, &version, signer.identity())
         })?;
         let identity = created.statement.predicate.identity.clone();
         let bundle = sigstore::sign(signer, &created.document)?;
         std::fs::create_dir_all(&self.out)
             .wrap_err_with(|| format!("creating {}", self.out.display()))?;
-        let path = self.out.join(bundle_name(&self.project));
+        let path = self.out.join(bundle_name(&project));
         std::fs::write(&path, &bundle)?;
         let resource_count = created.statement.predicate.resources.len();
         println!(
@@ -596,45 +723,50 @@ impl RunWith<BinInfo> for Create {
     }
 }
 
-/// An artifact argument: a path, optionally with `:os/arch[/libc]` and
-/// `@variant`.
-struct ArtifactSpec {
+/// An artifact argument: a path, optionally with `:os/arch[/libc]` or
+/// `:any`, and `@variant`.
+struct ArtifactArg {
     path: PathBuf,
     os: Option<String>,
     arch: Option<String>,
     libc: Option<String>,
+    portable: bool,
     variant: Option<String>,
 }
 
-/// Recognize only a well-formed `os/arch[/libc]` suffix and a trailing
-/// `@variant`. In particular, colons inside timestamped directory names
-/// remain part of the path, and so does an `@` inside a file name that
-/// is not followed by a plain word.
-fn parse_spec(spec: &str) -> ArtifactSpec {
+/// Recognize only a well-formed `os/arch[/libc]` or `any` suffix and a
+/// trailing `@variant`. In particular, colons inside timestamped
+/// directory names remain part of the path, and so does an `@` inside a
+/// file name that is not followed by a plain word.
+fn parse_spec(spec: &str) -> ArtifactArg {
     let (rest, variant) = match spec.rsplit_once('@') {
         Some((rest, variant)) if valid_word(variant) && !rest.is_empty() => {
             (rest, Some(variant.to_string()))
         }
         _ => (spec, None),
     };
+    let plain = |path: &str, portable: bool| ArtifactArg {
+        path: PathBuf::from(path),
+        os: None,
+        arch: None,
+        libc: None,
+        portable,
+        variant: variant.clone(),
+    };
     match rest.rsplit_once(':') {
+        Some((path, "any")) if !path.is_empty() => plain(path, true),
         Some((path, platform)) if valid_platform(platform) => {
             let mut parts = platform.split('/');
-            ArtifactSpec {
+            ArtifactArg {
                 path: PathBuf::from(path),
                 os: parts.next().map(str::to_string),
                 arch: parts.next().map(str::to_string),
                 libc: parts.next().map(str::to_string),
+                portable: false,
                 variant,
             }
         }
-        _ => ArtifactSpec {
-            path: PathBuf::from(rest),
-            os: None,
-            arch: None,
-            libc: None,
-            variant,
-        },
+        _ => plain(rest, false),
     }
 }
 
@@ -688,6 +820,10 @@ struct Releases {
     /// Mark a listed release as a security fix, by URL (repeatable)
     #[usage(long)]
     security: Vec<String>,
+    /// What a publisher other than the vendor checked about a listed
+    /// release, as URL=KIND or URL=KIND=DETAIL (repeatable)
+    #[usage(long)]
+    evidence: Vec<String>,
     /// Sign with this secret key instead of a CI identity
     #[usage(short = 'k', long, value_hint = usage_rs::ValueHint::FilePath)]
     key: Option<PathBuf>,
@@ -721,7 +857,22 @@ impl RunWith<BinInfo> for Releases {
             };
             yanked.insert(url.to_string(), reason.to_string());
         }
-        for url in yanked.keys().chain(self.security.iter()) {
+        let mut evidence: std::collections::BTreeMap<String, Vec<Evidence>> =
+            std::collections::BTreeMap::new();
+        for spec in &self.evidence {
+            let Some((url, rest)) = spec.split_once('=') else {
+                bail!("--evidence wants URL=KIND or URL=KIND=DETAIL, got {spec:?}");
+            };
+            evidence
+                .entry(url.to_string())
+                .or_default()
+                .push(parse_evidence(rest));
+        }
+        for url in yanked
+            .keys()
+            .chain(self.security.iter())
+            .chain(evidence.keys())
+        {
             if !pairs.iter().any(|(u, _)| u == url) {
                 bail!("{url} is not among the --release entries");
             }
@@ -733,6 +884,7 @@ impl RunWith<BinInfo> for Releases {
                 bundle_path: path,
                 yanked: yanked.get(url).cloned(),
                 security: self.security.contains(url),
+                evidence: evidence.get(url).cloned().unwrap_or_default(),
             })
             .collect();
         let created = packslip::create::create_release_list(&ListRequest {
@@ -1011,6 +1163,12 @@ mod tests {
         let spec = parse_spec("scoped@pkg-1.0.tgz");
         assert_eq!(spec.path, PathBuf::from("scoped@pkg-1.0.tgz"));
         assert!(spec.variant.is_none(), "a variant is a plain word");
+        let spec = parse_spec("tool.jar:any");
+        assert_eq!(spec.path, PathBuf::from("tool.jar"));
+        assert!(spec.portable);
+        let spec = parse_spec("tool-linux.jar:any@slim");
+        assert!(spec.portable);
+        assert_eq!(spec.variant.as_deref(), Some("slim"));
     }
 
     #[test]
@@ -1069,6 +1227,11 @@ mod tests {
         assert!(r.resource.name.is_none());
         let r = parse_resource("font/Tool=archive:fonts/Tool.ttf", None).unwrap();
         assert_eq!(r.resource.name.as_deref(), Some("Tool"));
+        let r = parse_resource("sbom/cyclonedx=asset:dist/tool.cdx.json", None).unwrap();
+        assert_eq!(r.resource.format.as_deref(), Some("cyclonedx"));
+        assert_eq!(r.resource.name, None);
+        assert_eq!(r.resource.asset.as_deref(), Some("tool.cdx.json"));
+        assert!(parse_resource("sbom=asset:dist/tool.cdx.json", None).is_err());
         for bad in [
             "man",
             "=archive:x",

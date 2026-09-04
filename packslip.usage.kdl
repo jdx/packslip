@@ -16,13 +16,16 @@ cmd create help="Create and sign a packslip for a release" {
     long_help #"""
 Create and sign a packslip for a release
 
-Digests every artifact, infers os/arch/libc/format from file names (override with path:os/arch[/libc], add @variant to tell apart two builds for one platform), and writes packslip.sigstore.json into --out. Inside a CI job the document is signed keylessly with the job's identity. With --key it is signed with an Ed25519 key from `packslip keygen`. Either way the signature is logged to Rekor.
+Digests every artifact, infers os/arch/libc/format from file names (override with path:os/arch[/libc], path:any for an artifact that runs anywhere, add @variant to tell apart two builds for one platform), and writes packslip.sigstore.json into --out. What the command line cannot say per artifact, such as executables at different paths in different archives or a format the name gets wrong, goes in a --manifest. Inside a CI job the document is signed keylessly with the job's identity. With --key it is signed with an Ed25519 key from `packslip keygen`. Either way the signature is logged to Rekor.
 """#
-    flag --project help="The project's name: a host path such as github.com/owner/repo, or github.com/owner/repo/tool for one tool of a monorepo" required=#true {
+    flag --project help="The project's name: a host path such as github.com/owner/repo, or github.com/owner/repo/tool for one tool of a monorepo. Required unless the manifest names it" {
         arg <PROJECT>
     }
-    flag --version help="The release version" required=#true {
+    flag --version help="The release version, semver. Required unless the manifest names it" {
         arg <VERSION>
+    }
+    flag "-m --manifest" help="A TOML manifest giving per-artifact executables, formats, requirements, platforms, and the release's resources; see https://packslip.dev/release/v1/#tooling" {
+        arg <MANIFEST>
     }
     flag "-k --key" help="Sign with this secret key instead of a CI identity" {
         arg <KEY>
@@ -55,19 +58,16 @@ Digests every artifact, infers os/arch/libc/format from file names (override wit
     flag --notes-url help="URL of the release notes" {
         arg <NOTES_URL>
     }
-    flag --sbom help="SBOM URL" {
-        arg <SBOM>
-    }
     flag --extension help="Release-level extension as NAME=JSON, where NAME is who defines it (a consumer such as mise, or a domain the vendor controls) and JSON is its value. Example: 'example.com={\"build_id\":\"20260901.3\"}' (repeatable)" var=#true {
         arg <EXTENSION>
     }
-    flag --bin help="Executable inside every archive, as PATH or NAME=PATH (repeatable)" var=#true {
+    flag --bin help="Executable inside every artifact, as PATH or NAME=PATH; for a bare executable, the name it gets on PATH (repeatable)" var=#true {
         arg <BIN>
     }
-    flag --resource help="Something else the release ships, as KIND[/QUALIFIER]=SOURCE:VALUE where SOURCE is archive (a path inside every archive), asset (a separate release file, by local path), repo (a path at --commit), or exec (a command whose stdout is the file). Kinds: completion/SHELL (or completion/SHELL,SHELL with exec and a {shell} placeholder), man, cli-spec/FORMAT[/BIN], skill/NAME, desktop, icon, app. Example: 'completion/zsh=archive:share/zsh/site-functions/_tool' (repeatable)" var=#true {
+    flag --resource help="Something else the release ships, as KIND[/QUALIFIER]=SOURCE:VALUE where SOURCE is archive (a path inside every archive), asset (a separate release file, by local path), repo (a path at --commit), or exec (a command whose stdout is the file). Kinds: completion/SHELL (or completion/SHELL,SHELL with exec and a {shell} placeholder), man, cli-spec/FORMAT[/BIN], skill/NAME, sbom/FORMAT, desktop, icon, app. Example: 'completion/zsh=archive:share/zsh/site-functions/_tool' (repeatable)" var=#true {
         arg <RESOURCE>
     }
-    flag --provenance help="Provenance URL for every artifact (repeatable, positional order)" var=#true {
+    flag --provenance help="Provenance URL for an artifact, as FILENAME=URL, or bare URLs in the order the artifacts are given (repeatable)" var=#true {
         arg <PROVENANCE>
     }
     flag --attested-by help="Who makes the claim: vendor (default) or repackager" {
@@ -78,7 +78,8 @@ Digests every artifact, infers os/arch/libc/format from file names (override wit
     }
     flag --no-sha512 help="Record only sha256, not sha512 as well"
     flag "-h --help" help="Print help" action=help builtin=#true
-    arg <ARTIFACTS>... help="Artifact files, optionally as path[:os/arch[/libc]][@variant]"
+    arg "[ARTIFACTS]..." help="Artifact files, optionally as path[:os/arch[/libc]|:any][@variant]. Added to those the manifest lists"
+    complete manifest type=path
     complete key type=path
 }
 cmd keygen help="Generate an Ed25519 key pair for the sigstore-key scheme" {
@@ -118,6 +119,9 @@ For a project on its own domain: lists released packslips with their digests so 
     }
     flag --security help="Mark a listed release as a security fix, by URL (repeatable)" var=#true {
         arg <SECURITY>
+    }
+    flag --evidence help="What a publisher other than the vendor checked about a listed release, as URL=KIND or URL=KIND=DETAIL (repeatable)" var=#true {
+        arg <EVIDENCE>
     }
     flag "-k --key" help="Sign with this secret key instead of a CI identity" {
         arg <KEY>

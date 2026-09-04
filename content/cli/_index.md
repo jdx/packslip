@@ -15,7 +15,7 @@
 
 ## Subcommands
 
-- [`packslip create <FLAGS> <ARTIFACTS>…`](/cli/create.md)
+- [`packslip create [FLAGS] [ARTIFACTS]…`](/cli/create.md)
 - [`packslip keygen [-o --out <OUT>]`](/cli/keygen.md)
 - [`packslip releases <FLAGS>`](/cli/releases.md)
 - [`packslip schema [--releases]`](/cli/schema.md)

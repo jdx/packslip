@@ -26,7 +26,6 @@ pub struct Request<'a> {
     /// given and the file has no URL of its own.
     pub url_base: Option<&'a str>,
     pub notes_url: Option<&'a str>,
-    pub sbom: Option<&'a str>,
     /// Release-level extensions, keyed by who defines them.
     pub extensions: Extensions,
     /// Who will sign the document.
@@ -50,7 +49,6 @@ impl<'a> Request<'a> {
             assets: Vec::new(),
             url_base: None,
             notes_url: None,
-            sbom: None,
             extensions: Extensions::new(),
             identity,
             attested_by: Attestor::Vendor,
@@ -66,11 +64,19 @@ pub struct ArtifactInput<'a> {
     pub os: Option<&'a str>,
     pub arch: Option<&'a str>,
     pub libc: Option<&'a str>,
+    /// Runs on any host: `os`, `arch`, and `libc` are left out whatever
+    /// the file name says.
+    pub portable: bool,
     pub variant: Option<String>,
     /// The download URL, when it is not `url_base/name`.
     pub url: Option<String>,
+    /// The format, when it is not what the file name implies: `raw` for
+    /// an `.exe` that is the program rather than an installer.
+    pub format: Option<String>,
     /// Executables inside the artifact. On Windows an entry without an
-    /// extension gets `.exe`, on both path and name.
+    /// extension gets `.exe`, on both path and name. For a bare
+    /// executable (`raw`, `gz`, `xz`, `zst`, `bz2`), an entry that is a
+    /// plain name becomes the artifact's own file under that name.
     pub bin: Vec<Bin>,
     pub requires: Option<Requires>,
     pub provenance: Vec<String>,
@@ -85,8 +91,10 @@ impl<'a> ArtifactInput<'a> {
             os: None,
             arch: None,
             libc: None,
+            portable: false,
             variant: None,
             url: None,
+            format: None,
             bin: Vec::new(),
             requires: None,
             provenance: Vec::new(),
@@ -120,6 +128,8 @@ pub enum Error {
     },
     #[error("{0}")]
     Invalid(#[from] crate::model::InvalidDocument),
+    #[error("{0}")]
+    Archive(#[from] crate::archive::Error),
     #[error("{path}: not a packslip bundle: {why}")]
     NotAPackslip { path: String, why: String },
     #[error(
@@ -145,6 +155,10 @@ pub type Platform = (
 );
 
 /// Infer `(os, arch, libc, format)` from a release file name.
+///
+/// A `.exe` is taken for the program itself (`raw`) unless its name says
+/// `setup`, `install`, or `installer`, which makes it an `exe` installer;
+/// a manifest or `--format` settles any case the name leaves open.
 pub fn infer_platform(name: &str) -> Platform {
     let lower = name.to_ascii_lowercase();
     let os = if lower.contains("linux")
@@ -162,13 +176,24 @@ pub fn infer_platform(name: &str) -> Platform {
         Some("darwin")
     } else if lower.contains("windows")
         || lower.contains("win64")
+        || lower.contains("win32")
         || lower.ends_with(".exe")
+        || lower.ends_with(".exe.gz")
+        || lower.ends_with(".exe.zip")
         || lower.ends_with(".msi")
         || lower.ends_with(".msix")
     {
         Some("windows")
     } else if lower.contains("freebsd") {
         Some("freebsd")
+    } else if lower.contains("netbsd") {
+        Some("netbsd")
+    } else if lower.contains("openbsd") {
+        Some("openbsd")
+    } else if lower.contains("illumos") {
+        Some("illumos")
+    } else if lower.contains("android") {
+        Some("android")
     } else {
         None
     };
@@ -182,9 +207,17 @@ pub fn infer_platform(name: &str) -> Platform {
         Some("aarch64")
     } else if lower.contains("armv7") || lower.contains("armhf") {
         Some("armv7")
+    } else if lower.contains("armv6") {
+        Some("armv6")
     } else if lower.contains("riscv64") {
         Some("riscv64")
-    } else if lower.contains("i686") || lower.contains("x86") {
+    } else if lower.contains("ppc64le") || lower.contains("powerpc64le") {
+        Some("powerpc64le")
+    } else if lower.contains("s390x") {
+        Some("s390x")
+    } else if lower.contains("loongarch64") || lower.contains("loong64") {
+        Some("loongarch64")
+    } else if lower.contains("i686") || lower.contains("i386") || lower.contains("x86") {
         Some("i686")
     } else {
         None
@@ -196,12 +229,17 @@ pub fn infer_platform(name: &str) -> Platform {
     } else {
         None
     };
+    // Compound suffixes first, so `.tar.gz` is not taken for `.gz`.
     let format = [
-        "tar.xz", "tar.gz", "tar.zst", "tar.bz2", "tgz", "zip", "7z", "deb", "rpm", "dmg", "pkg",
-        "msix", "msi", "exe", "appimage",
+        "tar.xz", "tar.gz", "tar.zst", "tar.bz2", "tgz", "tar", "zip", "7z", "gz", "xz", "zst",
+        "bz2", "deb", "rpm", "dmg", "pkg", "msix", "msi", "exe", "appimage",
     ]
     .into_iter()
-    .find(|ext| lower.ends_with(&format!(".{ext}")));
+    .find(|ext| lower.ends_with(&format!(".{ext}")))
+    .map(|ext| match ext {
+        "exe" if !(lower.contains("setup") || lower.contains("install")) => "raw",
+        other => other,
+    });
     (os, arch, libc, format)
 }
 
@@ -237,27 +275,68 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
             path: input.path.display().to_string(),
             source,
         })?;
-        let (inferred_os, arch, inferred_libc, inferred_format) = infer_platform(&name);
-        let os = input.os.or(inferred_os);
-        let libc = input.libc.map(str::to_string).or_else(|| match os {
-            Some("linux") => Some(inferred_libc.unwrap_or("gnu").to_string()),
-            _ => None,
-        });
+        let (inferred_os, inferred_arch, inferred_libc, inferred_format) = infer_platform(&name);
+        let os = if input.portable {
+            None
+        } else {
+            input.os.or(inferred_os)
+        };
+        let arch = if input.portable {
+            None
+        } else {
+            input.arch.or(inferred_arch)
+        };
+        let libc = if input.portable {
+            None
+        } else {
+            input.libc.map(str::to_string).or_else(|| match os {
+                Some("linux") => Some(inferred_libc.unwrap_or("gnu").to_string()),
+                _ => None,
+            })
+        };
         // A file with no archive or installer extension is the executable itself.
-        let format = inferred_format.map(str::to_string).or_else(|| {
-            let has_extension = name
-                .rsplit_once('.')
-                .is_some_and(|(_, ext)| !ext.is_empty());
-            (!has_extension && os.is_some()).then(|| "raw".to_string())
-        });
-        let bin = input
-            .bin
-            .iter()
+        let format = input
+            .format
+            .clone()
+            .or_else(|| inferred_format.map(str::to_string))
+            .or_else(|| {
+                let has_extension = name
+                    .rsplit_once('.')
+                    .is_some_and(|(_, ext)| !ext.is_empty());
+                (!has_extension && os.is_some()).then(|| "raw".to_string())
+            });
+        let bare = format
+            .as_deref()
+            .filter(|f| crate::model::is_bare_format(f))
+            .map(|f| crate::model::bare_file_name(&name, f).to_string());
+        let windows = os == Some("windows");
+        // Inside an archive the executables are where they really are: a
+        // plain `--bin tool` is looked up, and a given path is checked.
+        // An archive that cannot be read is taken at the vendor's word.
+        let listed = match format.as_deref() {
+            Some(f) if crate::archive::can_list(f) && !input.bin.is_empty() => {
+                match crate::archive::resolve_bins(input.path, f, &input.bin, windows) {
+                    Ok(bins) => Some(bins),
+                    Err(crate::archive::Error::Undecodable { .. }) => None,
+                    Err(err) => return Err(Error::Archive(err)),
+                }
+            }
+            _ => None,
+        };
+        let bin = listed
+            .unwrap_or_else(|| input.bin.clone())
+            .into_iter()
             .map(|b| {
-                if os == Some("windows") {
+                // `--bin tool` names the program; for a bare executable the
+                // program is the artifact itself, under that name.
+                let b = match &bare {
+                    Some(file) if !b.path.contains('/') => Bin::named(file, &b.name),
+                    _ => b,
+                };
+                if windows {
                     Bin::named(windows_exe(&b.path), windows_exe(&b.name))
                 } else {
-                    b.clone()
+                    b
                 }
             })
             .collect();
@@ -270,7 +349,7 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
             url,
             name: name.clone(),
             os: os.map(str::to_string),
-            arch: input.arch.or(arch).map(str::to_string),
+            arch: arch.map(str::to_string),
             libc,
             variant: input.variant.clone(),
             size: digests.size,
@@ -383,7 +462,6 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
             attested_by: request.attested_by,
             evidence: request.evidence.clone(),
             notes_url: request.notes_url.map(str::to_string),
-            sbom: request.sbom.map(str::to_string),
             extensions: request.extensions.clone(),
         },
     };
@@ -403,6 +481,9 @@ pub struct ListedRelease<'a> {
     /// Withdrawn by the vendor, with the reason.
     pub yanked: Option<String>,
     pub security: bool,
+    /// What the list's publisher checked about the release, when the
+    /// publisher is not the vendor.
+    pub evidence: Vec<Evidence>,
 }
 
 /// What `create_release_list` needs.
@@ -479,6 +560,7 @@ pub fn create_release_list(request: &ListRequest<'_>) -> Result<CreatedList, Err
         });
         releases.push(ReleaseRef {
             version: statement.predicate.version,
+            tag: statement.predicate.source.and_then(|s| s.tag),
             published_at: statement.predicate.published_at,
             packslip: listed.url.to_string(),
             status: listed
@@ -487,6 +569,7 @@ pub fn create_release_list(request: &ListRequest<'_>) -> Result<CreatedList, Err
                 .then_some(crate::model::ReleaseStatus::Yanked),
             status_reason: listed.yanked.clone(),
             security: listed.security,
+            evidence: listed.evidence.clone(),
             extensions: Extensions::new(),
         });
     }
@@ -541,9 +624,65 @@ mod tests {
             infer_platform("tool-macos-aarch64.zip"),
             (Some("darwin"), Some("aarch64"), None, Some("zip"))
         );
+        // A .exe is the program unless its name says it installs.
         assert_eq!(
             infer_platform("tool-windows-x64.exe"),
+            (Some("windows"), Some("x86_64"), None, Some("raw"))
+        );
+        assert_eq!(
+            infer_platform("Tool-Setup-1.2.3.exe"),
+            (Some("windows"), None, None, Some("exe"))
+        );
+        assert_eq!(
+            infer_platform("tool-installer-x64.exe"),
             (Some("windows"), Some("x86_64"), None, Some("exe"))
+        );
+        // Single compressed executables, and a plain tar.
+        assert_eq!(
+            infer_platform("argo-linux-amd64.gz"),
+            (Some("linux"), Some("x86_64"), Some("gnu"), Some("gz"))
+        );
+        assert_eq!(
+            infer_platform("argo-windows-amd64.exe.gz"),
+            (Some("windows"), Some("x86_64"), None, Some("gz"))
+        );
+        assert_eq!(
+            infer_platform("restic_0.16.0_linux_arm64.bz2"),
+            (Some("linux"), Some("aarch64"), Some("gnu"), Some("bz2"))
+        );
+        assert_eq!(
+            infer_platform("tool-linux-x64.zst"),
+            (Some("linux"), Some("x86_64"), Some("gnu"), Some("zst"))
+        );
+        assert_eq!(
+            infer_platform("tool-linux-x64.xz"),
+            (Some("linux"), Some("x86_64"), Some("gnu"), Some("xz"))
+        );
+        assert_eq!(
+            infer_platform("mmctl_linux_amd64.tar"),
+            (Some("linux"), Some("x86_64"), Some("gnu"), Some("tar"))
+        );
+        // Less common hosts and architectures.
+        assert_eq!(
+            infer_platform("tool-netbsd-i386.tar.gz"),
+            (Some("netbsd"), Some("i686"), None, Some("tar.gz"))
+        );
+        assert_eq!(
+            infer_platform("tool-linux-ppc64le.tar.gz"),
+            (
+                Some("linux"),
+                Some("powerpc64le"),
+                Some("gnu"),
+                Some("tar.gz")
+            )
+        );
+        assert_eq!(
+            infer_platform("tool-linux-s390x.tar.gz"),
+            (Some("linux"), Some("s390x"), Some("gnu"), Some("tar.gz"))
+        );
+        assert_eq!(
+            infer_platform("tool-linux-armv6.tar.gz"),
+            (Some("linux"), Some("armv6"), Some("gnu"), Some("tar.gz"))
         );
         assert_eq!(infer_platform("SHASUMS256.txt"), (None, None, None, None));
         assert_eq!(
@@ -801,6 +940,69 @@ mod tests {
             Some("https://cdn.example.com/tool-linux-arm64")
         );
         assert_eq!(arts[3].bin[0].name, "tool");
+
+        // `--bin tool` on a bare executable names the artifact itself,
+        // compressed or not, and on Windows both sides get .exe.
+        let gz = dir.path().join("tool-linux-x64.gz");
+        let exe = dir.path().join("tool-windows-x64.exe");
+        let exe_gz = dir.path().join("tool-windows-arm64.exe.gz");
+        for path in [&gz, &exe, &exe_gz] {
+            std::fs::write(path, b"bare").unwrap();
+        }
+        let bare = create(&request(
+            vec![
+                input(&raw, None, &["tool"], &[]),
+                input(&gz, None, &["tool"], &[]),
+                input(&exe, None, &["tool"], &[]),
+                input(&exe_gz, None, &["tool"], &[]),
+            ],
+            None,
+            None,
+        ))
+        .unwrap();
+        let arts = &bare.statement.predicate.artifacts;
+        assert_eq!(arts[0].bin, [Bin::named("tool-linux-arm64", "tool")]);
+        assert_eq!(arts[1].format.as_deref(), Some("gz"));
+        assert_eq!(arts[1].bin, [Bin::named("tool-linux-x64", "tool")]);
+        assert_eq!(arts[2].format.as_deref(), Some("raw"));
+        assert_eq!(
+            arts[2].bin,
+            [Bin::named("tool-windows-x64.exe", "tool.exe")]
+        );
+        assert_eq!(arts[3].format.as_deref(), Some("gz"));
+        assert_eq!(
+            arts[3].bin,
+            [Bin::named("tool-windows-arm64.exe", "tool.exe")]
+        );
+
+        // A format override and a portable artifact.
+        let setup = dir.path().join("tool-x64.exe");
+        let jar = dir.path().join("tool-linux.jar");
+        std::fs::write(&setup, b"installer").unwrap();
+        std::fs::write(&jar, b"jar").unwrap();
+        let overridden = create(&request(
+            vec![
+                ArtifactInput {
+                    format: Some("exe".into()),
+                    ..ArtifactInput::new(&setup)
+                },
+                ArtifactInput {
+                    portable: true,
+                    ..ArtifactInput::new(&jar)
+                },
+            ],
+            None,
+            None,
+        ))
+        .unwrap();
+        let arts = &overridden.statement.predicate.artifacts;
+        assert_eq!(arts[0].format.as_deref(), Some("exe"));
+        assert!(arts[0].bin.is_empty());
+        assert_eq!(
+            (&arts[1].os, &arts[1].arch, &arts[1].libc),
+            (&None, &None, &None)
+        );
+        assert_eq!(arts[1].format, None);
         assert_eq!(
             created.statement.subject[0]
                 .digest
@@ -956,6 +1158,7 @@ mod tests {
                 bundle_path: &bundle_path,
                 yanked: Some("bad build".into()),
                 security: true,
+                evidence: vec![],
             }],
             identity: key_identity(&key),
         })
@@ -963,6 +1166,7 @@ mod tests {
         assert_eq!(list.statement.predicate.expires_at, "2026-10-01T01:00:00Z");
         let entry = &list.statement.predicate.releases[0];
         assert_eq!(entry.version, "1.0.0");
+        assert_eq!(entry.tag.as_deref(), Some("v1.0.0"));
         assert!(entry.is_yanked());
         assert_eq!(entry.status_reason.as_deref(), Some("bad build"));
         assert!(entry.security);
@@ -999,12 +1203,14 @@ mod tests {
                     bundle_path: &bundle_path,
                     yanked: None,
                     security: false,
+                    evidence: vec![],
                 },
                 ListedRelease {
                     url: "https://x/b.sigstore.json",
                     bundle_path: &bundle_path,
                     yanked: None,
                     security: false,
+                    evidence: vec![],
                 },
             ],
             identity: key_identity(&key),
@@ -1021,6 +1227,7 @@ mod tests {
                 bundle_path: &bundle_path,
                 yanked: None,
                 security: false,
+                evidence: vec![],
             }],
             identity: key_identity(&key),
         })
