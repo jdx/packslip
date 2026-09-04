@@ -306,10 +306,20 @@ prefers them in this order:
 Layouts differ by platform more often than by file, so an entry may carry
 `os`, `arch`, or `libc` to say which artifacts it describes; an entry
 without them describes every artifact. A resource applies to the selected
-artifact when each field it carries equals the artifact's. For one need,
-a consumer keeps the applicable entries, takes the most specific of them
-(the one naming the most of those three fields), and only then applies
-the source order above.
+artifact when each field it carries equals the artifact's.
+
+Entries compete only with entries for the same thing. Two entries are for
+the same thing when they share a `kind` and an identity: the `shell` for a
+completion, `bin` and `format` for a `cli-spec`, `name` for a skill,
+`format` for an SBOM, and for every other kind the file name of the
+source, or the kind alone for an `exec` source. Among the entries for one
+thing that apply to the selected artifact, a consumer takes the most
+specific (the one naming the most of `os`, `arch`, and `libc`), and only
+then applies the source order above. Entries for different things never
+hide one another: a skill scoped to `linux` beside an unscoped skill of
+another name leaves that skill in place, and a zsh completion for one
+platform says nothing about the bash one. The reference implementation
+provides this as `select_resources`.
 
 Documented kinds:
 
@@ -781,10 +791,11 @@ which the reference implementation provides as `select_artifact`.
    missing library or command in your own terms. Fail on nothing you
    cannot check. Between two artifacts that tie, prefer the one whose
    requirements the host meets.
-8. Take each resource from the most verifiable source offered, in the
-   order Resources gives, among the entries whose scope fits the selected
-   artifact; run an `exec` entry only if you have chosen to run vendor
-   code at install time; ignore kinds you do not know.
+8. For each thing the resources describe, as Resources defines one, keep
+   the entries whose scope fits the selected artifact and the most
+   specific of those, then take the most verifiable source offered in the
+   order Resources gives; run an `exec` entry only if you have chosen to
+   run vendor code at install time; ignore kinds you do not know.
 
 ## What a verified packslip proves
 

@@ -286,8 +286,8 @@ pub fn normalize_version(text: &str) -> Option<String> {
 
 /// Whether a resource applies to an artifact: each of the resource's
 /// `os`, `arch`, and `libc` is absent or equal to the artifact's. A
-/// consumer choosing among same-kind entries takes the one naming the
-/// most of those fields.
+/// consumer choosing among entries for the same thing takes the one
+/// naming the most of those fields; [`select_resources`] does that.
 pub fn resource_fits(resource: &Resource, artifact: &Artifact) -> bool {
     [
         (&resource.os, &artifact.os),
@@ -296,6 +296,52 @@ pub fn resource_fits(resource: &Resource, artifact: &Artifact) -> bool {
     ]
     .into_iter()
     .all(|(scope, value)| scope.is_none() || scope == value)
+}
+
+/// The resources to use with one artifact, as the specification's
+/// Resources section says: for each thing the entries describe (see
+/// [`Resource::identities`]), those that fit the artifact and, of them,
+/// the most specific. Entries for different things never hide one
+/// another. Document order is kept, and an entry that describes several
+/// things, such as an `exec` completion for several shells, appears
+/// once.
+pub fn select_resources<'a>(resources: &'a [Resource], artifact: &Artifact) -> Vec<&'a Resource> {
+    let specificity = |r: &Resource| {
+        [&r.os, &r.arch, &r.libc]
+            .iter()
+            .filter(|f| f.is_some())
+            .count()
+    };
+    let mut keep = vec![false; resources.len()];
+    let mut seen = std::collections::BTreeSet::new();
+    for resource in resources {
+        for identity in resource.identities() {
+            if !seen.insert(identity.clone()) {
+                continue;
+            }
+            let fitting: Vec<usize> = resources
+                .iter()
+                .enumerate()
+                .filter(|(_, r)| r.identities().contains(&identity) && resource_fits(r, artifact))
+                .map(|(i, _)| i)
+                .collect();
+            let best = fitting
+                .iter()
+                .map(|&i| specificity(&resources[i]))
+                .max()
+                .unwrap_or(0);
+            for i in fitting {
+                if specificity(&resources[i]) == best {
+                    keep[i] = true;
+                }
+            }
+        }
+    }
+    resources
+        .iter()
+        .zip(keep)
+        .filter_map(|(r, keep)| keep.then_some(r))
+        .collect()
 }
 
 /// This host, in the packslip's vocabulary, for [`select_artifact`].
@@ -756,6 +802,55 @@ impl Resource {
         match sources.as_slice() {
             [one] => Some(*one),
             _ => None,
+        }
+    }
+
+    /// What this entry is an entry for, so that only entries for the same
+    /// thing compete over platform scope: the shell of a completion (one
+    /// per shell an `exec` entry generates), `bin` and `format` of a
+    /// cli-spec, the name of a skill, the format of an SBOM, and for
+    /// every other kind the file name of the source, or the kind alone
+    /// for an `exec` source. Each is prefixed by the kind.
+    pub fn identities(&self) -> Vec<String> {
+        let kind = &self.kind;
+        match kind.as_str() {
+            "completion" => {
+                let shells: Vec<&str> = self
+                    .shell
+                    .iter()
+                    .chain(&self.shells)
+                    .map(String::as_str)
+                    .collect();
+                if shells.is_empty() {
+                    vec![kind.clone()]
+                } else {
+                    shells.iter().map(|s| format!("{kind}/{s}")).collect()
+                }
+            }
+            "cli-spec" => vec![format!(
+                "{kind}/{}/{}",
+                self.format.as_deref().unwrap_or_default(),
+                self.bin.as_deref().unwrap_or_default()
+            )],
+            "skill" => vec![format!(
+                "{kind}/{}",
+                self.name.as_deref().unwrap_or_default()
+            )],
+            "sbom" => vec![format!(
+                "{kind}/{}",
+                self.format.as_deref().unwrap_or_default()
+            )],
+            _ => {
+                let path = self
+                    .archive
+                    .as_deref()
+                    .or(self.asset.as_deref())
+                    .or(self.repo.as_deref());
+                match path {
+                    Some(path) => vec![format!("{kind}/{}", file_name(path))],
+                    None => vec![kind.clone()],
+                }
+            }
         }
     }
 
@@ -2406,6 +2501,95 @@ mod tests {
             !resource_fits(&windows, &artifacts[4]),
             "a portable artifact is not a Windows one"
         );
+    }
+
+    #[test]
+    fn resources_compete_only_with_their_own_kind_and_identity() {
+        let artifact =
+            |json: serde_json::Value| -> Artifact { serde_json::from_value(json).unwrap() };
+        let linux = artifact(serde_json::json!({
+            "name": "t-linux.tar.gz", "os": "linux", "arch": "x86_64", "size": 1
+        }));
+        let mac = artifact(serde_json::json!({
+            "name": "t-mac.tar.gz", "os": "darwin", "size": 1
+        }));
+        let scoped = |r: Resource, os: &str| Resource {
+            os: Some(os.into()),
+            ..r
+        };
+        let archive = |kind: &str, path: &str| Resource {
+            archive: Some(path.into()),
+            ..Resource::new(kind)
+        };
+        let skill = |name: &str| Resource {
+            name: Some(name.into()),
+            ..archive("skill", &format!("skills/{name}"))
+        };
+        let completion = |shell: &str, path: &str| Resource {
+            shell: Some(shell.into()),
+            ..archive("completion", path)
+        };
+        let resources = vec![
+            skill("everywhere"),
+            scoped(skill("linuxonly"), "linux"),
+            skill("both"),
+            scoped(skill("both"), "linux"),
+            completion("zsh", "share/_t"),
+            scoped(completion("zsh", "win/_t"), "windows"),
+            completion("bash", "share/t.bash"),
+            Resource {
+                shells: vec!["bash".into(), "zsh".into()],
+                exec: vec!["t".into(), "completion".into(), "{shell}".into()],
+                ..Resource::new("completion")
+            },
+            archive("man", "share/man/t.1"),
+            scoped(archive("man", "man/t.1"), "darwin"),
+        ];
+        let names = |artifact: &Artifact| -> Vec<String> {
+            select_resources(&resources, artifact)
+                .iter()
+                .map(|r| {
+                    let mut label = r.label();
+                    if let Some(p) = &r.archive {
+                        label.push('@');
+                        label.push_str(p);
+                    }
+                    label
+                })
+                .collect()
+        };
+        assert_eq!(
+            names(&linux),
+            [
+                "skill/everywhere@skills/everywhere",
+                "skill/linuxonly@skills/linuxonly",
+                "skill/both@skills/both",
+                "completion/zsh@share/_t",
+                "completion/bash@share/t.bash",
+                "completion/bash,zsh",
+                "man@share/man/t.1",
+            ],
+            "the linux skill hides only the unscoped entry of its own name; the windows zsh entry hides nothing on linux"
+        );
+        assert_eq!(
+            names(&mac),
+            [
+                "skill/everywhere@skills/everywhere",
+                "skill/both@skills/both",
+                "completion/zsh@share/_t",
+                "completion/bash@share/t.bash",
+                "completion/bash,zsh",
+                "man@man/t.1",
+            ],
+            "the darwin man page hides the unscoped one of the same file name"
+        );
+        assert_eq!(
+            resources[7].identities(),
+            ["completion/bash", "completion/zsh"]
+        );
+        assert_eq!(resources[3].identities(), ["skill/both"]);
+        assert_eq!(resources[8].identities(), ["man/t.1"]);
+        assert_eq!(Resource::new("man").identities(), ["man"]);
     }
 
     #[test]
