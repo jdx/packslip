@@ -104,6 +104,37 @@ pre code { background: none; padding: 0; font-size: inherit; }
 .top nav a { color: var(--ink-2); text-decoration: none; font-size: 0.95rem; }
 .top nav a:hover { color: var(--accent); }
 
+.top nav .github-link {
+  position: relative;
+  display: inline-flex;
+  align-items: flex-start;
+  justify-content: center;
+  width: 2rem;
+  padding-bottom: 0.75rem;
+}
+
+.github-link svg { width: 1.25rem; height: 1.25rem; }
+
+.github-stars {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.github-stars .star {
+  margin-right: 0.2em;
+  font-family: -apple-system, "Segoe UI Symbol", sans-serif;
+}
+
+.github-link:hover .github-stars { color: var(--accent); }
+
 /* Development notice */
 
 .notice {
