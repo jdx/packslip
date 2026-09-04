@@ -1,4 +1,4 @@
-{{- $stars := hugo.Data.github.stars -}}
+{{- $stars := int hugo.Data.github.stars -}}
 {{- $display := printf "%d" $stars -}}
 {{- if ge $stars 1000 -}}
   {{- $display = replaceRE `\.0k$` "k" (printf "%.1fk" (div (float $stars) 1000)) -}}

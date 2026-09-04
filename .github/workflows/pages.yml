@@ -36,7 +36,12 @@ jobs:
       - id: pages
         uses: actions/configure-pages@v5
       - name: Build site
-        run: hugo --gc --minify --baseURL "${{ steps.pages.outputs.base_url }}/"
+        run: |
+          hugo --gc --minify --baseURL "${{ steps.pages.outputs.base_url }}/"
+          if grep -R -F '%!' public; then
+            echo "Hugo rendered a formatting error"
+            exit 1
+          fi
       - uses: actions/upload-pages-artifact@v5
         with:
           path: public
