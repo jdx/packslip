@@ -169,6 +169,8 @@ Rules:
   entry a `kind` and one source. See Resources.
 - `notes_url` points at the release notes. `sbom` points at a software
   bill of materials for the release.
+- `extensions` carries what the specification has no field for, keyed by
+  who defines it. See Extensions.
 - `identity` says how the document is signed and by whom, so a consumer
   can check what it pinned against what it received. For `sigstore-oidc`,
   `key_id` is the certificate's subject identity (a workflow URI for CI, an
@@ -242,6 +244,37 @@ An artifact with `bin` is something a command-line package manager
 installs. A release whose resources include `desktop` or `app` is something
 a desktop launcher installs. Many applications are both, and the entries say
 so without a category that would misfile them.
+
+### Extensions
+
+A vendor or a consumer sometimes has something to say that the
+specification has no field for: a package manager's install hints, a
+Homebrew tap, an end-of-life date, a build id. It goes in `extensions`, an
+object that the release predicate, each artifact, each resource, the
+release-list predicate, and each release entry may carry:
+
+```json
+"extensions": {
+  "mise": { "postinstall": "mise reshim" },
+  "example.com": { "build_id": "20260901.3" }
+}
+```
+
+Each key names the party that defines its value: a consumer by its name
+(`mise`, `pacvamp`), a vendor by a domain it controls (`example.com`). The
+value is whatever that party documents. packslip assigns no meaning to
+anything under `extensions` and never will, so nothing put there can
+collide with a field a later revision adds. The signature covers it like
+everything else, and `packslip show` prints it unchanged. A consumer reads
+the keys it defines and ignores the rest.
+
+Everywhere else, a consumer ignores fields it does not know, so a later
+revision of this version can add fields without breaking older consumers.
+A vendor does not use that room for its own data: a field it invents may
+be claimed by a later revision with another meaning, while a key under
+`extensions` never is. Something many vendors put under `extensions` is a
+candidate for a field of its own; when that happens the extension key
+keeps working beside it.
 
 ### Repackager attestation
 
@@ -487,8 +520,9 @@ Action.
   - Executables: `--bin NAME=PATH` when the name on PATH differs from the
     file.
   - URLs: `--url FILENAME=URL` sets one artifact's or asset's URL.
-  - Metadata: `--notes-url`, `--no-sha512`, and `--attested-by repackager`
-    with `--evidence KIND[=DETAIL]`.
+  - Metadata: `--notes-url`, `--sbom`, `--no-sha512`, `--extension
+    NAME=JSON` for a release-level extension, and `--attested-by
+    repackager` with `--evidence KIND[=DETAIL]`.
   - Resources: `--resource KIND[/QUALIFIER]=SOURCE:VALUE`, as in
     `completion/zsh=archive:share/zsh/site-functions/_tool`,
     `completion/bash,zsh,fish=exec:tool completion {shell}`,
