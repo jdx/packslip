@@ -9,7 +9,7 @@ at packslip.dev.
 
 system_extra = """
 packslip is a work-in-progress proposal, not an adopted standard. Its version 1 format and CLI
-may still change incompatibly, and neither mise nor Omarchy currently depends on it. Match that
+may still change incompatibly, and mise ships only experimental support for it. Match that
 status: do not imply broad adoption, production maturity, or guaranteed future compatibility.
 Describe what changed and why, and call out breaking changes plainly.
 """

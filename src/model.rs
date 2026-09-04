@@ -46,7 +46,7 @@ pub struct Digest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Predicate {
     /// The project's name: a host path such as `github.com/jdx/mise` or
-    /// `mise.jdx.dev`, the way Go names modules. The host is where a
+    /// `mise.jdx.dev`. The host is where a
     /// consumer discovers releases and, for forge hosts, what identity is
     /// expected to have signed them. A tool in a monorepo adds a subpath:
     /// `github.com/oxc-project/oxc/oxlint`.

@@ -219,7 +219,7 @@
           "type": "boolean"
         },
         "project": {
-          "description": "The project's name: a host path such as `github.com/jdx/mise` or\n`mise.jdx.dev`, the way Go names modules. The host is where a\nconsumer discovers releases and, for forge hosts, what identity is\nexpected to have signed them. A tool in a monorepo adds a subpath:\n`github.com/oxc-project/oxc/oxlint`.",
+          "description": "The project's name: a host path such as `github.com/jdx/mise` or\n`mise.jdx.dev`. The host is where a\nconsumer discovers releases and, for forge hosts, what identity is\nexpected to have signed them. A tool in a monorepo adds a subpath:\n`github.com/oxc-project/oxc/oxlint`.",
           "type": "string"
         },
         "published_at": {

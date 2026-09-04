@@ -267,6 +267,7 @@ section h2 {
 .prose p { margin: 0 0 1rem; }
 .prose ul, .prose ol { padding-left: 1.3rem; margin: 0 0 1rem; }
 .prose li { margin-bottom: 0.45rem; }
+.prose li > ul { margin: 0.45rem 0 0; }
 .prose h3 { font-size: 1.15rem; margin: 2rem 0 0.6rem; letter-spacing: -0.01em; }
 .prose pre { margin: 1rem 0 1.4rem; }
 .prose table { margin: 1rem 0 1.4rem; }

@@ -5,10 +5,9 @@
   </picture>
 </p>
 
-> **Work-in-progress proposal.** packslip is a draft, not an adopted
-> standard: it is far from certain that mise or Omarchy will adopt it, and
-> nothing depends on it yet. The format is a version 1 draft that still
-> changes between releases, and the tooling is young and lightly deployed.
+> **Work in progress.** packslip is a draft, not a standard. mise ships
+> experimental support for it, but the format and the tooling still change
+> between releases, so use it for testing and nothing you depend on.
 > Expect breaking changes until it is declared stable. Feedback is welcome
 > in [issues](https://github.com/jdx/packslip/issues).
 
@@ -68,7 +67,7 @@ logging to Rekor; consumers then verify with `--pubkey release.pub`. A
 project on its own domain publishes a signed release list with
 `packslip releases`.
 
-Names are Go-module style host paths. A tool in a monorepo adds a subpath
+Names are host paths. A tool in a monorepo adds a subpath
 (`github.com/oxc-project/oxc/oxlint`) and gets its own packslip per
 release, named `packslip.oxlint.sigstore.json`; the identity pin stays
 the repository. Two builds for one platform take a variant

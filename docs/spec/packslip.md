@@ -8,28 +8,25 @@ Author: Jeff Dickey ([@jdx](https://github.com/jdx)).
 ## Goal
 
 A vendor publishes one signed, machine-readable document per release that
-says what the artifacts are and how to verify them. Any consumer (mise,
-omapac and the Omarchy Package Repository, aqua, Homebrew, a corporate
-mirror) verifies it against a single pinned identity or key and gets
-checksums, platform mapping, executables, provenance links, and what
-else ships with them (completions, man pages, a CLI spec, a skill, a
-desktop entry), without per-vendor logic and without a registry entry. The name is neutral on
-purpose: a packing slip is the paper in the box listing exactly what
-shipped.
+says what the artifacts are and how to verify them. A consumer, whether that
+is [mise](https://mise.jdx.dev), [pacvamp](https://pacvamp.com), or a
+corporate mirror, verifies it against one pinned identity or key. In return
+it gets checksums, platform mapping, executables, provenance links, and
+whatever else ships with the release: completions, man pages, a CLI spec, a
+skill, a desktop entry.
 
-packslip deliberately invents as little as possible. The document is an
-in-toto statement in a sigstore bundle, the same shape GitHub artifact
-attestations, npm provenance, and Homebrew bottles use. Identity comes
-from sigstore's certificate authority and transparency log. What packslip
-adds is the predicate: the release-level manifest that a registry entry
-would otherwise hold.
+packslip invents as little as it can. The document is an in-toto statement
+in a sigstore bundle, the same shape GitHub artifact attestations, npm
+provenance, and Homebrew bottles use. Identity comes from sigstore's
+certificate authority and transparency log. What packslip adds is the
+predicate: the release manifest itself.
 
 ## Names
 
-A project is named the way Go names a module: a host, optionally followed
-by a path. `github.com/jdx/mise`, `gitlab.com/group/tool`, `mise.jdx.dev`.
-No scheme, lowercase host with at least one dot, no empty or dot segments,
-no trailing slash.
+A project is named by a host, optionally followed by a path.
+`github.com/jdx/mise`, `gitlab.com/group/tool`, `mise.jdx.dev`. No scheme,
+lowercase host with at least one dot, no empty or dot segments, no trailing
+slash.
 
 The name is the location and, on a forge, the identity:
 
@@ -50,8 +47,8 @@ convenience a consumer may add; it is not part of the format.
 
 ### Monorepos
 
-A repository that releases several tools names each one with a subpath,
-as Go names nested modules: `github.com/oxc-project/oxc/oxlint`,
+A repository that releases several tools names each one with a subpath:
+`github.com/oxc-project/oxc/oxlint`,
 `github.com/bazelbuild/buildtools/buildifier`,
 `github.com/biomejs/biome/cli`. Each tool gets its own packslip per
 release, with its own `version`, and `source.tag` carries the real tag
@@ -69,18 +66,18 @@ a release and keep the one whose `predicateType` is `release/v1` and whose
 
 ## The file
 
-A release ships one file per project, a
-[sigstore bundle](https://github.com/sigstore/protobuf-specs) (v0.3) whose
+A release ships one file per project: a
+[sigstore bundle](https://github.com/sigstore/protobuf-specs) (v0.3). Its
 content is a DSSE envelope of type `application/vnd.in-toto+json` carrying
-the statement below, and whose verification material is either the
-signer's Fulcio certificate or a public-key hint, plus the Rekor
-transparency log entry for the signature.
+the statement below. Its verification material is the signer's Fulcio
+certificate or a public-key hint, plus the Rekor transparency log entry for
+the signature. Only an air-gapped key-signed release omits the log entry;
+see Signing.
 
-Because the bundle carries the statement, there is no separate plain JSON
-file and no canonical-bytes rule: whatever bytes are in the payload are
-what was signed. `packslip show` prints them; so does
-`jq -r .dsseEnvelope.payload | base64 -d`. `cosign` and `gh attestation`
-understand the bundle as-is.
+The bundle carries the statement, so the signed bytes are exactly the
+payload bytes and a consumer needs no canonicalization step. `packslip show`
+prints them; so does `jq -r .dsseEnvelope.payload | base64 -d`. `cosign`
+and `gh attestation` understand the bundle as-is.
 
 ## The release statement
 
@@ -129,13 +126,13 @@ understand the bundle as-is.
 
 Rules:
 
-- `subject` lists every artifact by file name with its digests, and any
-  separate file a resource comes from; `artifacts` carries the artifact
-  names with platform, size, download URL, format, executables,
-  requirements, and provenance links. Every artifact is a subject, every
-  subject is an artifact or a resource's `asset`, and neither list contains
-  a duplicate. At least one artifact is required. `sha256` is required and
-  is 64 lowercase hex characters; `sha512` is optional and 128.
+- `subject` lists every artifact by file name with its digests, plus any
+  separate file a resource comes from. `artifacts` carries the same names
+  with platform, size, download URL, format, executables, requirements, and
+  provenance links. Every artifact is a subject, every subject is an
+  artifact or a resource's `asset`, and neither list contains a duplicate.
+  At least one artifact is required. `sha256` is required and is 64
+  lowercase hex characters; `sha512` is optional and 128.
 - `project` is a name as defined above. `version` is the vendor's version
   string, compared as opaque text. `published_at` is RFC 3339 UTC.
 - `prerelease` (default false) marks a release not meant for general use;
@@ -178,12 +175,11 @@ The JSON schema is printed by `packslip schema` and published at
 
 ### Resources
 
-A release usually ships more than its executables: shell completions, a
-man page, a spec of the CLI, an agent skill, and, for a desktop
-application, the entry, icons, or app bundle a launcher needs. A registry
-entry would hold all of these, so `resources` does. Each entry names a
-`kind` and exactly one source. The sources differ in what a consumer can
-verify, and a consumer prefers them in this order:
+A release usually ships more than its executables: shell completions, a man
+page, a spec of the CLI, an agent skill, and, for a desktop application, the
+entry, icons, or app bundle a launcher needs. `resources` lists them. Each
+entry names a `kind` and exactly one source. The sources differ in what a
+consumer can verify, and a consumer prefers them in this order:
 
 - `archive`: a path inside the artifact the consumer selected, relative to
   the archive root. The artifact's digest already covers it. Most vendors
@@ -210,15 +206,16 @@ Documented kinds:
   and the argv carries a `{shell}` placeholder.
 - `man`: a man page. The section is the file's suffix, as in `mise.1`.
 - `cli-spec`: a machine-readable description of the executable named by
-  `bin`, in `format`. `usage` is the documented format: a
-  [usage](https://usage.jdx.dev) spec, from which the consumer's own copy
-  of `usage` generates completions for any shell, a man page, and
-  markdown documentation, so nothing of the vendor's runs at install time.
-  Completions derived from a usage spec call `usage complete-word` at
-  shell runtime, so a consumer that derives them installs `usage` beside
-  the tool; man pages and documentation carry no such dependency. A
-  vendor that does not want that dependency on its users' machines ships
-  static completions as well.
+  `bin`, in `format`. The documented format is `usage`, a
+  [usage](https://usage.jdx.dev) spec. From it, the consumer's own copy of
+  `usage` generates completions for every shell it supports, a man page,
+  and markdown documentation, so nothing of the vendor's runs at install
+  time.
+  Completions generated this way call `usage complete-word` at shell
+  runtime, so a consumer that generates them installs `usage` beside the
+  tool. Man pages and documentation carry no such dependency. A vendor that
+  would rather not put that dependency on its users' machines ships static
+  completions as well.
 - `skill`: an agent skill in the Agent Skills format: a directory holding
   `SKILL.md` and whatever it references, named by `name`. With `exec`, the
   command prints a single `SKILL.md`.
@@ -228,8 +225,6 @@ Documented kinds:
   gives its size.
 - `app`: a macOS application bundle inside a `dmg` or `zip`, by its path
   in the archive, which a consumer copies to Applications. Archive only.
-  Whether Gatekeeper runs it is a matter of Apple's notarization, which a
-  packslip says nothing about.
 
 For any one need, a consumer takes the first source it can use in the
 order above: an `archive` or `asset` entry, then `repo`, then one derived
@@ -237,11 +232,10 @@ from a `cli-spec`, and only then `exec`. It ignores kinds and sources it
 does not know, so a vendor may ship a `font` or a kind of its own before
 the specification names it.
 
-There is no type field. An artifact with `bin` is something a
-command-line package manager installs; a release whose resources include
-`desktop` or `app` is something a desktop launcher installs; many
-applications are both, and the entries say so without a category that
-would misfile them.
+An artifact with `bin` is something a command-line package manager
+installs. A release whose resources include `desktop` or `app` is something
+a desktop launcher installs. Many applications are both, and the entries say
+so without a category that would misfile them.
 
 ### Repackager attestation
 
@@ -293,10 +287,9 @@ A key-signed bundle may be produced without a log entry
 bundle unless they explicitly allow it (`verify --allow-unlogged`), and a
 repository should record that choice per vendor.
 
-Detached minisign signatures over a plain JSON file, which an earlier
-draft used, are not a scheme. A consumer that wants a dependency-free
-check still has one: the DSSE signature of a key-signed bundle is a raw
-Ed25519 signature over the pre-authentication encoding of the payload.
+A consumer that wants a dependency-free check has one: the DSSE signature
+of a key-signed bundle is a raw Ed25519 signature over the
+pre-authentication encoding of the payload.
 
 ## Discovery
 
@@ -366,17 +359,16 @@ may shorten its minimum release age for a security release.
 bundles; the JSON schema is at
 `https://packslip.dev/schema/releases-v1.json`.
 
-The list separates the name from where the bytes live, the way a Go vanity
-import does: the identity is anchored to the domain, and the artifacts can
-be anywhere.
+The list separates the name from where the bytes live: the identity is
+anchored to the domain, and the artifacts can be anywhere.
 
 ## Ordering versions
 
-`version` is the vendor's string and a consumer never infers a scheme from
-it: histories switch schemes, two-component versions parse and sort wrong,
-and date versions look like semver. The vendor declares how its versions
-order with `version_order`, on each release and on the list, in the two
-values mise's registry uses:
+`version` is the vendor's string, and a consumer never infers an ordering
+scheme from it. Projects switch schemes over their history, two-component
+versions parse and sort wrong, and date versions look like semver. Instead
+the vendor declares how its versions order with `version_order`, on each
+release and on the list, using the two values mise's registry uses:
 
 - `source` (default): the release list's order, newest first, is the
   ranking. On GitHub that is the releases endpoint's order; on a vendor's
@@ -432,8 +424,9 @@ not by itself prove anything about how the artifacts were built. That is
 what SLSA provenance is for: an artifact whose linked provenance a
 consumer verifies earns the SLSA build level its builder establishes
 (GitHub-hosted runners with `actions/attest-build-provenance` give Build
-L3). Consumers record what they verified as a SLSA Verification Summary
-or in their own terms; packslip defines no level scale of its own.
+L2, or L3 when the build runs in a reusable workflow). Consumers record
+what they verified as a SLSA Verification Summary or in their own terms;
+packslip defines no level scale of its own.
 
 A resource from an `archive` or `asset` is covered by the same digests;
 one from `repo` by the commit; an `exec` entry by nothing beyond the
@@ -457,22 +450,24 @@ Action.
   the step once per tool with `project: github.com/owner/repo/<tool>`.
 - `packslip create --project NAME --version X --out dist --url-base URL
   --source-repo URL --tag vX --bin NAME artifact...` digests the artifacts,
-  infers platforms from file names (`path:os/arch[/libc]` overrides,
-  `@variant` for a second build of one platform), and writes the signed
-  bundle. `--bin NAME=PATH` names an executable differently from its file,
-  `--url FILENAME=URL` sets one artifact's or asset's URL, `--prerelease`,
-  `--channel`, `--notes-url`, `--no-sha512`, `--attested-by repackager`
-  with `--evidence KIND[=DETAIL]`. `--resource KIND[/QUALIFIER]=SOURCE:VALUE`
-  adds a resource: `completion/zsh=archive:share/zsh/site-functions/_tool`,
-  `completion/bash,zsh,fish=exec:tool completion {shell}`,
-  `man=archive:man/man1/tool.1`, `cli-spec/usage=exec:tool usage` (the
-  executable defaults to the sole `--bin`; otherwise
-  `cli-spec/usage/NAME`), `skill/NAME=repo:skills/tool`,
-  `skill/NAME=asset:dist/tool-skill.tar.gz` (a local file, digested into
-  the subject; a file given as both an artifact and an asset is the
-  asset), `desktop=archive:...`, `icon=archive:...`,
-  `app=archive:Tool.app`. Add `--key release.key` to sign with a key;
-  `--no-log` skips Rekor.
+  infers platforms from file names, and writes the signed bundle.
+  - Platforms: `path:os/arch[/libc]` overrides what the file name implies;
+    `path@variant` marks a second build of one platform.
+  - Executables: `--bin NAME=PATH` when the name on PATH differs from the
+    file.
+  - URLs: `--url FILENAME=URL` sets one artifact's or asset's URL.
+  - Metadata: `--prerelease`, `--channel`, `--notes-url`, `--no-sha512`,
+    and `--attested-by repackager` with `--evidence KIND[=DETAIL]`.
+  - Resources: `--resource KIND[/QUALIFIER]=SOURCE:VALUE`, as in
+    `completion/zsh=archive:share/zsh/site-functions/_tool`,
+    `completion/bash,zsh,fish=exec:tool completion {shell}`,
+    `man=archive:man/man1/tool.1`, `cli-spec/usage=exec:tool usage`,
+    `skill/NAME=repo:skills/tool`, `skill/NAME=asset:dist/tool-skill.tar.gz`,
+    `desktop=archive:...`, `icon=archive:...`, or `app=archive:Tool.app`. A
+    `cli-spec` describes the sole `--bin` unless named as
+    `cli-spec/usage/NAME`. An `asset` is a local file digested into the
+    subject; a file given as both an artifact and an asset is the asset.
+  - Signing: `--key release.key` signs with a key; `--no-log` skips Rekor.
 - `packslip keygen -o release.key` writes an Ed25519 secret seed (mode
   0600) and `release.pub`.
 - `packslip verify BUNDLE [--artifact file...]` verifies and exits 1 on
