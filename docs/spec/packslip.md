@@ -16,10 +16,10 @@ whatever else ships with the release: completions, man pages, a CLI spec, a
 skill, a desktop entry.
 
 packslip invents as little as it can. The document is an in-toto statement
-in a sigstore bundle, the same shape GitHub artifact attestations and npm
-provenance use. Identity comes from sigstore's certificate authority and
-transparency log. What packslip adds is the predicate: the release manifest
-that a registry entry would otherwise hold.
+in a sigstore bundle, the same shape GitHub artifact attestations, npm
+provenance, and Homebrew bottles use. Identity comes from sigstore's
+certificate authority and transparency log. What packslip adds is the
+predicate: the release manifest that a registry entry would otherwise hold.
 
 ## Names
 

@@ -42,7 +42,7 @@
 
   <h2 id="goal">Goal</h2>
   <p>A vendor publishes one signed, machine-readable document per release that says what the artifacts are and how to verify them. A consumer, whether that is <a href="https://mise.jdx.dev">mise</a>, <a href="https://pacvamp.com">pacvamp</a>, or a corporate mirror, verifies it against one pinned identity or key. In return it gets checksums, platform mapping, executables, provenance links, and whatever else ships with the release: completions, man pages, a CLI spec, a skill, a desktop entry.</p>
-  <p>packslip invents as little as it can. The document is an in-toto statement in a sigstore bundle, the same shape GitHub artifact attestations and npm provenance use. Identity comes from sigstore's certificate authority and transparency log. What packslip adds is the predicate: the release manifest that a registry entry would otherwise hold.</p>
+  <p>packslip invents as little as it can. The document is an in-toto statement in a sigstore bundle, the same shape GitHub artifact attestations, npm provenance, and Homebrew bottles use. Identity comes from sigstore's certificate authority and transparency log. What packslip adds is the predicate: the release manifest that a registry entry would otherwise hold.</p>
 
   <h2 id="names">Names</h2>
   <p>A project is named the way Go names a module: a host, optionally followed by a path. <code>github.com/jdx/mise</code>, <code>gitlab.com/group/tool</code>, <code>mise.jdx.dev</code>. No scheme, lowercase host with at least one dot, no empty or dot segments, no trailing slash.</p>
