@@ -26,8 +26,9 @@ pub mod verify;
 pub use manifest::Manifest;
 pub use model::{
     Artifact, Attestor, Bin, Evidence, Host, Identity, Predicate, ReleaseList,
-    ReleaseListStatement, ReleaseRef, ReleaseStatus, Requires, Resource, ResourceSource, Scheme,
-    Selection, Source, Statement, Subject, select_artifact, tag_version,
+    ReleaseListStatement, ReleaseRef, ReleaseStatus, Requires, Resource, ResourceIdentity,
+    ResourceSource, Scheme, Selection, Source, Statement, Subject, select_artifact,
+    select_resources, tag_version,
 };
 pub use sigstore::{Policy, Signer, Trust};
 pub use verify::{Options, Verified, VerifiedList, verify, verify_release_list};
