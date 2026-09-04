@@ -47,6 +47,10 @@ pub struct Verified {
     /// Artifacts whose digests were checked against files.
     pub checked_artifacts: Vec<String>,
     pub artifact_count: usize,
+    /// The kinds of resources declared (completions, man pages, CLI
+    /// specs, ...), one label per entry, in document order.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub resources: Vec<String>,
 }
 
 /// What verifying a release list established.
@@ -202,6 +206,18 @@ pub fn verify(
         provenance_linked: statement.provenance_linked(),
         checked_artifacts: checked,
         artifact_count: statement.predicate.artifacts.len(),
+        resources: statement
+            .predicate
+            .resources
+            .iter()
+            .map(|r| {
+                format!(
+                    "{} ({})",
+                    r.label(),
+                    r.source().map_or("?".to_string(), |s| s.to_string())
+                )
+            })
+            .collect(),
     })
 }
 

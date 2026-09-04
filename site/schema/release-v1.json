@@ -226,6 +226,13 @@
           "description": "RFC 3339 UTC.",
           "type": "string"
         },
+        "resources": {
+          "description": "What ships beyond the executables: completions, man pages, CLI\nspecs, skills, desktop entries, icons, app bundles. Each names its\nkind and one source. See [`Resource`].",
+          "items": {
+            "$ref": "#/$defs/Resource"
+          },
+          "type": "array"
+        },
         "sbom": {
           "type": [
             "string",
@@ -284,6 +291,88 @@
           ]
         }
       },
+      "type": "object"
+    },
+    "Resource": {
+      "description": "Something the release ships besides its executables, and where to get\nit. The kind says what it is; exactly one of `archive`, `asset`,\n`repo`, and `exec` says where it comes from. Documented kinds:\n`completion`, `man`, `cli-spec`, `skill`, `desktop`, `icon`, `app`.\nConsumers ignore kinds they do not know.",
+      "properties": {
+        "archive": {
+          "description": "A path inside the selected artifact, relative to the archive root.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "asset": {
+          "description": "The name of a separate release file, listed in `subject` with its\ndigest.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bin": {
+          "description": "For `cli-spec`: the executable the spec describes, by its `bin`\nname.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "exec": {
+          "description": "A command whose stdout is the file: an argv whose first element is\na `bin` name. A consumer may decline to run it.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "format": {
+          "description": "For `cli-spec`: the spec format. `usage` is documented.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "type": "string"
+        },
+        "name": {
+          "description": "For `skill`: the skill's name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repo": {
+          "description": "A path in the source repository at `source.commit`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "shell": {
+          "description": "For `completion` with a static source: the shell, such as `bash`,\n`zsh`, `fish`, `powershell`, `nushell`, `elvish`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "shells": {
+          "description": "For `completion` with an `exec` source: every shell the command\ngenerates, substituted for `{shell}` in the argv.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "url": {
+          "description": "Download URL of the asset, when the source is `asset`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ],
       "type": "object"
     },
     "Scheme": {

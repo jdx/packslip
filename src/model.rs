@@ -66,6 +66,11 @@ pub struct Predicate {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<Source>,
     pub artifacts: Vec<Artifact>,
+    /// What ships beyond the executables: completions, man pages, CLI
+    /// specs, skills, desktop entries, icons, app bundles. Each names its
+    /// kind and one source. See [`Resource`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resources: Vec<Resource>,
     pub identity: Identity,
     /// Who is making the claim: the vendor itself, or a repackager that
     /// checked the vendor's evidence and signed a document about it.
@@ -265,6 +270,145 @@ pub struct Requires {
     pub glibc_min: Option<String>,
 }
 
+/// Something the release ships besides its executables, and where to get
+/// it. The kind says what it is; exactly one of `archive`, `asset`,
+/// `repo`, and `exec` says where it comes from. Documented kinds:
+/// `completion`, `man`, `cli-spec`, `skill`, `desktop`, `icon`, `app`.
+/// Consumers ignore kinds they do not know.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Resource {
+    pub kind: String,
+    /// For `completion` with a static source: the shell, such as `bash`,
+    /// `zsh`, `fish`, `powershell`, `nushell`, `elvish`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell: Option<String>,
+    /// For `completion` with an `exec` source: every shell the command
+    /// generates, substituted for `{shell}` in the argv.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shells: Vec<String>,
+    /// For `skill`: the skill's name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// For `cli-spec`: the executable the spec describes, by its `bin`
+    /// name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bin: Option<String>,
+    /// For `cli-spec`: the spec format. `usage` is documented.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
+    /// A path inside the selected artifact, relative to the archive root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archive: Option<String>,
+    /// The name of a separate release file, listed in `subject` with its
+    /// digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset: Option<String>,
+    /// Download URL of the asset, when the source is `asset`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// A path in the source repository at `source.commit`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+    /// A command whose stdout is the file: an argv whose first element is
+    /// a `bin` name. A consumer may decline to run it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exec: Vec<String>,
+}
+
+/// Where a resource comes from, in order of how much a consumer can
+/// verify about it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceSource {
+    Archive,
+    Asset,
+    Repo,
+    Exec,
+}
+
+impl std::fmt::Display for ResourceSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            ResourceSource::Archive => "archive",
+            ResourceSource::Asset => "asset",
+            ResourceSource::Repo => "repo",
+            ResourceSource::Exec => "exec",
+        })
+    }
+}
+
+impl Resource {
+    /// A resource of `kind` with no source or qualifiers yet.
+    pub fn new(kind: impl Into<String>) -> Resource {
+        Resource {
+            kind: kind.into(),
+            ..Resource::default()
+        }
+    }
+
+    /// The one source this resource declares, or `None` when it declares
+    /// none or several.
+    pub fn source(&self) -> Option<ResourceSource> {
+        let mut sources = Vec::new();
+        if self.archive.is_some() {
+            sources.push(ResourceSource::Archive);
+        }
+        if self.asset.is_some() {
+            sources.push(ResourceSource::Asset);
+        }
+        if self.repo.is_some() {
+            sources.push(ResourceSource::Repo);
+        }
+        if !self.exec.is_empty() {
+            sources.push(ResourceSource::Exec);
+        }
+        match sources.as_slice() {
+            [one] => Some(*one),
+            _ => None,
+        }
+    }
+
+    /// A short label for messages: `completion/zsh`, `skill/mise`,
+    /// `cli-spec/usage/mise`, `man`.
+    pub fn label(&self) -> String {
+        let mut label = self.kind.clone();
+        for part in [
+            self.format.as_deref(),
+            self.bin.as_deref(),
+            self.shell.as_deref(),
+            self.name.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            label.push('/');
+            label.push_str(part);
+        }
+        if !self.shells.is_empty() {
+            label.push('/');
+            label.push_str(&self.shells.join(","));
+        }
+        label
+    }
+}
+
+/// A shell name is a plain lowercase word: `bash`, `zsh`, `powershell`.
+fn valid_shell(shell: &str) -> bool {
+    !shell.is_empty()
+        && shell
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+}
+
+/// A path inside an archive or a repository: relative, with no empty or
+/// `..` segments.
+fn valid_relative_path(path: &str) -> bool {
+    !path.is_empty()
+        && !path.starts_with('/')
+        && path
+            .split('/')
+            .all(|segment| !segment.is_empty() && segment != "..")
+}
+
 /// How the document is signed, so a consumer can check what it pinned
 /// against what it received.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -393,6 +537,36 @@ pub enum InvalidDocument {
     BinName(String, String),
     #[error("at least one artifact is required")]
     NoArtifacts,
+    #[error("a resource has an empty kind")]
+    ResourceKind,
+    #[error("resource {0:?} must have exactly one of archive, asset, repo, exec")]
+    ResourceSource(String),
+    #[error("resource {0:?}: {1} path must be relative with no empty or .. segments")]
+    ResourcePath(String, ResourceSource),
+    #[error("resource {0:?} names asset {1:?}, which is not a subject")]
+    OrphanAsset(String, String),
+    #[error("resource {0:?} has a url but its source is not an asset")]
+    ResourceUrl(String),
+    #[error("resource {0:?} comes from the repository, which needs source.commit")]
+    RepoNeedsCommit(String),
+    #[error("resource {0:?} runs {1:?}, which is not a bin name of any artifact")]
+    ExecNotABin(String, String),
+    #[error("completion {0:?} needs exactly one of shell or shells")]
+    CompletionShell(String),
+    #[error(
+        "completion {0:?} lists shells, so its source must be exec with a {{shell}} placeholder"
+    )]
+    CompletionShells(String),
+    #[error("completion {0:?} names shell {1:?}; a shell is a lowercase word such as zsh")]
+    Shell(String, String),
+    #[error("cli-spec {0:?} needs format and bin")]
+    CliSpec(String),
+    #[error("cli-spec {0:?} describes {1:?}, which is not a bin name of any artifact")]
+    CliSpecBin(String, String),
+    #[error("skill {0:?} needs a name without a slash")]
+    SkillName(String),
+    #[error("app {0:?} must come from an archive")]
+    AppSource(String),
     #[error("at least one release is required")]
     NoReleases,
     #[error("release {0:?} appears more than once")]
@@ -501,8 +675,102 @@ impl Statement {
                 }
             }
         }
+        let bin_names: std::collections::BTreeSet<&str> = p
+            .artifacts
+            .iter()
+            .flat_map(|a| a.bin.iter())
+            .map(|b| b.name.strip_suffix(".exe").unwrap_or(&b.name))
+            .collect();
+        let is_bin = |name: &str| bin_names.contains(name.strip_suffix(".exe").unwrap_or(name));
+        let mut assets = std::collections::BTreeSet::new();
+        for resource in &p.resources {
+            let label = resource.label();
+            if resource.kind.is_empty() {
+                return Err(InvalidDocument::ResourceKind);
+            }
+            let Some(source) = resource.source() else {
+                return Err(InvalidDocument::ResourceSource(label));
+            };
+            match source {
+                ResourceSource::Archive => {
+                    if !valid_relative_path(resource.archive.as_deref().unwrap_or_default()) {
+                        return Err(InvalidDocument::ResourcePath(label, source));
+                    }
+                }
+                ResourceSource::Asset => {
+                    let asset = resource.asset.as_deref().unwrap_or_default();
+                    if self.digest_of(asset).is_none() {
+                        return Err(InvalidDocument::OrphanAsset(label, asset.to_string()));
+                    }
+                    assets.insert(asset);
+                }
+                ResourceSource::Repo => {
+                    if !valid_relative_path(resource.repo.as_deref().unwrap_or_default()) {
+                        return Err(InvalidDocument::ResourcePath(label, source));
+                    }
+                    if p.source
+                        .as_ref()
+                        .and_then(|s| s.commit.as_deref())
+                        .is_none()
+                    {
+                        return Err(InvalidDocument::RepoNeedsCommit(label));
+                    }
+                }
+                ResourceSource::Exec => {
+                    let program = resource.exec[0].as_str();
+                    if !is_bin(program) {
+                        return Err(InvalidDocument::ExecNotABin(label, program.to_string()));
+                    }
+                }
+            }
+            if resource.url.is_some() && source != ResourceSource::Asset {
+                return Err(InvalidDocument::ResourceUrl(label));
+            }
+            match resource.kind.as_str() {
+                "completion" => {
+                    if resource.shell.is_some() == !resource.shells.is_empty() {
+                        return Err(InvalidDocument::CompletionShell(label));
+                    }
+                    if let Some(bad) = resource
+                        .shell
+                        .iter()
+                        .chain(&resource.shells)
+                        .find(|s| !valid_shell(s))
+                    {
+                        return Err(InvalidDocument::Shell(label, bad.clone()));
+                    }
+                    if !resource.shells.is_empty()
+                        && (source != ResourceSource::Exec
+                            || !resource.exec.iter().any(|arg| arg.contains("{shell}")))
+                    {
+                        return Err(InvalidDocument::CompletionShells(label));
+                    }
+                }
+                "cli-spec" => {
+                    let (Some(_), Some(bin)) = (&resource.format, &resource.bin) else {
+                        return Err(InvalidDocument::CliSpec(label));
+                    };
+                    if !is_bin(bin) {
+                        return Err(InvalidDocument::CliSpecBin(label, bin.clone()));
+                    }
+                }
+                "skill" => {
+                    if !resource
+                        .name
+                        .as_deref()
+                        .is_some_and(|n| !n.is_empty() && !n.contains('/'))
+                    {
+                        return Err(InvalidDocument::SkillName(label));
+                    }
+                }
+                "app" if source != ResourceSource::Archive => {
+                    return Err(InvalidDocument::AppSource(label));
+                }
+                _ => {}
+            }
+        }
         for subject in &self.subject {
-            if !seen.contains(subject.name.as_str()) {
+            if !seen.contains(subject.name.as_str()) && !assets.contains(subject.name.as_str()) {
                 return Err(InvalidDocument::OrphanSubject(subject.name.clone()));
             }
         }
@@ -681,6 +949,7 @@ mod tests {
                     requires: None,
                     provenance: vec![],
                 }],
+                resources: vec![],
                 identity: Identity {
                     scheme: Scheme::SigstoreKey,
                     key_id: "5A0A0B8B9C6D7E1F".into(),
@@ -841,6 +1110,239 @@ mod tests {
         s.predicate.artifacts.clear();
         s.subject.clear();
         assert_eq!(s.validate(), Err(InvalidDocument::NoArtifacts));
+    }
+
+    #[test]
+    fn resources_validate() {
+        let with = |resource: Resource| {
+            let mut s = sample();
+            s.predicate.resources.push(resource);
+            s
+        };
+        let archive = |kind: &str, path: &str| Resource {
+            archive: Some(path.into()),
+            ..Resource::new(kind)
+        };
+
+        // Every documented kind from every fitting source.
+        let mut s = sample();
+        s.subject.push(Subject {
+            name: "mise-skill.tar.gz".into(),
+            digest: Digest {
+                sha256: "d".repeat(64),
+                sha512: None,
+            },
+        });
+        s.predicate.resources = vec![
+            Resource {
+                shell: Some("zsh".into()),
+                ..archive("completion", "mise/share/zsh/site-functions/_mise")
+            },
+            Resource {
+                shell: Some("fish".into()),
+                repo: Some("completions/mise.fish".into()),
+                ..Resource::new("completion")
+            },
+            Resource {
+                shells: vec!["bash".into(), "zsh".into(), "fish".into()],
+                exec: vec!["mise".into(), "completion".into(), "{shell}".into()],
+                ..Resource::new("completion")
+            },
+            archive("man", "mise/man/man1/mise.1"),
+            Resource {
+                format: Some("usage".into()),
+                bin: Some("mise".into()),
+                exec: vec!["mise".into(), "usage".into()],
+                ..Resource::new("cli-spec")
+            },
+            Resource {
+                name: Some("mise".into()),
+                asset: Some("mise-skill.tar.gz".into()),
+                url: Some("https://dl.example/mise-skill.tar.gz".into()),
+                ..Resource::new("skill")
+            },
+            archive("desktop", "share/applications/mise.desktop"),
+            archive("icon", "share/icons/hicolor/512x512/apps/mise.png"),
+            archive("app", "Mise.app"),
+            archive("font", "fonts/Mise.ttf"),
+        ];
+        s.validate().unwrap();
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(
+            json.contains(r#"{"kind":"completion","shell":"zsh","archive":"mise/share/zsh/site-functions/_mise"}"#),
+            "{json}"
+        );
+        assert!(
+            json.contains(
+                r#"{"kind":"cli-spec","bin":"mise","format":"usage","exec":["mise","usage"]}"#
+            ),
+            "{json}"
+        );
+        assert_eq!(serde_json::from_str::<Statement>(&json).unwrap(), s);
+        assert_eq!(s.predicate.resources[2].label(), "completion/bash,zsh,fish");
+        assert_eq!(s.predicate.resources[4].label(), "cli-spec/usage/mise");
+        assert_eq!(s.predicate.resources[5].label(), "skill/mise");
+        assert_eq!(s.predicate.resources[3].label(), "man");
+        assert_eq!(
+            s.predicate.resources[5].source(),
+            Some(ResourceSource::Asset)
+        );
+        // Without the resource, the asset subject is an orphan.
+        s.predicate.resources.remove(5);
+        assert!(matches!(
+            s.validate(),
+            Err(InvalidDocument::OrphanSubject(_))
+        ));
+
+        // A Windows bin name still matches an exec or cli-spec by its bare name.
+        let mut windows = with(Resource {
+            format: Some("usage".into()),
+            bin: Some("mise".into()),
+            exec: vec!["mise".into(), "usage".into()],
+            ..Resource::new("cli-spec")
+        });
+        windows.predicate.artifacts[0].bin = vec![Bin::new("mise.exe")];
+        windows.validate().unwrap();
+
+        type Expect = fn(&InvalidDocument) -> bool;
+        let cases: Vec<(Resource, Expect)> = vec![
+            (Resource::new(""), |e| {
+                matches!(e, InvalidDocument::ResourceKind)
+            }),
+            (Resource::new("man"), |e| {
+                matches!(e, InvalidDocument::ResourceSource(_))
+            }),
+            (
+                Resource {
+                    repo: Some("x".into()),
+                    ..archive("man", "y")
+                },
+                |e| matches!(e, InvalidDocument::ResourceSource(_)),
+            ),
+            (archive("man", "/etc/passwd"), |e| {
+                matches!(e, InvalidDocument::ResourcePath(_, ResourceSource::Archive))
+            }),
+            (archive("man", "a/../b"), |e| {
+                matches!(e, InvalidDocument::ResourcePath(_, ResourceSource::Archive))
+            }),
+            (
+                Resource {
+                    repo: Some("".into()),
+                    ..Resource::new("man")
+                },
+                |e| matches!(e, InvalidDocument::ResourcePath(_, ResourceSource::Repo)),
+            ),
+            (
+                Resource {
+                    asset: Some("nope.tar.gz".into()),
+                    ..Resource::new("man")
+                },
+                |e| matches!(e, InvalidDocument::OrphanAsset(_, _)),
+            ),
+            (
+                Resource {
+                    url: Some("https://x".into()),
+                    ..archive("man", "m.1")
+                },
+                |e| matches!(e, InvalidDocument::ResourceUrl(_)),
+            ),
+            (
+                Resource {
+                    exec: vec!["other".into()],
+                    ..Resource::new("man")
+                },
+                |e| matches!(e, InvalidDocument::ExecNotABin(_, _)),
+            ),
+            (archive("completion", "_mise"), |e| {
+                matches!(e, InvalidDocument::CompletionShell(_))
+            }),
+            (
+                Resource {
+                    shell: Some("zsh".into()),
+                    shells: vec!["bash".into()],
+                    ..archive("completion", "_mise")
+                },
+                |e| matches!(e, InvalidDocument::CompletionShell(_)),
+            ),
+            (
+                Resource {
+                    shells: vec!["bash".into()],
+                    ..archive("completion", "_mise")
+                },
+                |e| matches!(e, InvalidDocument::CompletionShells(_)),
+            ),
+            (
+                Resource {
+                    shell: Some(" zsh".into()),
+                    ..archive("completion", "_mise")
+                },
+                |e| matches!(e, InvalidDocument::Shell(_, _)),
+            ),
+            (
+                Resource {
+                    shells: vec!["bash".into(), "".into()],
+                    exec: vec!["mise".into(), "completion".into(), "{shell}".into()],
+                    ..Resource::new("completion")
+                },
+                |e| matches!(e, InvalidDocument::Shell(_, _)),
+            ),
+            (
+                Resource {
+                    shells: vec!["bash".into()],
+                    exec: vec!["mise".into(), "completion".into()],
+                    ..Resource::new("completion")
+                },
+                |e| matches!(e, InvalidDocument::CompletionShells(_)),
+            ),
+            (
+                Resource {
+                    format: Some("usage".into()),
+                    ..archive("cli-spec", "mise.kdl")
+                },
+                |e| matches!(e, InvalidDocument::CliSpec(_)),
+            ),
+            (
+                Resource {
+                    format: Some("usage".into()),
+                    bin: Some("other".into()),
+                    ..archive("cli-spec", "mise.kdl")
+                },
+                |e| matches!(e, InvalidDocument::CliSpecBin(_, _)),
+            ),
+            (archive("skill", "skills/mise"), |e| {
+                matches!(e, InvalidDocument::SkillName(_))
+            }),
+            (
+                Resource {
+                    name: Some("a/b".into()),
+                    ..archive("skill", "skills/mise")
+                },
+                |e| matches!(e, InvalidDocument::SkillName(_)),
+            ),
+            (
+                Resource {
+                    repo: Some("Mise.app".into()),
+                    ..Resource::new("app")
+                },
+                |e| matches!(e, InvalidDocument::AppSource(_)),
+            ),
+        ];
+        for (resource, expected) in cases {
+            let err = with(resource.clone()).validate().unwrap_err();
+            assert!(expected(&err), "{resource:?}: {err}");
+        }
+
+        // A repo source needs the commit it is pinned by.
+        let mut s = with(Resource {
+            repo: Some("man/mise.1".into()),
+            ..Resource::new("man")
+        });
+        s.validate().unwrap();
+        s.predicate.source.as_mut().unwrap().commit = None;
+        assert!(matches!(
+            s.validate(),
+            Err(InvalidDocument::RepoNeedsCommit(_))
+        ));
     }
 
     #[test]

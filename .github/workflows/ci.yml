@@ -55,6 +55,9 @@ jobs:
             --out dist \
             --url-base "https://example.invalid/${GITHUB_REPOSITORY}/0.0.0" \
             --bin tool \
+            --resource completion/zsh=archive:share/zsh/site-functions/_tool \
+            --resource 'completion/bash,zsh,fish=exec:tool completion {shell}' \
+            --resource 'cli-spec/usage=exec:tool usage' \
             dist/tool-v0.0.0-linux-x64.tar.xz dist/tool-v0.0.0-darwin-arm64.tar.xz
           ./target/release/packslip show dist/packslip.sigstore.json
           ./target/release/packslip verify dist/packslip.sigstore.json \

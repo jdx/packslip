@@ -69,6 +69,10 @@
         <span class="k">"bin"</span>: [<span class="s">"mise/bin/mise"</span>],
         <span class="k">"provenance"</span>: [<span class="s">"https://api.github.com/repos/jdx/mise/attestations/sha256:3f9a…"</span>] }
     ],
+    <span class="k">"resources"</span>: [
+      { <span class="k">"kind"</span>: <span class="s">"completion"</span>, <span class="k">"shell"</span>: <span class="s">"zsh"</span>, <span class="k">"archive"</span>: <span class="s">"mise/share/zsh/site-functions/_mise"</span> },
+      { <span class="k">"kind"</span>: <span class="s">"cli-spec"</span>, <span class="k">"format"</span>: <span class="s">"usage"</span>, <span class="k">"bin"</span>: <span class="s">"mise"</span>, <span class="k">"exec"</span>: [<span class="s">"mise"</span>, <span class="s">"usage"</span>] }
+    ],
     <span class="k">"identity"</span>: {
       <span class="k">"scheme"</span>: <span class="s">"sigstore-oidc"</span>,
       <span class="k">"key_id"</span>: <span class="s">"https://github.com/jdx/mise/.github/workflows/release.yml@refs/tags/v2026.9.1"</span>,
@@ -200,7 +204,7 @@ packslip releases --project mytool.example.com \
   --sequence 42 --valid-for 30d --key release.key \
   --release "https://dl.example.com/mytool/$VERSION/packslip.sigstore.json=dist/packslip.sigstore.json" \
   --out site/.well-known/packslip.json</code></pre>
-      <p>Platforms are inferred from file names; write <code>path:os/arch[/libc]</code> to override one and <code>@fips</code>-style variants to tell two builds of one platform apart. <code>--bin oxlint=bin/oxlint-x86_64</code> names an executable differently from its file. Add <code>--provenance URL</code> once per artifact, in order, if you publish build provenance yourself. A monorepo runs the step once per tool with <code>--project github.com/owner/repo/&lt;tool&gt;</code>.</p>
+      <p>Platforms are inferred from file names; write <code>path:os/arch[/libc]</code> to override one and <code>@fips</code>-style variants to tell two builds of one platform apart. <code>--bin oxlint=bin/oxlint-x86_64</code> names an executable differently from its file. <code>--resource completion/zsh=archive:share/zsh/site-functions/_mytool</code>, <code>--resource man=archive:share/man/man1/mytool.1</code>, and <code>--resource cli-spec/usage=exec:mytool usage</code> list what else ships: completions, man pages, a <a href="https://usage.jdx.dev">usage</a> spec, a skill, or a desktop entry, each from a path inside the archive, a separate release asset, a path at the release commit, or a command. Add <code>--provenance URL</code> once per artifact, in order, if you publish build provenance yourself. A monorepo runs the step once per tool with <code>--project github.com/owner/repo/&lt;tool&gt;</code>.</p>
     </div>
     <div id="consumers">
       <h3>For consumers</h3>

@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crate::model::{
     Artifact, Attestor, Bin, Digest, Envelope, Evidence, Identity, PREDICATE_TYPE, Predicate,
-    RELEASES_PREDICATE_TYPE, ReleaseList, ReleaseListStatement, ReleaseRef, Requires,
+    RELEASES_PREDICATE_TYPE, ReleaseList, ReleaseListStatement, ReleaseRef, Requires, Resource,
     STATEMENT_TYPE, Source, Statement, Subject, VersionOrder,
 };
 
@@ -19,8 +19,14 @@ pub struct Request<'a> {
     pub version_order: VersionOrder,
     pub source: Option<Source>,
     pub artifacts: Vec<ArtifactInput<'a>>,
-    /// Prepended to artifact names for their download URL, when given and
-    /// the artifact has no URL of its own.
+    /// Completions, man pages, CLI specs, skills, desktop entries, icons,
+    /// app bundles. An `asset` source names one of `assets` by file name.
+    pub resources: Vec<Resource>,
+    /// Separate release files that resources come from, digested into
+    /// `subject` like artifacts.
+    pub assets: Vec<AssetInput<'a>>,
+    /// Prepended to artifact and asset names for their download URL, when
+    /// given and the file has no URL of its own.
     pub url_base: Option<&'a str>,
     pub notes_url: Option<&'a str>,
     pub sbom: Option<&'a str>,
@@ -45,6 +51,8 @@ impl<'a> Request<'a> {
             version_order: VersionOrder::Source,
             source: None,
             artifacts: Vec::new(),
+            resources: Vec::new(),
+            assets: Vec::new(),
             url_base: None,
             notes_url: None,
             sbom: None,
@@ -87,6 +95,13 @@ impl<'a> ArtifactInput<'a> {
             provenance: Vec::new(),
         }
     }
+}
+
+/// A separate release file a resource comes from.
+pub struct AssetInput<'a> {
+    pub path: &'a Path,
+    /// The download URL, when it is not `url_base/name`.
+    pub url: Option<String>,
 }
 
 /// The statement, ready to sign.
@@ -200,15 +215,22 @@ fn windows_exe(value: &str) -> String {
 
 /// Build and validate the release statement.
 pub fn create(request: &Request<'_>) -> Result<Created, Error> {
+    let file_name = |path: &Path| {
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+    // A file named as an asset is an asset, not a platform artifact, even
+    // when an artifact glob such as `dist/*` swept it up as well.
+    let asset_names: Vec<String> = request.assets.iter().map(|a| file_name(a.path)).collect();
     let mut subject = Vec::new();
     let mut artifacts: Vec<Artifact> = Vec::new();
     for input in &request.artifacts {
-        let name = input
-            .path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_default()
-            .to_string();
+        let name = file_name(input.path);
+        if asset_names.contains(&name) {
+            continue;
+        }
         let digests = crate::digest_file_all(input.path).map_err(|source| Error::Io {
             path: input.path.display().to_string(),
             source,
@@ -289,6 +311,43 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
         });
         artifacts.push(artifact);
     }
+    let mut asset_urls = std::collections::BTreeMap::new();
+    for asset in &request.assets {
+        let name = file_name(asset.path);
+        if asset_urls.contains_key(&name) {
+            continue;
+        }
+        let digests = crate::digest_file_all(asset.path).map_err(|source| Error::Io {
+            path: asset.path.display().to_string(),
+            source,
+        })?;
+        let url = asset.url.clone().or_else(|| {
+            request
+                .url_base
+                .map(|base| format!("{}/{name}", base.trim_end_matches('/')))
+        });
+        asset_urls.insert(name.clone(), url);
+        subject.push(Subject {
+            name,
+            digest: Digest {
+                sha256: digests.sha256,
+                sha512: request.sha512.then_some(digests.sha512),
+            },
+        });
+    }
+    let resources = request
+        .resources
+        .iter()
+        .map(|resource| {
+            let mut resource = resource.clone();
+            if resource.url.is_none()
+                && let Some(url) = resource.asset.as_ref().and_then(|a| asset_urls.get(a))
+            {
+                resource.url = url.clone();
+            }
+            resource
+        })
+        .collect();
     let published_at = request
         .published_at
         .map(str::to_string)
@@ -306,6 +365,7 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
             version_order: request.version_order,
             source: request.source.clone(),
             artifacts,
+            resources,
             identity: request.identity.clone(),
             attested_by: request.attested_by,
             evidence: request.evidence.clone(),
@@ -503,6 +563,132 @@ mod tests {
             infer_platform("tool-linux-x64.7z"),
             (Some("linux"), Some("x86_64"), Some("gnu"), Some("7z"))
         );
+    }
+
+    #[test]
+    fn resources_and_assets() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("tool-v1.0.0-linux-x64.tar.xz");
+        let skill = dir.path().join("tool-skill.tar.gz");
+        std::fs::write(&a, b"linux bytes").unwrap();
+        std::fs::write(&skill, b"skill bytes").unwrap();
+        let key = SecretKey::from_seed([1u8; 32]);
+        let request = Request {
+            artifacts: vec![ArtifactInput {
+                bin: vec![Bin::new("tool")],
+                ..ArtifactInput::new(&a)
+            }],
+            resources: vec![
+                Resource {
+                    shell: Some("zsh".into()),
+                    archive: Some("share/zsh/site-functions/_tool".into()),
+                    ..Resource::new("completion")
+                },
+                Resource {
+                    name: Some("tool".into()),
+                    asset: Some("tool-skill.tar.gz".into()),
+                    ..Resource::new("skill")
+                },
+                Resource {
+                    format: Some("usage".into()),
+                    bin: Some("tool".into()),
+                    exec: vec!["tool".into(), "usage".into()],
+                    ..Resource::new("cli-spec")
+                },
+            ],
+            assets: vec![AssetInput {
+                path: &skill,
+                url: None,
+            }],
+            url_base: Some("https://dl.example.com/1.0.0"),
+            ..Request::new("tool.example.com", "1.0.0", key_identity(&key))
+        };
+        let created = create(&request).unwrap();
+        let s = &created.statement;
+        assert_eq!(s.subject.len(), 2);
+        assert_eq!(s.subject[1].name, "tool-skill.tar.gz");
+        assert_eq!(
+            s.predicate.resources[1].url.as_deref(),
+            Some("https://dl.example.com/1.0.0/tool-skill.tar.gz")
+        );
+        assert_eq!(s.predicate.resources[0].url, None);
+        let asset_url = Request {
+            assets: vec![AssetInput {
+                path: &skill,
+                url: Some("https://cdn.example.com/skill.tar.gz".into()),
+            }],
+            ..request
+        };
+        let created = create(&asset_url).unwrap();
+        assert_eq!(
+            created.statement.predicate.resources[1].url.as_deref(),
+            Some("https://cdn.example.com/skill.tar.gz")
+        );
+
+        // A file given as both an artifact and an asset is the asset, once.
+        let swept = create(&Request {
+            artifacts: vec![
+                ArtifactInput {
+                    bin: vec![Bin::new("tool")],
+                    ..ArtifactInput::new(&a)
+                },
+                ArtifactInput::new(&skill),
+            ],
+            assets: vec![
+                AssetInput {
+                    path: &skill,
+                    url: None,
+                },
+                AssetInput {
+                    path: &skill,
+                    url: None,
+                },
+            ],
+            resources: vec![Resource {
+                name: Some("tool".into()),
+                asset: Some("tool-skill.tar.gz".into()),
+                ..Resource::new("skill")
+            }],
+            ..Request::new("tool.example.com", "1.0.0", key_identity(&key))
+        })
+        .unwrap();
+        assert_eq!(swept.statement.predicate.artifacts.len(), 1);
+        assert_eq!(swept.statement.subject.len(), 2);
+        assert_eq!(swept.statement.subject[1].name, "tool-skill.tar.gz");
+
+        // The asset digest is checked like an artifact's, and a resource
+        // whose asset was not given is refused.
+        let root = crate::sigstore::trusted_root(None).unwrap();
+        let options = crate::verify::Options {
+            require_log: false,
+            trusted_root: &root,
+        };
+        let bundle = crate::sigstore::sign(
+            Signer::Key {
+                key: key.clone(),
+                log: false,
+            },
+            &created.document,
+        )
+        .unwrap();
+        let verified =
+            crate::verify::verify(&bundle, &Trust::Key(&key.public_key()), options, &[&skill])
+                .unwrap();
+        assert_eq!(verified.checked_artifacts, ["tool-skill.tar.gz"]);
+        assert_eq!(
+            verified.resources,
+            [
+                "completion/zsh (archive)",
+                "skill/tool (asset)",
+                "cli-spec/usage/tool (exec)"
+            ]
+        );
+        let err = create(&Request {
+            assets: vec![],
+            ..asset_url
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("not a subject"), "{err}");
     }
 
     #[test]
