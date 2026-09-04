@@ -13,7 +13,7 @@ is [mise](https://mise.jdx.dev), [pacvamp](https://pacvamp.com), or a
 corporate mirror, verifies it against one pinned identity or key. In return
 it gets checksums, platform mapping, executables, provenance links, and
 whatever else ships with the release: completions, man pages, a CLI spec, a
-skill, a desktop entry. It needs no per-vendor logic and no registry entry.
+skill, a desktop entry.
 
 packslip invents as little as it can. The document is an in-toto statement
 in a sigstore bundle, the same shape GitHub artifact attestations and npm
