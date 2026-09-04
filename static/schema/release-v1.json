@@ -352,14 +352,21 @@
           ]
         },
         "bin": {
-          "description": "For `cli-spec`: the executable the spec describes, by its `bin`\nname.",
+          "description": "The executable this entry is for, by its `bin` name. Required for\n`cli-spec`; for `completion` and `man`, required when the release\nhas more than one executable, and meaning that one when it has\none.",
           "type": [
             "string",
             "null"
           ]
         },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Environment variables for the `exec` command, with `{shell}`\nsubstituted in values as in the argv. Only with `exec`.",
+          "type": "object"
+        },
         "exec": {
-          "description": "A command whose stdout is the file: an argv whose first element is\na `bin` name. A consumer may decline to run it.",
+          "description": "A command whose stdout is the file: an argv whose first element is\na `bin` name. See the specification's Running an exec entry.",
           "items": {
             "type": "string"
           },

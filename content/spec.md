@@ -179,7 +179,12 @@ Rules:
   entry is `{ "path": "bin/oxlint-x86_64", "name": "oxlint" }`. Two
   entries may share a path under different names, which is how a vendor
   declares an alias such as `pnpx` for `pnpm`; a consumer may link or
-  copy. Windows entries carry their `.exe`.
+  copy. A name is the command as typed, without `.exe`: a Windows path
+  carries its extension (`bin/tool.exe`) and the consumer puts that file
+  on PATH as `name.exe`. `requires.bin` and a resource's `bin` are
+  written the same way, so names compare without adding or stripping
+  anything. The reference implementation reads an older document that
+  wrote `name` with `.exe` as if it had not.
 - `requires` states what the host must already provide: `os_min` in the
   OS's own terms (`12` for macOS Monterey, `10.0.17763` for Windows),
   `glibc_min` for a `gnu` Linux build, `libs`, the shared libraries the
@@ -255,7 +260,7 @@ Windows installer.
 | `artifacts[].size` | integer | required | File size in bytes. Verified alongside the digest. |
 | `artifacts[].url` | string | optional | Download URL. |
 | `artifacts[].format` | string | optional | Archive, compression, or installer type, or `raw` for a bare executable. |
-| `artifacts[].bin[]` | array of string or object | optional | Executables inside the artifact: a path from the archive root, or `{ path, name }` when the PATH name differs. |
+| `artifacts[].bin[]` | array of string or object | optional | Executables inside the artifact: a path from the archive root, or `{ path, name }` when the PATH name differs. A name is the command as typed, without `.exe`. |
 | `artifacts[].requires` | object | optional | What the host must provide. See Host requirements. |
 | `requires.os_min` | string | optional | Minimum OS version in the OS's own terms. |
 | `requires.glibc_min` | string | optional | Minimum glibc for a `gnu` Linux build. |
@@ -269,11 +274,12 @@ Windows installer.
 | `resources[].asset` | string | one source | Name of a separate release file, listed in `subject` with its digest. |
 | `resources[].url` | string | optional | Download URL of the asset. Only with `asset`. |
 | `resources[].repo` | string | one source | Path in the source repository at `source.commit`, which is then required. |
-| `resources[].exec[]` | array of string | one source | An argv whose first element is a `bin` name and whose stdout is the file. Consumers may decline to run it. |
+| `resources[].exec[]` | array of string | one source | An argv whose first element is a `bin` name and whose stdout is the file. See Running an exec entry. |
+| `resources[].env` | object of string | optional | Environment variables for the command, with `{shell}` substituted in values as in the argv. Only with `exec`. |
 | `resources[].shell` | string | completion | The shell a static completion is for. |
 | `resources[].shells[]` | array of string | completion | Every shell an `exec` completion generates, substituted for `{shell}` in the argv. |
 | `resources[].format` | string | cli-spec, sbom | The spec format (`usage`) or the SBOM format (`cyclonedx`, `spdx`). |
-| `resources[].bin` | string | cli-spec | The executable the spec describes, by its `bin` name. |
+| `resources[].bin` | string | cli-spec, completion, man | The executable the entry is for, by its `bin` name. Required for a `cli-spec`; for a `completion` or `man`, required when the release has more than one executable, and meaning that one when it has one. |
 | `resources[].name` | string | skill | The skill's name. |
 | `predicate.identity.scheme` | string | required | `sigstore-oidc` or `sigstore-key`. |
 | `predicate.identity.key_id` | string | required | The certificate identity, or the key id in uppercase hex. |
@@ -301,27 +307,45 @@ prefers them in this order:
 - `repo`: a path in the source repository at `source.commit`, which pins
   its content. `source.commit` is required.
 - `exec`: an argv whose first element is a `bin` name and whose stdout is
-  the file, run once the executable is installed. Nothing verifies it
-  beyond the executable itself, and it runs a freshly downloaded binary at
-  install time rather than at first use. A consumer may decline to run
-  anything; one that declines treats the entry as absent rather than
-  failing. A vendor lists a static source first and an `exec` entry last.
+  the file, with `env` for anything the command reads from its
+  environment. Nothing verifies the output beyond the executable itself,
+  so it ranks last among sources, but for a completion it is the usual
+  case: cobra, clap, oclif, and usage generate completions from the
+  binary and ship no file. What matters is when it runs, and Running an
+  exec entry says so. A vendor with a static file lists it first.
 
 Layouts differ by platform more often than by file, so an entry may carry
 `os`, `arch`, or `libc` to say which artifacts it describes; an entry
 without them describes every artifact. A resource applies to the selected
-artifact when each field it carries equals the artifact's. For one need,
-a consumer keeps the applicable entries, takes the most specific of them
-(the one naming the most of those three fields), and only then applies
-the source order above.
+artifact when each field it carries equals the artifact's.
+
+Entries compete only with entries for the same thing. Two entries are for
+the same thing when they share a `kind` and an identity: `bin` and
+`shell` for a completion, `bin` and `format` for a `cli-spec`, `name` for
+a skill,
+`format` for an SBOM, and for every other kind the file name of the
+source, or the kind alone for an `exec` source. Among the entries for one
+thing that apply to the selected artifact, a consumer takes the most
+specific (the one naming the most of `os`, `arch`, and `libc`), and only
+then applies the source order above. Entries for different things never
+hide one another: a skill scoped to `linux` beside an unscoped skill of
+another name leaves that skill in place, and a zsh completion for one
+platform says nothing about the bash one. The reference implementation
+provides this as `select_resources`.
 
 Documented kinds:
 
 - `completion`: a shell completion script. With a static source, `shell`
   names the shell: `bash`, `zsh`, `fish`, `powershell`, `nushell`,
   `elvish`. With `exec`, `shells` lists every shell the command generates
-  and the argv carries a `{shell}` placeholder.
+  and `{shell}` stands for each in the argv or in an `env` value:
+  `["tool", "completion", "{shell}"]` for cobra and clap, `["tool"]` with
+  `"env": { "COMPLETE": "{shell}" }` for clap's dynamic completions,
+  `"env": { "_TOOL_COMPLETE": "{shell}_source" }` for click. `bin` names
+  the executable the script completes; a release with one executable may
+  leave it out.
 - `man`: a man page. The section is the file's suffix, as in `mise.1`.
+  `bin` names the executable it documents, as for a completion.
 - `cli-spec`: a machine-readable description of the executable named by
   `bin`, in `format`. The documented format is `usage`, a
   [usage](https://usage.jdx.dev) spec. From it, the consumer's own copy of
@@ -353,10 +377,45 @@ from a `cli-spec`, and only then `exec`. It ignores kinds and sources it
 does not know, so a vendor may ship a `font` or a kind of its own before
 the specification names it.
 
+A resource is an extra, and the executables are installed with or without
+it. A consumer that cannot fetch one, because the asset or the repository
+file is not there or the network fails, reports that and finishes the
+install without it; a later attempt may fetch it. A resource that arrives
+with a digest other than the one `subject` gives, or a repository file
+that is not what `source.commit` holds, is another matter: that is a
+broken release or a tampered one, and the consumer refuses it as it would
+an artifact.
+
 An artifact with `bin` is something a command-line package manager
 installs. A release whose resources include `desktop` or `app` is something
 a desktop launcher installs. Many applications are both, and the entries say
 so without a category that would misfile them.
+
+#### Running an exec entry
+
+An `exec` entry runs the release's own executable, so the question is not
+whether a consumer trusts its output but when the executable first runs.
+A completion is asked for by a shell, the first time a user completes the
+command, and by then the user has chosen to run that command: generating
+the script at that moment is no more trust than the user has already
+extended. So a consumer runs an `exec` completion on demand, when a shell
+first asks, without any permission beyond the install itself, and caches
+the output for that release and shell so the command runs once rather
+than at every completion. An `exec` entry that a consumer would run at
+install time, before the user has run anything, and whose output it
+writes to disk, such as a skill, runs only when the user has said that
+vendor code may run at install; a consumer that has not treats the entry
+as absent rather than failing. A consumer may also generate completions
+at install under that same permission, to have them ready.
+
+Either way it runs the command with the release's executables on PATH, in
+a directory of its own that is not the user's project, with no standard
+input, with standard error discarded, and under a timeout of its choosing;
+a few seconds suits a completion. `{shell}` in the argv and in `env`
+values is replaced by the shell being asked for, and `env` is added to an
+environment that is otherwise the consumer's. A non-zero exit, a timeout,
+or empty output means the entry is absent this time and may be tried
+again later.
 
 ### Host requirements
 
@@ -785,10 +844,15 @@ which the reference implementation provides as `select_artifact`.
    missing library or command in your own terms. Fail on nothing you
    cannot check. Between two artifacts that tie, prefer the one whose
    requirements the host meets.
-8. Take each resource from the most verifiable source offered, in the
-   order Resources gives, among the entries whose scope fits the selected
-   artifact; run an `exec` entry only if you have chosen to run vendor
-   code at install time; ignore kinds you do not know.
+8. For each thing the resources describe, as Resources defines one, keep
+   the entries whose scope fits the selected artifact and the most
+   specific of those, then take the most verifiable source offered in the
+   order Resources gives; run an `exec` completion on demand, when a shell
+   first asks, and cache it; run any other `exec` entry only if the user
+   has chosen to run vendor code at install time; ignore kinds you do not
+   know. A
+   resource you cannot fetch is reported, not fatal; one whose digest is
+   not the one the document signed fails the install.
 
 ## What a verified packslip proves
 
@@ -849,6 +913,8 @@ Action.
   - Resources: `--resource KIND[/QUALIFIER]=SOURCE:VALUE`, as in
     `completion/zsh=archive:share/zsh/site-functions/_tool`,
     `completion/bash,zsh,fish=exec:tool completion {shell}`,
+    `completion/bash,zsh,fish=exec:COMPLETE={shell} tool` (leading
+    `NAME=value` words become `env`),
     `man=archive:man/man1/tool.1`, `cli-spec/usage=exec:tool usage`,
     `skill/NAME=repo:skills/tool`, `skill/NAME=asset:dist/tool-skill.tar.gz`,
     `sbom/cyclonedx=asset:dist/tool.cdx.json`, `desktop=archive:...`,

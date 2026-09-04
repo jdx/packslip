@@ -107,7 +107,7 @@ cannot collide with a field a later revision adds.
 
 `--bin mytool` is looked up inside each archive, so the packslip records
 the true path (`mytool-1.2.3-linux-x64/mytool`), and a bare executable
-such as `mytool-linux-arm64` or `mytool.exe` gets that name on PATH. What
+such as `mytool-linux-arm64` or `mytool.exe` goes on PATH as `mytool`. What
 the flags cannot say per artifact, such as executables at different paths
 in different archives, a `.exe` that is the program rather than an
 installer, host requirements, or an artifact that runs anywhere, goes in

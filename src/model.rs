@@ -286,8 +286,8 @@ pub fn normalize_version(text: &str) -> Option<String> {
 
 /// Whether a resource applies to an artifact: each of the resource's
 /// `os`, `arch`, and `libc` is absent or equal to the artifact's. A
-/// consumer choosing among same-kind entries takes the one naming the
-/// most of those fields.
+/// consumer choosing among entries for the same thing takes the one
+/// naming the most of those fields; [`select_resources`] does that.
 pub fn resource_fits(resource: &Resource, artifact: &Artifact) -> bool {
     [
         (&resource.os, &artifact.os),
@@ -296,6 +296,54 @@ pub fn resource_fits(resource: &Resource, artifact: &Artifact) -> bool {
     ]
     .into_iter()
     .all(|(scope, value)| scope.is_none() || scope == value)
+}
+
+/// The resources to use with one artifact, as the specification's
+/// Resources section says: for each thing the entries describe (see
+/// [`Resource::identities`]), those that fit the artifact and, of them,
+/// the most specific. Entries for different things never hide one
+/// another. Document order is kept, and an entry that describes several
+/// things, such as an `exec` completion for several shells, appears
+/// once.
+pub fn select_resources<'a>(resources: &'a [Resource], artifact: &Artifact) -> Vec<&'a Resource> {
+    let specificity = |r: &Resource| {
+        [&r.os, &r.arch, &r.libc]
+            .iter()
+            .filter(|f| f.is_some())
+            .count()
+    };
+    let mut keep = vec![false; resources.len()];
+    let mut seen = std::collections::BTreeSet::new();
+    for resource in resources {
+        for identity in resource.identities(Some(artifact)) {
+            if !seen.insert(identity.clone()) {
+                continue;
+            }
+            let fitting: Vec<usize> = resources
+                .iter()
+                .enumerate()
+                .filter(|(_, r)| {
+                    r.identities(Some(artifact)).contains(&identity) && resource_fits(r, artifact)
+                })
+                .map(|(i, _)| i)
+                .collect();
+            let best = fitting
+                .iter()
+                .map(|&i| specificity(&resources[i]))
+                .max()
+                .unwrap_or(0);
+            for i in fitting {
+                if specificity(&resources[i]) == best {
+                    keep[i] = true;
+                }
+            }
+        }
+    }
+    resources
+        .iter()
+        .zip(keep)
+        .filter_map(|(r, keep)| keep.then_some(r))
+        .collect()
 }
 
 /// This host, in the packslip's vocabulary, for [`select_artifact`].
@@ -473,24 +521,41 @@ pub struct Bin {
 }
 
 impl Bin {
+    /// An executable at `path`, put on PATH under its own file name in
+    /// canonical form: `bin/tool.exe` is `tool`.
     pub fn new(path: impl Into<String>) -> Bin {
         let path = path.into();
         Bin {
-            name: file_name(&path).to_string(),
+            name: command_name(file_name(&path)).to_string(),
             path,
         }
     }
 
+    /// An executable at `path` put on PATH under `name`, in canonical
+    /// form.
     pub fn named(path: impl Into<String>, name: impl Into<String>) -> Bin {
+        let name = name.into();
         Bin {
             path: path.into(),
-            name: name.into(),
+            name: command_name(&name).to_string(),
         }
     }
 }
 
 fn file_name(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
+}
+
+/// A command's name in the form the specification writes it: as typed at
+/// a shell, without `.exe`. `bin[].name`, `requires.bin[].name`, and a
+/// resource's `bin` all use it, so a consumer compares them without
+/// adding or stripping anything; on Windows the file at `bin[].path`
+/// goes on PATH under `name.exe`.
+pub fn command_name(name: &str) -> &str {
+    match name.get(name.len().saturating_sub(4)..) {
+        Some(tail) if tail.eq_ignore_ascii_case(".exe") => &name[..name.len() - 4],
+        _ => name,
+    }
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
@@ -504,14 +569,15 @@ impl From<BinRepr> for Bin {
     fn from(repr: BinRepr) -> Bin {
         match repr {
             BinRepr::Path(path) => Bin::new(path),
-            BinRepr::Named { path, name } => Bin { path, name },
+            // A document from before names were canonical reads the same.
+            BinRepr::Named { path, name } => Bin::named(path, name),
         }
     }
 }
 
 impl From<Bin> for BinRepr {
     fn from(bin: Bin) -> BinRepr {
-        if bin.name == file_name(&bin.path) {
+        if bin.name == command_name(file_name(&bin.path)) {
             BinRepr::Path(bin.path)
         } else {
             BinRepr::Named {
@@ -676,8 +742,10 @@ pub struct Resource {
     /// For `skill`: the skill's name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    /// For `cli-spec`: the executable the spec describes, by its `bin`
-    /// name.
+    /// The executable this entry is for, by its `bin` name. Required for
+    /// `cli-spec`; for `completion` and `man`, required when the release
+    /// has more than one executable, and meaning that one when it has
+    /// one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bin: Option<String>,
     /// For `cli-spec`: the spec format, of which `usage` is documented.
@@ -698,9 +766,13 @@ pub struct Resource {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
     /// A command whose stdout is the file: an argv whose first element is
-    /// a `bin` name. A consumer may decline to run it.
+    /// a `bin` name. See the specification's Running an exec entry.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exec: Vec<String>,
+    /// Environment variables for the `exec` command, with `{shell}`
+    /// substituted in values as in the argv. Only with `exec`.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub env: std::collections::BTreeMap<String, String>,
     /// Vendor- or consumer-defined data about this resource. See
     /// [`Extensions`].
     #[serde(default, skip_serializing_if = "Extensions::is_empty")]
@@ -756,6 +828,71 @@ impl Resource {
         match sources.as_slice() {
             [one] => Some(*one),
             _ => None,
+        }
+    }
+
+    /// What this entry is an entry for, so that only entries for the same
+    /// thing compete over platform scope: `bin` and the shell of a
+    /// completion (one per shell an `exec` entry generates), `bin` and
+    /// `format` of a cli-spec, the name of a skill, the format of an
+    /// SBOM, and for every other kind `bin`, if any, and the file name of
+    /// the source, or the kind alone for an `exec` source. Each is
+    /// prefixed by the kind.
+    pub fn identities(&self, artifact: Option<&Artifact>) -> Vec<String> {
+        // The executable this entry is for, canonicalized as validation
+        // canonicalizes a bin name (no `.exe`), and resolved to the
+        // artifact's sole executable when the entry leaves `bin` out, so
+        // an omitted name and the explicit one are the same thing.
+        let canonical = |name: &str| name.strip_suffix(".exe").unwrap_or(name).to_string();
+        let bin = self.bin.as_deref().map(canonical).or_else(|| {
+            artifact
+                .filter(|_| matches!(self.kind.as_str(), "completion" | "man" | "cli-spec"))
+                .filter(|a| a.bin.len() == 1)
+                .map(|a| canonical(&a.bin[0].name))
+        });
+        let kind = match &bin {
+            Some(bin) if self.kind != "cli-spec" => format!("{}/{bin}", self.kind),
+            _ => self.kind.clone(),
+        };
+        let kind = &kind;
+        match self.kind.as_str() {
+            "completion" => {
+                let shells: Vec<&str> = self
+                    .shell
+                    .iter()
+                    .chain(&self.shells)
+                    .map(String::as_str)
+                    .collect();
+                if shells.is_empty() {
+                    vec![kind.clone()]
+                } else {
+                    shells.iter().map(|s| format!("{kind}/{s}")).collect()
+                }
+            }
+            "cli-spec" => vec![format!(
+                "{kind}/{}/{}",
+                self.format.as_deref().unwrap_or_default(),
+                bin.as_deref().unwrap_or_default()
+            )],
+            "skill" => vec![format!(
+                "{kind}/{}",
+                self.name.as_deref().unwrap_or_default()
+            )],
+            "sbom" => vec![format!(
+                "{kind}/{}",
+                self.format.as_deref().unwrap_or_default()
+            )],
+            _ => {
+                let path = self
+                    .archive
+                    .as_deref()
+                    .or(self.asset.as_deref())
+                    .or(self.repo.as_deref());
+                match path {
+                    Some(path) => vec![format!("{kind}/{}", file_name(path))],
+                    None => vec![kind.clone()],
+                }
+            }
         }
     }
 
@@ -944,6 +1081,10 @@ pub enum InvalidDocument {
     #[error("artifact {0:?} has an executable name containing a slash: {1:?}")]
     BinName(String, String),
     #[error(
+        "artifact {0:?} has an executable name ending in .exe: {1:?}; a name is the command as typed, and the path carries the extension"
+    )]
+    BinNameExe(String, String),
+    #[error(
         "artifact {0:?} requires library {1:?}; a library is named as its loader resolves it, such as libssl.so.3"
     )]
     RequiredLib(String, String),
@@ -987,6 +1128,12 @@ pub enum InvalidDocument {
     OrphanAsset(String, String),
     #[error("resource {0:?} has a url but its source is not an asset")]
     ResourceUrl(String),
+    #[error("resource {0:?} has env but its source is not exec")]
+    ResourceEnv(String),
+    #[error(
+        "resource {0:?} has an env variable named {1:?}; a name is non-empty and holds no = or NUL"
+    )]
+    EnvName(String, String),
     #[error("resource {0:?} comes from the repository, which needs source.commit")]
     RepoNeedsCommit(String),
     #[error("resource {0:?} runs {1:?}, which is not a bin name of any artifact")]
@@ -1003,6 +1150,12 @@ pub enum InvalidDocument {
     CliSpec(String),
     #[error("cli-spec {0:?} describes {1:?}, which is not a bin name of any artifact")]
     CliSpecBin(String, String),
+    #[error("resource {0:?} is for {1:?}, which is not a bin name of any artifact")]
+    ResourceBin(String, String),
+    #[error(
+        "resource {0:?} does not say which executable it is for, and the release has several: {1}"
+    )]
+    ResourceNeedsBin(String, String),
     #[error("skill {0:?} needs a name without a slash")]
     SkillName(String),
     #[error("app {0:?} must come from an archive")]
@@ -1150,6 +1303,12 @@ impl Statement {
                         bin.name.clone(),
                     ));
                 }
+                if command_name(&bin.name) != bin.name {
+                    return Err(InvalidDocument::BinNameExe(
+                        artifact.name.clone(),
+                        bin.name.clone(),
+                    ));
+                }
                 if let Some(expected) = bare
                     && bin.path != expected
                 {
@@ -1180,9 +1339,9 @@ impl Statement {
             .artifacts
             .iter()
             .flat_map(|a| a.bin.iter())
-            .map(|b| b.name.strip_suffix(".exe").unwrap_or(&b.name))
+            .map(|b| command_name(&b.name))
             .collect();
-        let is_bin = |name: &str| bin_names.contains(name.strip_suffix(".exe").unwrap_or(name));
+        let is_bin = |name: &str| bin_names.contains(command_name(name));
         for artifact in &p.artifacts {
             let Some(requires) = &artifact.requires else {
                 continue;
@@ -1281,8 +1440,30 @@ impl Statement {
                     }
                 }
             }
+            if !resource.env.is_empty() && source != ResourceSource::Exec {
+                return Err(InvalidDocument::ResourceEnv(label));
+            }
+            if let Some(bad) = resource
+                .env
+                .keys()
+                .find(|k| k.is_empty() || k.contains(['=', '\0']))
+            {
+                return Err(InvalidDocument::EnvName(label, bad.clone()));
+            }
             if resource.url.is_some() && source != ResourceSource::Asset {
                 return Err(InvalidDocument::ResourceUrl(label));
+            }
+            if matches!(resource.kind.as_str(), "completion" | "man") {
+                match &resource.bin {
+                    Some(bin) if !is_bin(bin) => {
+                        return Err(InvalidDocument::ResourceBin(label, bin.clone()));
+                    }
+                    None if bin_names.len() > 1 => {
+                        let names: Vec<&str> = bin_names.iter().copied().collect();
+                        return Err(InvalidDocument::ResourceNeedsBin(label, names.join(", ")));
+                    }
+                    _ => {}
+                }
             }
             match resource.kind.as_str() {
                 "completion" => {
@@ -1297,9 +1478,13 @@ impl Statement {
                     {
                         return Err(InvalidDocument::Shell(label, bad.clone()));
                     }
+                    let mentions_shell = resource
+                        .exec
+                        .iter()
+                        .chain(resource.env.values())
+                        .any(|s| s.contains("{shell}"));
                     if !resource.shells.is_empty()
-                        && (source != ResourceSource::Exec
-                            || !resource.exec.iter().any(|arg| arg.contains("{shell}")))
+                        && (source != ResourceSource::Exec || !mentions_shell)
                     {
                         return Err(InvalidDocument::CompletionShells(label));
                     }
@@ -1630,6 +1815,33 @@ mod tests {
         .unwrap();
         assert_eq!(named[0], Bin::named("oxlint-x86_64", "oxlint-x86_64"));
         assert_eq!(named[1], Bin::named("bin/oxlint-x86_64", "oxlint"));
+        // Names are the command as typed: never with .exe, whatever the
+        // path or an older document says.
+        assert_eq!(Bin::new("bin/tool.exe").name, "tool");
+        assert_eq!(Bin::new("Tool.EXE").name, "Tool");
+        assert_eq!(Bin::named("tool-windows-x64.exe", "tool.exe").name, "tool");
+        assert_eq!(command_name("tool"), "tool");
+        assert_eq!(command_name(".exe"), "");
+        let exe: Vec<Bin> = serde_json::from_str(
+            r#"["bin/tool.exe", {"path": "tool-x64.exe", "name": "tool.exe"}]"#,
+        )
+        .unwrap();
+        assert_eq!(exe[0], Bin::named("bin/tool.exe", "tool"));
+        assert_eq!(exe[1], Bin::named("tool-x64.exe", "tool"));
+        assert_eq!(
+            serde_json::to_string(&exe).unwrap(),
+            r#"["bin/tool.exe",{"path":"tool-x64.exe","name":"tool"}]"#,
+            "a path whose file name is the command serialises bare"
+        );
+        let mut s = sample();
+        s.predicate.artifacts[0].bin = vec![Bin {
+            path: "tool.exe".into(),
+            name: "tool.exe".into(),
+        }];
+        assert!(matches!(
+            s.validate(),
+            Err(InvalidDocument::BinNameExe(_, _))
+        ));
         assert_eq!(
             serde_json::to_string(&named).unwrap(),
             r#"["oxlint-x86_64",{"path":"bin/oxlint-x86_64","name":"oxlint"}]"#
@@ -1854,6 +2066,18 @@ mod tests {
             Err(InvalidDocument::OrphanSubject(_))
         ));
 
+        // clap's dynamic completions and click name the shell in the environment.
+        with(Resource {
+            shells: vec!["bash".into(), "zsh".into()],
+            exec: vec!["mise".into()],
+            env: [("COMPLETE".to_string(), "{shell}".to_string())]
+                .into_iter()
+                .collect(),
+            ..Resource::new("completion")
+        })
+        .validate()
+        .unwrap();
+
         // A Windows bin name still matches an exec or cli-spec by its bare name.
         let mut windows = with(Resource {
             format: Some("usage".into()),
@@ -1933,6 +2157,21 @@ mod tests {
             ),
             (
                 Resource {
+                    env: [("X".to_string(), "y".to_string())].into_iter().collect(),
+                    ..archive("man", "m.1")
+                },
+                |e| matches!(e, InvalidDocument::ResourceEnv(_)),
+            ),
+            (
+                Resource {
+                    env: [("A=B".to_string(), "y".to_string())].into_iter().collect(),
+                    exec: vec!["mise".into(), "man".into()],
+                    ..Resource::new("man")
+                },
+                |e| matches!(e, InvalidDocument::EnvName(_, _)),
+            ),
+            (
+                Resource {
                     shell: Some(" zsh".into()),
                     ..archive("completion", "_mise")
                 },
@@ -1968,6 +2207,13 @@ mod tests {
                     ..archive("cli-spec", "mise.kdl")
                 },
                 |e| matches!(e, InvalidDocument::CliSpecBin(_, _)),
+            ),
+            (
+                Resource {
+                    bin: Some("other".into()),
+                    ..archive("man", "mise.1")
+                },
+                |e| matches!(e, InvalidDocument::ResourceBin(_, _)),
             ),
             (archive("skill", "skills/mise"), |e| {
                 matches!(e, InvalidDocument::SkillName(_))
@@ -2406,6 +2652,155 @@ mod tests {
             !resource_fits(&windows, &artifacts[4]),
             "a portable artifact is not a Windows one"
         );
+    }
+
+    #[test]
+    fn a_release_with_several_executables_says_which_one_a_completion_is_for() {
+        let mut s = sample();
+        s.predicate.artifacts[0].bin.push(Bin::new("bin/other"));
+        let completion = |bin: Option<&str>| Resource {
+            shell: Some("zsh".into()),
+            archive: Some("share/_x".into()),
+            bin: bin.map(Into::into),
+            ..Resource::new("completion")
+        };
+        s.predicate.resources = vec![completion(None)];
+        let err = s.validate().unwrap_err();
+        assert!(
+            matches!(&err, InvalidDocument::ResourceNeedsBin(_, names) if names == "mise, other"),
+            "{err}"
+        );
+        s.predicate.resources = vec![completion(Some("other"))];
+        s.validate().unwrap();
+        s.predicate.resources = vec![completion(Some("mise.exe"))];
+        s.validate().unwrap();
+        let mut man = Resource::new("man");
+        man.archive = Some("share/man/other.1".into());
+        s.predicate.resources = vec![man];
+        assert!(matches!(
+            s.validate(),
+            Err(InvalidDocument::ResourceNeedsBin(_, _))
+        ));
+        // Two entries for different executables are different things.
+        assert_ne!(
+            completion(Some("mise")).identities(None),
+            completion(Some("other")).identities(None)
+        );
+        assert_eq!(
+            completion(Some("other")).identities(None),
+            ["completion/other/zsh"]
+        );
+        // A `.exe` name is the same command as the bare one, and an
+        // omitted name resolves to a single-executable artifact's own, so
+        // all three name the same completion.
+        let art = |bins: &[&str]| -> Artifact {
+            serde_json::from_value(serde_json::json!({
+                "name": "m.tar.gz", "size": 1, "format": "tar.gz",
+                "bin": bins,
+            }))
+            .unwrap()
+        };
+        let one = art(&["mise"]);
+        assert_eq!(
+            completion(Some("mise.exe")).identities(Some(&one)),
+            completion(Some("mise")).identities(Some(&one))
+        );
+        assert_eq!(
+            completion(None).identities(Some(&one)),
+            completion(Some("mise")).identities(Some(&one))
+        );
+        // With more than one executable an omitted name cannot be resolved.
+        let two = art(&["mise", "rtx"]);
+        assert_eq!(completion(None).identities(Some(&two)), ["completion/zsh"]);
+    }
+
+    #[test]
+    fn resources_compete_only_with_their_own_kind_and_identity() {
+        let artifact =
+            |json: serde_json::Value| -> Artifact { serde_json::from_value(json).unwrap() };
+        let linux = artifact(serde_json::json!({
+            "name": "t-linux.tar.gz", "os": "linux", "arch": "x86_64", "size": 1
+        }));
+        let mac = artifact(serde_json::json!({
+            "name": "t-mac.tar.gz", "os": "darwin", "size": 1
+        }));
+        let scoped = |r: Resource, os: &str| Resource {
+            os: Some(os.into()),
+            ..r
+        };
+        let archive = |kind: &str, path: &str| Resource {
+            archive: Some(path.into()),
+            ..Resource::new(kind)
+        };
+        let skill = |name: &str| Resource {
+            name: Some(name.into()),
+            ..archive("skill", &format!("skills/{name}"))
+        };
+        let completion = |shell: &str, path: &str| Resource {
+            shell: Some(shell.into()),
+            ..archive("completion", path)
+        };
+        let resources = vec![
+            skill("everywhere"),
+            scoped(skill("linuxonly"), "linux"),
+            skill("both"),
+            scoped(skill("both"), "linux"),
+            completion("zsh", "share/_t"),
+            scoped(completion("zsh", "win/_t"), "windows"),
+            completion("bash", "share/t.bash"),
+            Resource {
+                shells: vec!["bash".into(), "zsh".into()],
+                exec: vec!["t".into(), "completion".into(), "{shell}".into()],
+                ..Resource::new("completion")
+            },
+            archive("man", "share/man/t.1"),
+            scoped(archive("man", "man/t.1"), "darwin"),
+        ];
+        let names = |artifact: &Artifact| -> Vec<String> {
+            select_resources(&resources, artifact)
+                .iter()
+                .map(|r| {
+                    let mut label = r.label();
+                    if let Some(p) = &r.archive {
+                        label.push('@');
+                        label.push_str(p);
+                    }
+                    label
+                })
+                .collect()
+        };
+        assert_eq!(
+            names(&linux),
+            [
+                "skill/everywhere@skills/everywhere",
+                "skill/linuxonly@skills/linuxonly",
+                "skill/both@skills/both",
+                "completion/zsh@share/_t",
+                "completion/bash@share/t.bash",
+                "completion/bash,zsh",
+                "man@share/man/t.1",
+            ],
+            "the linux skill hides only the unscoped entry of its own name; the windows zsh entry hides nothing on linux"
+        );
+        assert_eq!(
+            names(&mac),
+            [
+                "skill/everywhere@skills/everywhere",
+                "skill/both@skills/both",
+                "completion/zsh@share/_t",
+                "completion/bash@share/t.bash",
+                "completion/bash,zsh",
+                "man@man/t.1",
+            ],
+            "the darwin man page hides the unscoped one of the same file name"
+        );
+        assert_eq!(
+            resources[7].identities(None),
+            ["completion/bash", "completion/zsh"]
+        );
+        assert_eq!(resources[3].identities(None), ["skill/both"]);
+        assert_eq!(resources[8].identities(None), ["man/t.1"]);
+        assert_eq!(Resource::new("man").identities(None), ["man"]);
     }
 
     #[test]

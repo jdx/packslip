@@ -156,6 +156,9 @@ pub struct ResourceSpec {
     pub repo: Option<String>,
     #[serde(default)]
     pub exec: Vec<String>,
+    /// Environment variables for the `exec` command.
+    #[serde(default)]
+    pub env: std::collections::BTreeMap<String, String>,
     /// Resource-level extensions, keyed by who defines them.
     #[serde(default)]
     pub extensions: Extensions,
@@ -188,6 +191,7 @@ impl ResourceSpec {
             url: self.url.clone(),
             repo: self.repo.clone(),
             exec: self.exec.clone(),
+            env: self.env.clone(),
             extensions: self.extensions.clone(),
         };
         Ok((resource, self.asset.clone()))

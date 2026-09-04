@@ -81,8 +81,8 @@ pub struct ArtifactInput<'a> {
     /// The format, when it is not what the file name implies: `raw` for
     /// an `.exe` that is the program rather than an installer.
     pub format: Option<String>,
-    /// Executables inside the artifact. On Windows an entry without an
-    /// extension gets `.exe`, on both path and name. For a bare
+    /// Executables inside the artifact. On Windows a path without an
+    /// extension gets `.exe`; the name never has one. For a bare
     /// executable (`raw`, `gz`, `xz`, `zst`, `bz2`), an entry that is a
     /// plain name becomes the artifact's own file under that name.
     pub bin: Vec<Bin>,
@@ -379,15 +379,16 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
                     _ => (b, verified),
                 };
                 if windows {
-                    // The PATH name takes `.exe`. The path takes it only when
-                    // nothing confirmed the file: a path read from the archive
-                    // or the artifact's own name is already exact.
+                    // The path takes `.exe` only when nothing confirmed the
+                    // file: a path read from the archive or the artifact's own
+                    // name is already exact. The name is the command as typed
+                    // and never carries it.
                     let path = if path_is_real {
                         b.path
                     } else {
                         windows_exe(&b.path)
                     };
-                    Bin::named(path, windows_exe(&b.name))
+                    Bin::named(path, b.name)
                 } else {
                     b
                 }
@@ -1056,8 +1057,8 @@ mod tests {
         assert_eq!(arts[0].bin, [Bin::new("tool")]);
         assert_eq!(
             arts[2].bin,
-            [Bin::named("bin/tool.exe", "tool.exe")],
-            "windows gets .exe on path and name"
+            [Bin::named("bin/tool.exe", "tool")],
+            "windows gets .exe on the path, never the name"
         );
         assert_eq!(arts[3].format.as_deref(), Some("raw"));
         assert_eq!(
@@ -1090,15 +1091,9 @@ mod tests {
         assert_eq!(arts[1].format.as_deref(), Some("gz"));
         assert_eq!(arts[1].bin, [Bin::named("tool-linux-x64", "tool")]);
         assert_eq!(arts[2].format.as_deref(), Some("raw"));
-        assert_eq!(
-            arts[2].bin,
-            [Bin::named("tool-windows-x64.exe", "tool.exe")]
-        );
+        assert_eq!(arts[2].bin, [Bin::named("tool-windows-x64.exe", "tool")]);
         assert_eq!(arts[3].format.as_deref(), Some("gz"));
-        assert_eq!(
-            arts[3].bin,
-            [Bin::named("tool-windows-arm64.exe", "tool.exe")]
-        );
+        assert_eq!(arts[3].bin, [Bin::named("tool-windows-arm64.exe", "tool")]);
 
         // A format override and a portable artifact.
         let setup = dir.path().join("tool-x64.exe");

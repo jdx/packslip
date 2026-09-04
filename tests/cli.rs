@@ -865,7 +865,7 @@ asset = "dist/tool.cdx.json"
     let bare = by_name("tool-1.2.3-windows-arm64.exe");
     assert_eq!(bare["format"], "raw");
     assert_eq!(bare["bin"][0]["path"], "tool-1.2.3-windows-arm64.exe");
-    assert_eq!(bare["bin"][0]["name"], "tool.exe");
+    assert_eq!(bare["bin"][0]["name"], "tool", "the command as typed");
     let res = &doc["predicate"]["resources"];
     assert_eq!(res[0]["kind"], "man");
     assert_eq!(res[0]["os"], "linux");
