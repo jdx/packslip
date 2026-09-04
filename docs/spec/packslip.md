@@ -73,11 +73,10 @@ the statement below. Its verification material is the signer's Fulcio
 certificate or a public-key hint, plus the Rekor transparency log entry for
 the signature.
 
-Because the bundle carries the statement, there is no separate plain JSON
-file and no canonical-bytes rule: whatever bytes are in the payload are
-what was signed. `packslip show` prints them; so does
-`jq -r .dsseEnvelope.payload | base64 -d`. `cosign` and `gh attestation`
-understand the bundle as-is.
+The bundle carries the statement, so the signed bytes are exactly the
+payload bytes and a consumer needs no canonicalization step. `packslip show`
+prints them; so does `jq -r .dsseEnvelope.payload | base64 -d`. `cosign`
+and `gh attestation` understand the bundle as-is.
 
 ## The release statement
 
@@ -225,8 +224,6 @@ Documented kinds:
   gives its size.
 - `app`: a macOS application bundle inside a `dmg` or `zip`, by its path
   in the archive, which a consumer copies to Applications. Archive only.
-  Whether Gatekeeper runs it is a matter of Apple's notarization, which a
-  packslip says nothing about.
 
 For any one need, a consumer takes the first source it can use in the
 order above: an `archive` or `asset` entry, then `repo`, then one derived
@@ -234,10 +231,10 @@ from a `cli-spec`, and only then `exec`. It ignores kinds and sources it
 does not know, so a vendor may ship a `font` or a kind of its own before
 the specification names it.
 
-There is no type field. An artifact with `bin` is something a command-line
-package manager installs. A release whose resources include `desktop` or
-`app` is something a desktop launcher installs. Many applications are both,
-and the entries say so without a category that would misfile them.
+An artifact with `bin` is something a command-line package manager
+installs. A release whose resources include `desktop` or `app` is something
+a desktop launcher installs. Many applications are both, and the entries say
+so without a category that would misfile them.
 
 ### Repackager attestation
 
@@ -289,10 +286,9 @@ A key-signed bundle may be produced without a log entry
 bundle unless they explicitly allow it (`verify --allow-unlogged`), and a
 repository should record that choice per vendor.
 
-Detached minisign signatures over a plain JSON file, which an earlier
-draft used, are not a scheme. A consumer that wants a dependency-free
-check still has one: the DSSE signature of a key-signed bundle is a raw
-Ed25519 signature over the pre-authentication encoding of the payload.
+A consumer that wants a dependency-free check has one: the DSSE signature
+of a key-signed bundle is a raw Ed25519 signature over the
+pre-authentication encoding of the payload.
 
 ## Discovery
 
