@@ -131,7 +131,7 @@
     </div>
     <div>
       <h3><code>github.com/oxc-project/oxc/oxlint</code></h3>
-      <p>A monorepo names each tool with a subpath. Every tool gets its own packslip and version per release, and the pin stays the repository. Nobody has to guess which of three binaries a release meant, or which version <code>cli/v1.9.4</code> is.</p>
+      <p>A repository that ships several tools adds the tool's name to the path. Each tool then gets its own packslip and its own version number, even when one release carries all of them, so an installer asking for oxlint 1.9.4 finds exactly that file. The signer is still checked against the repository.</p>
     </div>
   </div>
 </section>
