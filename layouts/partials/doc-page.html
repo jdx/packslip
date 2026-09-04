@@ -5,8 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ .Title }} — packslip</title>
 <meta name="description" content="{{ .Description | default "The packslip release and release-list specification." }}">
+<meta property="og:title" content="{{ .Title }} — packslip">
+<meta property="og:description" content="{{ .Description }}">
+<meta property="og:url" content="{{ .Permalink }}">
+<meta property="og:type" content="article">
 {{ partial "social-image.html" . }}
-<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<meta name="twitter:title" content="{{ .Title }} — packslip">
+<meta name="twitter:description" content="{{ .Description }}">
+{{ partial "seo.html" . }}
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
