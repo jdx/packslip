@@ -9,5 +9,5 @@ Print the statement inside a bundle, without verifying it
 - **`<BUNDLE>`** — The packslip.sigstore.json (or release list) to read
 
 ## Flags
-- **`--raw`** — The exact signed bytes instead of pretty JSON
+- **`--raw`** — Print the signed payload followed by a newline, without pretty-printing
 - **`-h --help`** — Print help

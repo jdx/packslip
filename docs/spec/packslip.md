@@ -5,39 +5,47 @@ Version 1, draft. Predicate types `https://packslip.dev/release/v1` and
 
 Author: Jeff Dickey ([@jdx](https://github.com/jdx)).
 
+## Reading this specification
+
+This document defines two predicates: `release/v1` describes one release;
+`releases/v1` indexes releases and carries mutable discovery metadata.
+Both are signed in-toto statements in sigstore bundles.
+
+For a working example, start with the [guides](https://packslip.dev/docs/).
+Implementers should read the [consumer rules](#consumer-rules) alongside
+the field definitions. JSON examples use abbreviated digests and commits
+for readability; those placeholders are not valid release data.
+
+- [Identity and signing](#names): project names, bundle encoding, and signers.
+- [Release data](#the-release-statement): artifacts, resources, and requirements.
+- [Discovery](#discovery) and [versions](#versions): finding and selecting releases.
+- [Consumer rules](#consumer-rules): verification, remembered trust, and installation.
+- [Tooling](#tooling): the reference implementation and task guides.
+
 ## Goal
 
-A vendor publishes one signed, machine-readable document per release that
-says what the artifacts are and how to verify them. The artifacts are the
-files the release ships: usually an archive, installer, or bare executable
-per platform for a command-line or desktop application, but any file the
-vendor wants verified can be listed, from a source tarball to a data file.
-A consumer, whether that is [mise](https://mise.jdx.dev),
-[pacvamp](https://pacvamp.com), or a corporate mirror, verifies it against
-one pinned identity or key. In return
-it gets checksums, platform mapping, executables, provenance links, and
-whatever else ships with the release: completions, man pages, a CLI spec, a
-skill, a desktop entry, an SBOM.
+A publisher describes a release once, in a signed document that any
+consumer can verify against a trusted identity or key. The document lists
+artifacts and their digests, platforms, executable paths, resources, and
+provenance links. Artifacts may be archives, installers, bare executables,
+source tarballs, or other release files.
 
-There is no per-vendor recipe. A consumer pins one identity per vendor, or
-one repackager host that describes many vendors on their behalf, and the
-documents say the rest.
+The manifest lets consumers interpret the release without a per-vendor
+filename recipe or registry entry. It does not prescribe a package
+manager, download host, or installation directory.
 
-packslip invents as little as it can. The document is an
-[in-toto statement](https://github.com/in-toto/attestation/blob/main/spec/v1/statement.md) in a
-[sigstore bundle](https://docs.sigstore.dev/), the same shape
-[GitHub artifact attestations](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-to-establish-provenance-for-builds),
-[npm provenance](https://docs.npmjs.com/generating-provenance-statements), and Homebrew bottles
-use. Identity comes from sigstore's certificate authority and transparency
-log. What packslip adds is the
-predicate: the release manifest itself.
+packslip uses an
+[in-toto statement](https://github.com/in-toto/attestation/blob/main/spec/v1/statement.md)
+inside a [sigstore bundle](https://github.com/sigstore/protobuf-specs).
+The predicate carries the release metadata; the bundle carries the
+signature and verification material.
 
 ## Names
 
-A project is named by a host, optionally followed by a path.
-`github.com/jdx/mise`, `gitlab.com/group/tool`, `mise.jdx.dev`. No scheme,
-lowercase host with at least one dot, no empty or dot segments, no trailing
-slash.
+A project name is a host with an optional path, such as
+`github.com/jdx/mise`, `gitlab.com/group/tool`, or `mise.jdx.dev`.
+It has no URL scheme or trailing slash. The host is lowercase and contains
+at least one dot; path segments cannot be empty, `.` or `..`.
 
 The name is the location and, on a forge, the identity:
 
@@ -52,9 +60,12 @@ The name is the location and, on a forge, the identity:
   list at the well-known URL below, signed with the key or identity the
   consumer pins.
 
-A consumer needs nothing else to start verifying a project on a known
-forge. A short-name alias table (`mise` for `github.com/jdx/mise`) is a
-convenience a consumer may add; it is not part of the format.
+For a known forge, a consumer derives the initial signer policy from the
+project it intends to install. It must also check that the verified
+statement names that project. Deriving a policy only from an untrusted
+statement's claimed project does not check the user's intended identity.
+A short-name alias such as `mise` for `github.com/jdx/mise` is a consumer
+convenience, not part of the format.
 
 ### Monorepos
 
@@ -86,11 +97,66 @@ certificate or a public-key hint, plus the [Rekor](https://docs.sigstore.dev/log
 transparency log entry for the signature. Only an air-gapped key-signed release omits the log entry;
 see Signing.
 
-The bundle carries the statement, so the signed bytes are exactly the
-payload bytes and a consumer needs no canonicalization step. `packslip show`
-prints them; so does `jq -r .dsseEnvelope.payload | base64 -d`.
-[`cosign`](https://github.com/sigstore/cosign) and
-[`gh attestation`](https://cli.github.com/manual/gh_attestation) understand the bundle as-is.
+The signature covers the DSSE payload bytes, so consumers do not
+canonicalize the JSON before verification. `packslip show` decodes and
+pretty-prints the statement without verifying it; `packslip show --raw`
+prints the signed payload followed by a newline. The payload can also be
+decoded with `jq -r .dsseEnvelope.payload BUNDLE | base64 -d`.
+General-purpose sigstore tools can read the bundle; consumers must also
+validate the packslip predicate and apply this specification's rules.
+
+## Signing
+
+Both schemes use the same bundle format. Prefer keyless signing when a
+supported CI identity is available.
+
+- `sigstore-oidc`: keyless. A CI job with an id-token permission signs
+  with its own identity; Fulcio issues a short-lived certificate naming
+  the workflow that ran, and Rekor logs the signature. There is no key to
+  manage. `packslip create` does this by default when it finds an ambient
+  CI credential (GitHub Actions, GitLab CI, and the others sigstore's
+  clients know) or a token in `SIGSTORE_ID_TOKEN`.
+- `sigstore-key`: a long-lived Ed25519 key from `packslip keygen`, kept
+  in minisign's key-file format. The bundle carries a public-key hint and
+  the Rekor entry, whose verifier is the public key. For vendors who
+  release outside a CI system with OIDC, or who want a stable key their
+  consumers pin. Consumers pin the public key, never the hint.
+
+A key-signed bundle may be produced without a log entry
+(`create --no-log`) for an air-gapped release. Consumers refuse such a
+bundle unless they explicitly allow it (`verify --allow-unlogged`), and a
+repository should record that choice per vendor.
+
+A consumer that wants a dependency-free check has one: the DSSE signature
+of a key-signed bundle is a raw Ed25519 signature over the
+pre-authentication encoding of the payload.
+
+## What a verified packslip proves
+
+A verified packslip authenticates the named signer's statement about the
+release. A downloaded file whose digest matches the statement is the file
+the signer described. A logged signature also has a verified integration
+time. An explicitly accepted unlogged signature has no such log evidence.
+
+The manifest does not establish how an artifact was built or whether it
+is safe. Linked SLSA provenance must be fetched and verified separately
+against the builder's identity and the consumer's policy. A provenance
+URL alone establishes no build level.
+
+Resources from `archive` and `asset` sources are covered by signed
+digests. A `repo` resource is pinned by the source commit. An `exec`
+resource's output is not separately signed; the consumer verifies the
+executable and controls when it runs.
+
+A single release manifest does not establish freshness, detect a
+withdrawal, or prevent rollback. Those checks require discovery metadata
+and remembered consumer state, as [Discovery](#discovery) and
+[Consumer rules](#consumer-rules) define.
+
+`packslip verify` checks the supplied bundle and local files. It reports
+signing information, provenance links, resources, and host requirements,
+but does not fetch provenance, install resources, or maintain trust
+history across invocations.
 
 ## The release statement
 
@@ -139,7 +205,7 @@ prints them; so does `jq -r .dsseEnvelope.payload | base64 -d`.
 }
 ```
 
-Rules:
+The following rules apply to the decoded release statement:
 
 - `subject` lists every artifact by file name with its digests, plus any
   separate file a resource comes from. `artifacts` carries the same names
@@ -286,14 +352,13 @@ Windows installer.
 | `predicate.notes_url` | string | optional | URL of the release notes. |
 | `extensions` | object | optional | Vendor- or consumer-defined data, keyed by who defines it, on the release, each artifact, each resource, the release list, and each list entry. See Extensions. |
 
-### Resources
+## Resources
 
-A release usually ships more than its executables: shell completions, a man
-page, a spec of the CLI, an agent skill, a software bill of materials, and,
-for a desktop application, the entry, icons, or app bundle a launcher
-needs. `resources` lists them. Each entry names a `kind` and exactly one
-source. The sources differ in what a consumer can verify, and a consumer
-prefers them in this order:
+`resources` describes files and generated content associated with the
+release: completions, man pages, CLI specifications, agent skills, SBOMs,
+and desktop integration files. Each entry has a `kind` and exactly one
+source. After applying scope and specificity, consumers prefer sources
+in this order:
 
 - `archive`: a path inside the artifact the consumer selected, from the
   true archive root. The artifact's digest already covers it.
@@ -404,24 +469,20 @@ installs. A release whose resources include `desktop` or `app` is something
 a desktop launcher installs. Many applications are both, and the entries say
 so without a category that would misfile them.
 
-#### Running an exec entry
+### Running an exec entry
 
-An `exec` entry runs the release's own executable, so the question is not
-whether a consumer trusts its output but when the executable first runs.
-A completion is asked for by a shell, the first time a user completes the
-command, and by then the user has chosen to run that command: generating
-the script at that moment is no more trust than the user has already
-extended. So a consumer runs an `exec` completion on demand, when a shell
-first asks, without any permission beyond the install itself, and caches
-the output for that release and shell so the command runs once rather
-than at every completion. An `exec` entry that a consumer would run at
-install time, before the user has run anything, and whose output it
-writes to disk, such as a skill, runs only when the user has said that
-vendor code may run at install; a consumer that has not treats the entry
-as absent rather than failing. A consumer may also generate completions
-at install under that same permission, to have them ready.
+An `exec` entry runs a release executable. For completions, consumers run
+it on demand when the shell first requests completion, without additional
+permission beyond installation. Cache successful output for the release,
+executable, and shell so repeated requests do not rerun the command.
 
-Either way it runs the command with the release's executables on PATH, in
+Other exec resources, such as a generated skill written to disk, run at
+install time only if the user has allowed vendor code to run then. Without
+that permission, treat the entry as absent rather than failing the
+installation. Consumers may also generate completions at install time
+under the same permission.
+
+In either case, run the command with the release's executables on PATH, in
 a directory of its own that is not the user's project, with no standard
 input, with standard error discarded, and under a timeout of its choosing;
 a few seconds suits a completion. `{shell}` in the argv and in `env`
@@ -430,14 +491,12 @@ environment that is otherwise the consumer's. A non-zero exit, a timeout,
 or empty output means the entry is absent this time and may be tried
 again later.
 
-### Host requirements
+## Host requirements
 
-An executable that installs cleanly and fails on first use, because a
-library or a program it expected is not there, is the failure a release
-manifest is well placed to prevent. `requires` says what the host must
-already provide, in names the operating system defines rather than names
-a package manager defines, so any consumer can check them without a
-registry. Beside `os_min` and `glibc_min`:
+`requires` describes what the host must provide before the software can
+run. It uses operating-system loader names and command names, rather than
+package names, so consumers can check requirements without a shared
+registry. Alongside `os_min` and `glibc_min`, it supports:
 
 - `libs` lists the shared libraries the executables load from the host,
   each by the name the loader resolves: a soname on Linux and FreeBSD
@@ -482,11 +541,11 @@ run without it:
   consumer installs, warns, and names the command and the version it
   needs, as a tool it can install where it can.
 
-It fails on nothing it cannot check: a version it cannot read, a loader
-it cannot ask, is a warning, not a refusal. Artifact selection happens
-first, by Selecting an artifact. Requirements
-do not break a selection tie or silently select a different build: after
-selection, the consumer checks the chosen artifact and reports the result.
+An unknown check result produces a warning, not a refusal. This includes
+unreadable versions and loaders the consumer cannot query. Select the
+artifact first, as [Selecting an artifact](#selecting-an-artifact) defines,
+then check its requirements. Requirements do not break selection ties or
+silently redirect installation to a different build.
 
 How to check, on the common hosts: a library by the loader's own search,
 which is the dynamic linker's cache and search path on Linux
@@ -507,17 +566,15 @@ this version leaves out on purpose, to be added if vendors need them: a
 and a symbol version on a library (`libstdc++.so.6` at `GLIBCXX_3.4.29`),
 which `glibc_min` covers for libc alone.
 
-### Extensions
+## Extensions
 
-A vendor or a consumer sometimes has something to say that the
-specification has no field for: a package manager's install hints, a
-Homebrew tap, an end-of-life date, a build id. It goes in `extensions`, an
-object that the release predicate, each artifact, each resource, the
-release-list predicate, and each release entry may carry:
+Use `extensions` for metadata this specification does not define, such
+as install hints, an end-of-life date, or a build ID. The release
+predicate, each artifact, each resource, the release-list predicate,
+and each release-list entry may carry an extensions object:
 
 ```json
 "extensions": {
-  "mise": { "postinstall": "mise reshim" },
   "example.com": { "build_id": "20260901.3" }
 }
 ```
@@ -538,7 +595,7 @@ be claimed by a later revision with another meaning, while a key under
 candidate for a field of its own; when that happens the extension key
 keeps working beside it.
 
-### Repackager attestation
+## Repackager attestation
 
 A repository, registry, or mirror that describes a vendor's artifacts, and
 whose vendor publishes no packslip, may sign one itself with
@@ -575,39 +632,14 @@ the mirror's own URLs and `vendor-packslip` evidence. A consumer pointed at
 a mirror gets the same bytes under the mirror's pin and can still fetch
 and verify the vendor's document if it wants both.
 
-## Signing
-
-Both schemes produce the same file and are verified by the same code. A
-vendor should prefer the first.
-
-- `sigstore-oidc`: keyless. A CI job with an id-token permission signs
-  with its own identity; Fulcio issues a short-lived certificate naming
-  the workflow that ran, and Rekor logs the signature. There is no key to
-  manage. `packslip create` does this by default when it finds an ambient
-  CI credential (GitHub Actions, GitLab CI, and the others sigstore's
-  clients know) or a token in `SIGSTORE_ID_TOKEN`.
-- `sigstore-key`: a long-lived Ed25519 key from `packslip keygen`, kept
-  in minisign's key-file format. The bundle carries a public-key hint and
-  the Rekor entry, whose verifier is the public key. For vendors who
-  release outside a CI system with OIDC, or who want a stable key their
-  consumers pin. Consumers pin the public key, never the hint.
-
-A key-signed bundle may be produced without a log entry
-(`create --no-log`) for an air-gapped release. Consumers refuse such a
-bundle unless they explicitly allow it (`verify --allow-unlogged`), and a
-repository should record that choice per vendor.
-
-A consumer that wants a dependency-free check has one: the DSSE signature
-of a key-signed bundle is a raw Ed25519 signature over the
-pre-authentication encoding of the payload.
-
 ## Discovery
 
 Publish the bundle next to the artifacts: as a release asset, or under the
 version directory of a download site.
 
-Every project has a release list, and it is where consumers find what
-was released and what was withdrawn. Two kinds exist.
+Consumers discover releases through a signed list or GitHub's releases
+endpoint. A signed list can also record withdrawals and a recommended
+version. GitHub projects may supplement endpoint discovery with one.
 
 ### The signed list
 
@@ -774,9 +806,8 @@ as `2026.9.1` qualifies. `packslip create` refuses anything else, and so
 does a consumer. The tag can be spelled however the vendor likes
 (`v2026.9.1`, `oxlint_v1.0.0`); `source.tag` carries it.
 
-One required scheme is what lets everything about a release follow from
-its signed version string, with no flag anywhere that could disagree with
-it:
+Version ordering, prerelease status, and channels follow from the signed
+version string:
 
 - Order is semver precedence. A backport such as 20.19.1 published after
   22.0.0 still ranks below it, and range constraints (`^1.2`) have meaning.
@@ -804,15 +835,11 @@ so a user who knows a release by the vendor's name still finds it.
 Rollback protection comes from the release list's `sequence`, not from
 anything a single release says.
 
-A packslip carries none of this as a field, on purpose. It is signed once,
-and on a GitHub repository with immutable releases it can never be
-replaced, while GitHub's own prerelease flag stays editable after
-publishing. A flag in the document would end up either frozen or
-contradicted. So the packslip says what shipped, the version says how to
-treat it, and mutable withdrawal and default recommendations belong in
-discovery metadata. An earlier draft let a vendor declare list order
-instead of semver; it went, because the prerelease and channel fields it
-then needed had no honest home.
+Prerelease and channel metadata are derived rather than stored as
+separate fields. This avoids contradictions with the signed version or
+editable forge metadata. Withdrawals and default recommendations belong
+in discovery metadata, where they can change without replacing a signed
+release manifest.
 
 ### Latest
 
@@ -894,15 +921,13 @@ of the subpath, or the repository name, followed by `/`, `-`, `_`, or
 
 A consumer derives a version from a tag only to list releases without
 fetching every bundle. The packslip is the authority: when its `version`
-is not what the tag named, the consumer refuses the release. Of the
-GitHub projects in the aqua registry, this names a version for 96 of every
-100 from the latest tag alone; the rest publish a signed list, whose
-entries carry the version outright.
+is not what the tag named, the consumer refuses the release. If a tag cannot be mapped to a version, the vendor publishes a signed
+list with an explicit version and tag mapping.
 
 ## Selecting an artifact
 
-A consumer selects one artifact for its host by the following rule,
-which the reference implementation provides as `select_artifact`.
+Select one artifact using the following ordered rules. The reference
+implementation exposes this selection as `select_artifact`.
 
 1. An artifact fits the host when each of its `os`, `arch`, and `libc`
    is either absent or equal to the host's. A host that does not know its
@@ -923,6 +948,10 @@ which the reference implementation provides as `select_artifact`.
    refuses to guess between them.
 
 ## Consumer rules
+
+These rules apply to the complete consumer workflow, not just signature
+verification. Consumers must preserve enough state to enforce signer
+continuity, no-downgrade policy, and release-list sequences across installs.
 
 1. Pin the identity once. For a forge project, the name is the pin: accept
    only the forge's issuer and an identity under the repository. For other
@@ -969,104 +998,25 @@ which the reference implementation provides as `select_artifact`.
    resource you cannot fetch is reported, not fatal; one whose digest is
    not the one the document signed fails the install.
 
-## What a verified packslip proves
-
-A verified packslip proves that the named signer published exactly this
-list of artifacts, with these digests, at a time the log recorded. It does
-not by itself prove anything about how the artifacts were built. That is
-what SLSA provenance is for: an artifact whose linked provenance a
-consumer verifies earns the SLSA build level its builder establishes
-(GitHub-hosted runners with
-[`actions/attest-build-provenance`](https://github.com/actions/attest-build-provenance) give
-Build L2, or L3 when the build runs in a reusable workflow). Consumers
-record what they verified as a
-[SLSA Verification Summary](https://slsa.dev/spec/v1.0/verification_summary) or in their own
-terms; packslip defines no level scale of its own.
-
-A resource from an `archive` or `asset` is covered by the same digests;
-one from `repo` by the commit; an `exec` entry by nothing beyond the
-executable it runs.
-
-`packslip verify` reports the scheme, the signer, who attested, the log
-time, whether every artifact links provenance, the resources declared, and
-what each artifact requires of the host. It does not fetch or verify the
-provenance statements.
-
 ## Tooling
 
-The reference implementation is the `packslip` crate and binary in
-[jdx/packslip](https://github.com/jdx/packslip), also usable as a GitHub
-Action.
+The [packslip repository](https://github.com/jdx/packslip) contains the
+reference Rust library, CLI, and composite GitHub Action. The CLI creates
+and verifies bundles; consumers implement discovery, installation, and
+persistent policy around those operations.
 
-- In a release job: `uses: jdx/packslip@v0` with `artifacts: dist/*`
-  attests build provenance for the artifacts, signs the packslip
-  keylessly, links the provenance from it, verifies the result, and
-  uploads the bundle to the release. `bin` names the executables,
-  `resources`, one `--resource` value per line, the rest, `require`, one
-  `--require` value per line, the commands they need, and `manifest`
-  points at a manifest for what those cannot say. A monorepo runs the
-  step once per tool with `project: github.com/owner/repo/<tool>`.
-- `packslip create --project NAME --version X --out dist --url-base URL
-  --source-repo URL --tag vX --bin NAME artifact...` digests the artifacts,
-  infers platforms from file names, and writes the signed bundle.
-  - Platforms: `path:os/arch[/libc]` overrides what the file name implies;
-    `path:any` marks an artifact that runs anywhere; `path@variant` marks
-    a second build of one platform.
-  - Executables: `--bin NAME` is looked up inside each archive, so it
-    records the true path (`tool-1.2.3-linux-x64/tool`), and refuses a
-    name the archive does not hold or holds twice at one depth. `--bin
-    NAME=PATH` gives the path outright when the name on PATH differs from
-    the file. For a bare executable, `--bin NAME` is the name the file
-    gets on PATH.
-  - URLs: `--url FILENAME=URL` sets one artifact's or asset's URL.
-  - Provenance: `--provenance FILENAME=URL` links a provenance statement
-    to one artifact; a bare URL applies to the artifact at the same
-    position.
-  - Metadata: `--notes-url`, `--no-sha512`, `--extension NAME=JSON` for a
-    release-level extension, and `--attested-by repackager` with
-    `--evidence KIND[=DETAIL]`.
-  - Resources: `--resource KIND[/QUALIFIER]=SOURCE:VALUE`, as in
-    `completion/zsh=archive:share/zsh/site-functions/_tool`,
-    `completion/bash,zsh,fish=exec:tool completion {shell}`,
-    `completion/bash,zsh,fish=exec:COMPLETE={shell} tool` (leading
-    `NAME=value` words become `env`),
-    `man=archive:man/man1/tool.1`, `cli-spec/usage=exec:tool usage`,
-    `skill/NAME=repo:skills/tool`, `skill/NAME=asset:dist/tool-skill.tar.gz`,
-    `sbom/cyclonedx=asset:dist/tool.cdx.json`, `desktop=archive:...`,
-    `icon=archive:...`, or `app=archive:Tool.app`. A `cli-spec` describes
-    the sole `--bin` unless named as `cli-spec/usage/NAME`. An `asset` is
-    a local file digested into the subject; a file given as both an
-    artifact and an asset is the asset.
-  - Host requirements: `--require bin:NAME[@MIN]`, as in
-    `--require bin:java@17`, for a command the executables need. What
-    they load from the host is read from them and recorded as `libs`;
-    `--no-libs` leaves the artifacts unopened. A manifest gives the same
-    under `requires`, per artifact or for all.
-  - A manifest: `--manifest release.toml` carries per-artifact
-    executables, formats, requirements, platforms, variants, and URLs,
-    plus resources with their scope, for a release the flags cannot
-    describe. Its top-level `bin` and `requires` are the defaults every
-    artifact inherits; an `[[artifact]]` entry overrides them for one
-    file, `portable = true` clears the platform, and `format = "raw"`
-    settles a `.exe`. Artifacts on the command line join those the
-    manifest lists, the manifest's entry winning for a file both name,
-    and flags win over the manifest's `project`, `version`, `url_base`,
-    `notes_url`, `published_at`, `source`, and, key by key, `extensions`.
-  - Signing: `--key release.key` signs with a key; `--no-log` skips Rekor.
-  - On a forge project, `create` warns when `--tag` does not name
-    `--version`, since consumers list from tags.
-- `packslip keygen -o release.key` writes an Ed25519 secret seed (mode
-  0600) and `release.pub`.
-- `packslip verify BUNDLE [--artifact file...]` verifies and exits 1 on
-  any failure; `--json` prints the result. A keyless bundle is checked
-  against the policy its project name implies, or against `--identity`,
-  `--identity-prefix`, and `--issuer`; a key-signed bundle against
-  `--pubkey`. `--allow-unlogged` accepts a bundle with no log entry;
-  `--trusted-root` replaces the embedded sigstore root. The same command
-  verifies a release list.
-- `packslip show BUNDLE` prints the statement.
-- `packslip releases --project NAME --sequence N --valid-for 30d
-  --release URL=PATH... [--yank URL=REASON] [--security URL]
-  [--evidence URL=KIND[=DETAIL]] --key release.key` writes a signed
-  release list, copying each bundle's version and tag.
-- `packslip schema [--releases]` prints the JSON schemas.
+| Task | Guide | Command reference |
+| --- | --- | --- |
+| Create a first manifest | [Getting started](https://packslip.dev/docs/getting-started/) | [create](https://packslip.dev/cli/create/) |
+| Publish from GitHub | [GitHub Actions](https://packslip.dev/docs/publishing/) | [Action definition](https://github.com/jdx/packslip/blob/main/action.yml) |
+| Describe release files | [Artifacts and resources](https://packslip.dev/docs/describing-releases/) | [create](https://packslip.dev/cli/create/) |
+| Verify downloads | [Verification](https://packslip.dev/docs/verifying/) | [verify](https://packslip.dev/cli/verify/) |
+| Inspect a statement without verification | [Verification](https://packslip.dev/docs/verifying/#understand-the-result) | [show](https://packslip.dev/cli/show/) |
+| Generate an Ed25519 key | [Getting started](https://packslip.dev/docs/getting-started/#create-a-sample-release) | [keygen](https://packslip.dev/cli/keygen/) |
+| Publish discovery metadata | [Release lists](https://packslip.dev/docs/release-lists/) | [releases](https://packslip.dev/cli/releases/) |
+| Export JSON schemas | [Documentation](https://packslip.dev/docs/#reference) | [schema](https://packslip.dev/cli/schema/) |
+
+The CLI reference is generated from command help. The specification page
+is generated from this file; see
+[Contributing](https://github.com/jdx/packslip/blob/main/CONTRIBUTING.md)
+for the documentation workflow.

@@ -4,256 +4,42 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>packslip — a signed release manifest</title>
-<meta name="description" content="packslip: one signed file per release that says what shipped and how to verify it. Signed from CI with no key to manage, verified against the repository name.">
+<meta name="description" content="{{ .Description }}">
 <meta property="og:title" content="packslip — a signed release manifest">
-<meta property="og:description" content="One signed file per release. No key to manage, no registry to join. Checksums, platforms, executables, completions, skills, and provenance links in a standard sigstore bundle.">
-<meta property="og:url" content="https://packslip.dev/">
+<meta property="og:description" content="{{ .Description }}">
+<meta property="og:url" content="{{ .Permalink }}">
 <meta property="og:type" content="website">
 {{ partial "social-image.html" . }}
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-
 {{ partial "header.html" . }}
-
-<main class="wrap">
-
-<p class="notice"><strong>Work in progress.</strong> packslip is a draft, not a standard. <a href="https://mise.jdx.dev">mise</a> ships experimental support for it, but the format and the tooling still change between releases, so use it for testing and nothing you depend on. Expect breaking changes until it is declared stable.</p>
-
+<main id="main" class="wrap">
+{{ partial "notice.html" . }}
 <div class="hero">
   <div>
     <span class="eyebrow">Version 1 · draft</span>
-    <h1>A release manifest anyone can verify.</h1>
-    <p class="lede">packslip is one signed file beside your artifacts. It says which file is for which platform, what goes on PATH, where the build provenance lives, and what else ships with it, from completions to a desktop entry. Your release job signs it with no key to manage, and any installer verifies it against your repository name with no registry entry.</p>
+    <h1>A signed manifest for every release.</h1>
+    <p class="lede">Tell consumers what shipped, which file fits their platform, and how to verify it.</p>
     <div class="actions">
-      <a class="btn primary" href="#vendors">Add it to a release job</a>
-      <a class="btn" href="/release/v1/">Read the spec</a>
+      <a class="btn primary" href="/docs/getting-started/">Get started</a>
+      <a class="btn" href="/docs/publishing/">Publish from GitHub</a>
     </div>
-    <p class="byline">By <a href="https://github.com/jdx">Jeff Dickey (@jdx)</a>, author of <a href="https://mise.jdx.dev">mise</a>.</p>
   </div>
-
-  <div class="slip" aria-label="Example packslip statement">
-    <div class="slip-head"><span>packslip.sigstore.json · <code>packslip show</code></span><span class="stamp">verified</span></div>
-<pre><code>{
-  <span class="k">"_type"</span>: <span class="s">"https://in-toto.io/Statement/v1"</span>,
-  <span class="k">"subject"</span>: [
-    { <span class="k">"name"</span>: <span class="s">"mise-v2026.9.1-linux-x64.tar.xz"</span>,
-      <span class="k">"digest"</span>: { <span class="k">"sha256"</span>: <span class="s">"3f9a…c21e"</span> } }
-  ],
-  <span class="k">"predicateType"</span>: <span class="s">"https://packslip.dev/release/v1"</span>,
-  <span class="k">"predicate"</span>: {
-    <span class="k">"project"</span>: <span class="s">"github.com/jdx/mise"</span>,
-    <span class="k">"version"</span>: <span class="s">"2026.9.1"</span>,
-    <span class="k">"published_at"</span>: <span class="s">"2026-09-01T12:00:00Z"</span>,
-    <span class="k">"source"</span>: { <span class="k">"repo"</span>: <span class="s">"https://github.com/jdx/mise"</span>,
-                <span class="k">"commit"</span>: <span class="s">"a1b2…"</span>, <span class="k">"tag"</span>: <span class="s">"v2026.9.1"</span> },
-    <span class="k">"artifacts"</span>: [
-      { <span class="k">"name"</span>: <span class="s">"mise-v2026.9.1-linux-x64.tar.xz"</span>,
-        <span class="k">"os"</span>: <span class="s">"linux"</span>, <span class="k">"arch"</span>: <span class="s">"x86_64"</span>, <span class="k">"libc"</span>: <span class="s">"gnu"</span>,
-        <span class="k">"size"</span>: <span class="n">12345678</span>,
-        <span class="k">"url"</span>: <span class="s">"https://github.com/jdx/mise/releases/download/…"</span>,
-        <span class="k">"format"</span>: <span class="s">"tar.xz"</span>,
-        <span class="k">"bin"</span>: [<span class="s">"mise/bin/mise"</span>],
-        <span class="k">"provenance"</span>: [<span class="s">"https://api.github.com/repos/jdx/mise/attestations/sha256:3f9a…"</span>] }
-    ],
-    <span class="k">"resources"</span>: [
-      { <span class="k">"kind"</span>: <span class="s">"completion"</span>, <span class="k">"shell"</span>: <span class="s">"zsh"</span>, <span class="k">"archive"</span>: <span class="s">"mise/share/zsh/site-functions/_mise"</span> },
-      { <span class="k">"kind"</span>: <span class="s">"cli-spec"</span>, <span class="k">"format"</span>: <span class="s">"usage"</span>, <span class="k">"bin"</span>: <span class="s">"mise"</span>, <span class="k">"exec"</span>: [<span class="s">"mise"</span>, <span class="s">"usage"</span>] },
-      { <span class="k">"kind"</span>: <span class="s">"skill"</span>, <span class="k">"name"</span>: <span class="s">"mise"</span>, <span class="k">"repo"</span>: <span class="s">"skills/mise"</span> }
-    ],
-    <span class="k">"identity"</span>: {
-      <span class="k">"scheme"</span>: <span class="s">"sigstore-oidc"</span>,
-      <span class="k">"key_id"</span>: <span class="s">"https://github.com/jdx/mise/.github/workflows/release.yml@refs/tags/v2026.9.1"</span>,
-      <span class="k">"issuer"</span>: <span class="s">"https://token.actions.githubusercontent.com"</span> }
-  }
-}</code></pre>
+  <div class="slip" aria-label="Example release workflow step">
+    <div class="slip-head">In your release job</div>
+{{ highlight `- uses: jdx/packslip@v0
+  with:
+    artifacts: dist/*.tar.xz dist/*.zip
+    bin: mytool
+    resources: |
+      man=archive:share/man/man1/mytool.1` "yaml" "" }}
+    <p class="slip-caption">After building artifacts and creating the release. <a href="/docs/publishing/">See permissions and setup.</a></p>
   </div>
 </div>
-
-<section id="why">
-  <span class="num">01 · The problem</span>
-  <h2>Every installer re-invents release verification.</h2>
-  <div class="cols">
-    <div>
-      <h3>Checksums over TLS prove nothing</h3>
-      <p>Most tools download a <code>SHASUMS256.txt</code> from the same place as the binary. If the release page is hijacked, the checksums are hijacked with it, and the digest still matches.</p>
-    </div>
-    <div>
-      <h3>Registries take the vendor out of the loop</h3>
-      <p>Package managers keep a central pile of YAML describing how each vendor names its assets, where its checksums live, and which file is the binary. The vendor has no say in it, and every entry rots. A manifest the vendor signs keeps the vendor in charge of its own tool: an installer reads the release directly, and a package manager like <a href="https://pacvamp.com">pacvamp</a> can still repackage it with the vendor's provenance intact.</p>
-    </div>
-    <div>
-      <h3>Build provenance says how, not what</h3>
-      <p><a href="https://slsa.dev/spec/v1.0/provenance">SLSA provenance</a> proves an artifact came out of a given build. It does not say which artifact is for which platform, what to put on PATH, or what else shipped in the release: the shell completions, the man page, the agent skill, the desktop entry or app bundle for a GUI.</p>
-    </div>
-  </div>
-</section>
-
-<section id="how">
-  <span class="num">02 · How it works</span>
-  <h2>The vendor describes the release. The forge vouches for the vendor.</h2>
-  <div class="steps">
-    <div class="step">
-      <h3>The release job signs it</h3>
-      <p>Add one step after the artifacts are built. It attests their build provenance, hashes them, reads each platform from the file name, and signs the manifest through sigstore with the workflow's own identity. No secret is created or stored.</p>
-{{ highlight `- uses: jdx/packslip@v1
-  with:
-    artifacts: dist/*
-    bin: mise` "yaml" "" }}
-    </div>
-    <div class="step">
-      <h3>One file ships beside the artifacts</h3>
-      <p><code>packslip.sigstore.json</code> becomes a release asset. It is an ordinary sigstore bundle: the statement, the certificate naming the workflow that signed it, and the <a href="https://docs.sigstore.dev/logging/overview/">Rekor</a> log entry proving when. <a href="https://github.com/sigstore/cosign"><code>cosign</code></a> and <a href="https://cli.github.com/manual/gh_attestation"><code>gh attestation</code></a> read it as-is.</p>
-    </div>
-    <div class="step">
-      <h3>The consumer checks the name</h3>
-      <p>A packslip for <code>github.com/jdx/mise</code> must be signed by a workflow of that repository through GitHub's issuer. The project name is the pin, so there is nothing to configure or look up before the first install.</p>
-{{ highlight `packslip verify packslip.sigstore.json \
-  --artifact mise-v2026.9.1-linux-x64.tar.xz` "shell" "" }}
-    </div>
-  </div>
-  <div class="prose" style="margin-top:2rem">
-    <p>packslip invents as little as it can. The document is an <a href="https://github.com/in-toto/attestation">in-toto statement</a> inside a <a href="https://docs.sigstore.dev/">sigstore</a> bundle, the same shape <a href="https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-to-establish-provenance-for-builds">GitHub artifact attestations</a>, <a href="https://docs.npmjs.com/generating-provenance-statements">npm provenance</a>, and Homebrew bottles already use, so tools that read those formats can read this one. Identity comes from sigstore's certificate authority and transparency log. The only new part is the payload: the release manifest itself.</p>
-  </div>
-</section>
-
-<section id="names">
-  <span class="num">03 · Names</span>
-  <h2>One name says where the release lives and who may sign it.</h2>
-  <div class="cols">
-    <div>
-      <h3><code>github.com/jdx/mise</code></h3>
-      <p>Releases and their packslips are GitHub release assets. The signer must be a workflow of that repository, through GitHub's OIDC issuer. <code>gitlab.com/group/tool</code> works the same way, through GitLab's own issuer.</p>
-    </div>
-    <div>
-      <h3><code>mise.jdx.dev</code></h3>
-      <p>The vendor owns the domain and publishes a signed release list at <code>/.well-known/packslip.json</code>. The list names each release's packslip and its digest, and carries an expiry and a sequence number, so a mirror cannot freeze or roll back what consumers see.</p>
-    </div>
-    <div>
-      <h3><code>github.com/oxc-project/oxc/oxlint</code></h3>
-      <p>A repository that ships several tools adds the tool's name to the path. Each tool then gets its own packslip and its own version number, even when one release carries all of them, so an installer asking for oxlint 1.9.4 finds exactly that file. The signer is still checked against the repository.</p>
-    </div>
-  </div>
-</section>
-
-<section id="proves">
-  <span class="num">04 · What it proves</span>
-  <h2>The packslip proves the manifest. SLSA proves the build.</h2>
-  <div class="cols">
-    <div>
-      <h3>A verified packslip proves what shipped</h3>
-      <p>The named signer published exactly this list of artifacts, with these digests, platforms, and bundled resources, at a time the transparency log recorded. A hijacked release page cannot change it, and a release that was rolled back or quietly removed is detected.</p>
-    </div>
-    <div>
-      <h3>Linked provenance proves how it was built</h3>
-      <p>Each artifact can link to its SLSA build provenance. A consumer that verifies those statements gets whatever <a href="https://slsa.dev/spec/v1.0/levels">build level</a> the builder provides. On GitHub-hosted runners that is Build L2, or L3 when the build runs in a reusable workflow, and the packslip action produces the provenance for you.</p>
-    </div>
-    <div>
-      <h3>Consumers set their own bar</h3>
-      <p>packslip defines no evidence levels. Consumers record what they verified, as a <a href="https://slsa.dev/spec/v1.0/verification_summary">SLSA verification summary</a> or in their own terms, and set their own minimum: which signing scheme, which signer, and whether provenance is required. Once a release meets it, later releases may not fall below it.</p>
-    </div>
-  </div>
-</section>
-
-<section id="vendors">
-  <span class="num">05 · Adoption</span>
-  <h2>Publishing is one step. Consuming is six rules.</h2>
-  <div class="split">
-    <div>
-      <h3>For vendors on GitHub</h3>
-      <p>Add the action to the job that publishes your release, after the artifacts exist.</p>
-{{ highlight `permissions:
-  contents: write
-  id-token: write
-  attestations: write
-
-steps:
-  - uses: jdx/packslip@v1
-    with:
-      artifacts: dist/*.tar.xz dist/*.zip
-      bin: mytool` "yaml" "" }}
-      <p>The action attests build provenance for every artifact, writes the packslip, signs it with the job's identity, verifies the result, and uploads <code>packslip.sigstore.json</code> to the release.</p>
-      <p>Most fields are detected. The project name comes from the repository, the version from the tag, and each artifact's os, arch, libc, and format from its file name. Anything the defaults cannot know is an input: the executables inside the archives, a variant name for two builds of one platform, and the completions, man page, <a href="https://usage.jdx.dev">usage</a> spec, skill, or desktop entry that ship alongside. A repository with several tools runs the step once per tool with a subpath in the project name. The <a href="/release/v1/#tooling">tooling section of the spec</a> lists every option.</p>
-      <h3>Everywhere else</h3>
-      <p>Outside GitHub, run the <code>packslip</code> CLI directly. In any CI system that issues OIDC tokens it signs keylessly. Anywhere else, generate a key pair once, keep the private key in your secret store, and publish the public key so consumers can pin it. Either way the signature is logged to Rekor.</p>
-{{ highlight `cargo install packslip
-
-packslip keygen -o release.key
-packslip create \
-  --project mytool.example.com \
-  --version "$VERSION" \
-  --key release.key \
-  --out dist \
-  --url-base "https://dl.example.com/mytool/$VERSION" \
-  --bin mytool \
-  dist/*.tar.xz
-
-packslip releases --project mytool.example.com \
-  --sequence 42 --valid-for 30d --key release.key \
-  --release "https://dl.example.com/mytool/$VERSION/packslip.sigstore.json=dist/packslip.sigstore.json" \
-  --out site/.well-known/packslip.json` "shell" "" }}
-    </div>
-    <div id="consumers">
-      <h3>For consumers</h3>
-      <p>A package manager, a distribution repository, and a corporate mirror all follow the same rules.</p>
-      <ol>
-        <li><strong>Pin the identity once.</strong> For a project on a forge, the name is the pin: accept only the forge's issuer and an identity under that repository. For a project on its own domain, pin its public key or identity. Never take a key from the document, and never trust a bundle's key hint.</li>
-        <li><strong>Verify the bundle,</strong> then the statement, then the digest and size of every artifact you downloaded.</li>
-        <li><strong>Never downgrade.</strong> Refuse a release signed with a weaker scheme than the last one you accepted, signed by someone new without a human approving it, or missing provenance the last release had. A keyless signer is identified by its workflow path, so a new tag of the same workflow is the same signer.</li>
-        <li><strong>Wait before installing.</strong> Apply a minimum release age to the time the transparency log recorded, so a hijacked release is noticed before unattended installs pick it up.</li>
-        <li><strong>Order by semver.</strong> Every version is <a href="https://semver.org/spec/v2.0.0.html">semver</a>: precedence ranks releases, a prerelease part marks a prerelease, and its first identifier names the channel. Every project has a release list: GitHub's releases endpoint, with a signed list in the repository when the vendor needs to withdraw a release, or a signed list on the vendor's domain. It only says what was released and what was withdrawn. Refuse a stale signed list, never pick a yanked release, and skip prereleases unless asked.</li>
-        <li><strong>Never guess between two artifacts.</strong> Keep the artifacts whose os, arch, and libc fit the host and whose variant is the one asked for, take the most specific, then the format you prefer. If two still tie, fail instead of picking one.</li>
-      </ol>
-{{ highlight `packslip verify packslip.sigstore.json \
-  --artifact mise-v2026.9.1-linux-x64.tar.xz --json
-{
-  "project": "github.com/jdx/mise",
-  "version": "2026.9.1",
-  "published_at": "2026-09-01T12:00:00Z",
-  "scheme": "sigstore-oidc",
-  "key_id": "https://github.com/jdx/mise/.github/workflows/release.yml@refs/tags/v2026.9.1",
-  "issuer": "https://token.actions.githubusercontent.com",
-  "logged_at": "2026-09-01T12:00:41Z",
-  "provenance_linked": true,
-  "checked_artifacts": ["mise-v2026.9.1-linux-x64.tar.xz"],
-  "artifact_count": 6
-}` "shell" "" }}
-      <p>The reference verifier takes the same pins as flags: <code>--identity-prefix</code>, or an exact <code>--identity</code> and <code>--issuer</code>, for keyless signers, and <code>--pubkey</code> for a key. It is also a Rust library, and <code>packslip schema</code> prints the <a href="/schema/release-v1.json">JSON schema</a> for other implementations.</p>
-    </div>
-  </div>
-</section>
-
-<section id="who">
-  <span class="num">06 · Who it is for</span>
-  <h2>Built for the tools that install other people's binaries.</h2>
-  <div class="cols">
-    <div>
-      <h3><a href="https://pacvamp.com">pacvamp</a></h3>
-      <p>pacvamp is a trust-focused package manager for pacman-based distributions. It is meant to build vendor packages from the vendor's packslip instead of hand-edited checksum lines, re-verify against the project's identity, enforce a minimum release age and no-downgrade, and ship the packslip beside the package so a client can chain the repository's signature back to the vendor offline.</p>
-    </div>
-    <div>
-      <h3><a href="https://mise.jdx.dev">mise</a></h3>
-      <p>mise has experimental support. Its <code>github</code> and <code>http</code> backends verify a packslip when a release ships one and record the result in <code>mise.lock</code>, so such a tool needs no registry entry. mise's own release workflow is meant to be the reference publisher. Until the spec is stable, expect both to change.</p>
-    </div>
-    <div>
-      <h3>Everyone else</h3>
-      <p>Nothing in the format is specific to a distro or a vendor. A corporate mirror or a one-off install script can verify the same file against the same name.</p>
-    </div>
-  </div>
-</section>
-
+<article class="prose overview">{{ .Content }}</article>
 </main>
-
-<footer class="wrap">
-  <span>packslip · version 1, draft · MIT licensed · by <a href="https://github.com/jdx">Jeff Dickey (@jdx)</a></span>
-  <nav>
-    <a href="/release/v1/">Specification</a>
-    <a href="/schema/release-v1.json">JSON schema</a>
-    <a href="https://github.com/jdx/packslip">GitHub</a>
-    <a href="https://github.com/marketplace/actions/packslip">Action</a>
-  </nav>
-</footer>
-
+{{ partial "footer.html" . }}
 </body>
 </html>

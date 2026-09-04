@@ -83,10 +83,10 @@ impl RunWith<BinInfo> for Usage {
 
 /// Generate an Ed25519 key pair for the sigstore-key scheme
 ///
-/// Only needed outside a CI job: with an OIDC identity, `create` signs
-/// keylessly and needs no key. Writes the secret seed to the given path
-/// (mode 0600) and a minisign-format public key beside it with a .pub
-/// extension.
+/// Writes a secret seed to --out (mode 0600 on Unix) and a minisign-format
+/// public key beside it with a .pub extension. Refuses to overwrite either
+/// file. Keep the secret private; distribute the public key to consumers.
+/// A supported CI OIDC identity can sign without a long-lived key.
 #[derive(Debug, usage_rs::Args)]
 struct Keygen {
     /// Where to write the secret key
@@ -144,7 +144,10 @@ impl RunWith<BinInfo> for Keygen {
     }
 }
 
-/// Print the JSON schema of the release statement, or of the release list
+/// Print the JSON schema for a decoded release statement
+///
+/// Use --releases for the release-list statement schema. These schemas
+/// describe the in-toto payload, not the enclosing sigstore bundle.
 #[derive(Debug, usage_rs::Args)]
 struct Schema {
     /// The releases/v1 list instead of the release/v1 statement
@@ -172,7 +175,7 @@ struct Show {
     /// The packslip.sigstore.json (or release list) to read
     #[usage(value_hint = usage_rs::ValueHint::FilePath)]
     bundle: PathBuf,
-    /// The exact signed bytes instead of pretty JSON
+    /// Print the signed payload followed by a newline, without pretty-printing
     #[usage(long)]
     raw: bool,
 }
@@ -267,15 +270,15 @@ fn signer(key: &Option<PathBuf>, sign: Option<SignWith>, no_log: bool) -> Result
 
 /// Create and sign a packslip for a release
 ///
-/// Digests every artifact, infers os/arch/libc/format from file names
-/// (override with path:os/arch[/libc], path:any for an artifact that runs
-/// anywhere, add @variant to tell apart two builds for one platform), and
-/// writes packslip.sigstore.json into --out. What the command line cannot
-/// say per artifact, such as executables at different paths in different
-/// archives or a format the name gets wrong, goes in a --manifest. Inside
-/// a CI job the document is signed keylessly with the job's identity. With
-/// --key it is signed with an Ed25519 key from `packslip keygen`. Either
-/// way the signature is logged to Rekor.
+/// Hash local artifacts, infer platforms and formats from filenames, and
+/// write a signed bundle to --out. Use --manifest for per-artifact paths,
+/// formats, requirements, and scoped resources. No files are uploaded.
+///
+/// Signing uses a supported CI OIDC identity by default. Use --key to
+/// sign with an Ed25519 key instead. Signatures are logged to Rekor unless
+/// a key-signed release explicitly uses --no-log.
+///
+/// Examples and configuration: https://packslip.dev/docs/describing-releases/
 #[derive(Debug, usage_rs::Args)]
 struct Create {
     /// The project's name: a host path such as github.com/owner/repo, or
@@ -283,7 +286,7 @@ struct Create {
     /// unless the manifest names it
     #[usage(long)]
     project: Option<String>,
-    /// The release version, semver. Required unless the manifest names it
+    /// Semver release version, such as 1.2.3. Required unless set in the manifest
     #[usage(long)]
     version: Option<String>,
     /// Artifact files, optionally as path[:os/arch[/libc]|:any][@variant].
@@ -291,7 +294,7 @@ struct Create {
     artifacts: Vec<String>,
     /// A TOML manifest giving per-artifact executables, formats,
     /// requirements, platforms, and the release's resources; see
-    /// https://packslip.dev/release/v1/#tooling
+    /// https://packslip.dev/docs/describing-releases/
     #[usage(short = 'm', long, value_hint = usage_rs::ValueHint::FilePath)]
     manifest: Option<PathBuf>,
     /// Sign with this secret key instead of a CI identity
@@ -304,13 +307,13 @@ struct Create {
     /// then opt in with --allow-unlogged
     #[usage(long)]
     no_log: bool,
-    /// Directory to write into
+    /// Directory for the signed bundle (does not copy artifacts)
     #[usage(short = 'o', long, default = ".")]
     out: PathBuf,
     /// Download URL prefix for the artifacts
     #[usage(long)]
     url_base: Option<String>,
-    /// Download URL for one artifact, as FILENAME=URL (repeatable)
+    /// Download URL for one artifact or resource asset, as FILENAME=URL (repeatable)
     #[usage(long)]
     url: Vec<String>,
     /// Source repository URL
@@ -880,10 +883,13 @@ fn valid_platform(platform: &str) -> bool {
 
 /// Create and sign a project's release list
 ///
-/// For a project on its own domain: lists released packslips with their
-/// digests so consumers can discover releases, with an expiry and a
-/// sequence number so they notice a stale or truncated list. Publish the
-/// result at https://<host>/.well-known/packslip/<path>.json.
+/// Read local release bundles and write a signed index with their digests,
+/// versions, expiry, and sequence. Repeat --release for every entry to keep;
+/// this command does not append to a previous list or upload the output.
+///
+/// Publish at the project's well-known location, or as a supplementary
+/// list on a GitHub repository's default branch. See
+/// https://packslip.dev/docs/release-lists/.
 #[derive(Debug, usage_rs::Args)]
 struct Releases {
     /// The project's name, which every listed packslip must carry
@@ -1024,15 +1030,20 @@ fn parse_duration(s: &str) -> Result<std::time::Duration> {
 
 /// Verify a packslip, or a release list, against a pinned identity or key
 ///
-/// Checks the bundle's signature and log entry, the statement, and the
-/// digest and size of every artifact file given. Exits 1 on any failure.
-/// A keyless document is checked against --identity, --identity-prefix,
-/// and --issuer, or, for a project on github.com or gitlab.com, against
-/// the repository the project name says signed it. A key-signed document
-/// is checked against --pubkey.
+/// Check the signature, log evidence, and statement structure. With
+/// --artifact, also check local files against signed digests and artifact
+/// sizes. Without it, only the bundle is checked. Verification failures
+/// exit with status 1; no remote artifacts or provenance are fetched.
+///
+/// Pin a keyless signer with --identity or --identity-prefix and --issuer,
+/// or a signing key with --pubkey. Without an explicit pin, derive the
+/// policy from the document's claimed GitHub or GitLab project. Consumers
+/// must separately match the project and version to their intended request.
+/// For release lists, expiry and remembered sequence checks are the
+/// consumer's responsibility. See https://packslip.dev/docs/verifying/.
 #[derive(Debug, usage_rs::Args)]
 struct Verify {
-    /// The packslip.sigstore.json to verify
+    /// Local release bundle or signed release list to verify
     #[usage(value_hint = usage_rs::ValueHint::FilePath)]
     bundle: PathBuf,
     /// The pinned public key file, or its base64 line
@@ -1054,7 +1065,7 @@ struct Verify {
     /// A sigstore trusted_root.json to use instead of the embedded one
     #[usage(long, value_hint = usage_rs::ValueHint::FilePath)]
     trusted_root: Option<PathBuf>,
-    /// Artifact files to check against the document
+    /// Local artifacts or resource assets to check (repeatable; not downloaded)
     #[usage(short = 'a', long)]
     artifact: Vec<PathBuf>,
     /// Print the result as JSON

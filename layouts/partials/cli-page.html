@@ -19,8 +19,11 @@
 
 {{ partial "header.html" . }}
 
-<main class="wrap doc">
+<main id="main" class="wrap doc">
   <aside class="toc">
+    <details class="doc-navigation" open>
+      <summary>Browse this documentation</summary>
+
     <div class="toc-group">
       <div class="toc-title">CLI reference</div>
       <ul>
@@ -39,21 +42,18 @@
         {{ .TableOfContents }}
       </div>
     {{ end }}
+
+    </details>
   </aside>
 
-  <article class="prose" style="max-width:none">
+  <article class="prose">
+    {{ partial "notice.html" . }}
+    <p class="meta">For complete examples, see the <a href="/docs/">guides</a>. This reference is generated from CLI help.</p>
     {{ .Content }}
   </article>
 </main>
 
-<footer class="wrap">
-  <span>packslip · version 1, draft · MIT licensed · by <a href="https://github.com/jdx">Jeff Dickey (@jdx)</a></span>
-  <nav>
-    <a href="/">Overview</a>
-    <a href="/release/v1/">Spec</a>
-    <a href="https://github.com/jdx/packslip">GitHub</a>
-  </nav>
-</footer>
+{{ partial "footer.html" . }}
 
 </body>
 </html>

@@ -1,0 +1,17 @@
+{
+  "subject": [{
+    "name": "mytool-1.2.3.tar.gz",
+    "digest": { "sha256": "..." }
+  }],
+  "predicateType": "https://packslip.dev/release/v1",
+  "predicate": {
+    "project": "mytool.example.com",
+    "version": "1.2.3",
+    "artifacts": [{
+      "name": "mytool-1.2.3.tar.gz",
+      "url": "https://mytool.example.com/releases/1.2.3/mytool-1.2.3.tar.gz",
+      "format": "tar.gz",
+      "bin": ["bin/mytool"]
+    }]
+  }
+}

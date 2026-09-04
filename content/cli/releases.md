@@ -5,7 +5,9 @@
 
 Create and sign a project's release list
 
-For a project on its own domain: lists released packslips with their digests so consumers can discover releases, with an expiry and a sequence number so they notice a stale or truncated list. Publish the result at https://&lt;host>/.well-known/packslip/&lt;path>.json.
+Read local release bundles and write a signed index with their digests, versions, expiry, and sequence. Repeat --release for every entry to keep; this command does not append to a previous list or upload the output.
+
+Publish at the project's well-known location, or as a supplementary list on a GitHub repository's default branch. See https://packslip.dev/docs/release-lists/.
 
 ## Flags
 - **`--project <PROJECT>`** — The project's name, which every listed packslip must carry

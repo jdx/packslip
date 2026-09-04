@@ -1,9 +1,11 @@
+<a class="skip-link" href="#main">Skip to content</a>
 <header class="wrap top">
   {{ partial "brand.html" . }}
-  <nav>
-    <a href="/">Overview</a>
-    <a href="/release/v1/">Spec</a>
-    <a href="/cli/">CLI</a>
+  <nav aria-label="Main">
+    <a href="/"{{ if .IsHome }} class="active" aria-current="page"{{ end }}>Overview</a>
+    <a href="/docs/"{{ if eq .Section "docs" }} class="active" aria-current="page"{{ end }}>Docs</a>
+    <a href="/release/v1/"{{ if eq .RelPermalink "/release/v1/" }} class="active" aria-current="page"{{ end }}>Spec</a>
+    <a href="/cli/"{{ if eq .Section "cli" }} class="active" aria-current="page"{{ end }}>CLI</a>
     <a href="/schema/release-v1.json">JSON schema</a>
     {{ partial "github-link.html" . }}
   </nav>
