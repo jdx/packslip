@@ -94,7 +94,7 @@ pre code { background: none; padding: 0; font-size: inherit; }
   color: var(--ink);
 }
 
-.brand svg { height: 30px; width: auto; display: block; }
+.brand svg, .brand img { height: 30px; width: auto; display: block; }
 
 .top nav { display: flex; gap: 1.4rem; flex-wrap: wrap; }
 .top nav a { color: var(--ink-2); text-decoration: none; font-size: 0.95rem; }
