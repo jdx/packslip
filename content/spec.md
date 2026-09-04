@@ -359,8 +359,14 @@ Documented kinds:
   would rather not put that dependency on its users' machines ships static
   completions as well.
 - `skill`: an agent skill in the [Agent Skills](https://agentskills.io) format: a directory holding
-  `SKILL.md` and whatever it references, named by `name`. With `exec`, the
-  command prints a single `SKILL.md`.
+  `SKILL.md` and whatever it references, named by `name`. From an
+  `archive` or `repo` source the path is that directory. As an `asset` the
+  skill is an archive of the directory's contents, with `SKILL.md` at the
+  archive root or under one top-level directory, which the consumer
+  strips as it does for an artifact; nothing else is at the root. With
+  `exec`, the command prints a single `SKILL.md`. A consumer counts a
+  skill as present only once `SKILL.md` is in place, so a half-fetched
+  directory never passes for one.
 - `sbom`: a software bill of materials in `format`, `cyclonedx` or `spdx`,
   from an `archive`, `asset`, or `repo` source so that its digest or
   commit covers it. Never from `exec`. A release with one SBOM per
