@@ -306,11 +306,10 @@ pub fn resource_fits(resource: &Resource, artifact: &Artifact) -> bool {
 /// things, such as an `exec` completion for several shells, appears
 /// once.
 pub fn select_resources<'a>(statement: &'a Statement, artifact: &Artifact) -> Vec<&'a Resource> {
-    select_among(
-        &statement.predicate.resources,
-        artifact,
-        Resource::identities,
-    )
+    let sole_bin = statement.sole_bin();
+    select_among(&statement.predicate.resources, artifact, |r| {
+        r.identities_for(sole_bin)
+    })
 }
 
 /// [`select_resources`] over a slice, with the identities of each entry
@@ -737,8 +736,10 @@ pub struct Resource {
     /// For `skill`: the skill's name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    /// For `cli-spec`: the executable the spec describes, by its `bin`
-    /// name.
+    /// The executable this entry is for, by its `bin` name. Required for
+    /// `cli-spec`; for `completion` and `man`, required when the release
+    /// has more than one executable, and meaning that one when it has
+    /// one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bin: Option<String>,
     /// For `cli-spec`: the spec format, of which `usage` is documented.
@@ -843,15 +844,34 @@ impl Resource {
     }
 
     /// What this entry is an entry for, so that only entries for the same
-    /// thing compete over platform scope: the shell of a completion (one
-    /// per shell an `exec` entry generates), `format` and `bin` of a
-    /// cli-spec, the name of a skill, the format of an SBOM, and for
-    /// every other kind the file name of the source, or nothing for an
-    /// `exec` source.
+    /// thing compete over platform scope: `bin` and the shell of a
+    /// completion (one per shell an `exec` entry generates), `format` and
+    /// `bin` of a cli-spec, the name of a skill, the format of an SBOM,
+    /// and for every other kind `bin`, if any, and the file name of the
+    /// source, or nothing for an `exec` source. A completion or man page
+    /// that leaves `bin` out is for the release's only executable; see
+    /// [`Resource::identities_for`], which [`select_resources`] uses.
     pub fn identities(&self) -> Vec<ResourceIdentity> {
+        self.identities_for(None)
+    }
+
+    /// [`Resource::identities`] in a release whose only executable is
+    /// `sole_bin`: a completion or man page that leaves `bin` out is for
+    /// that one, and competes with an entry that names it.
+    pub fn identities_for(&self, sole_bin: Option<&str>) -> Vec<ResourceIdentity> {
+        // The bare name, as `sole_bin` and validation compare it, so an
+        // entry naming the Windows form is for the same executable.
+        let bin = match self.kind.as_str() {
+            "cli-spec" | "skill" | "sbom" => None,
+            _ => self
+                .bin
+                .as_deref()
+                .or(sole_bin)
+                .map(|b| b.strip_suffix(".exe").unwrap_or(b)),
+        };
         let id = |parts: Vec<&str>| ResourceIdentity {
             kind: self.kind.clone(),
-            parts: parts.into_iter().map(str::to_string).collect(),
+            parts: bin.into_iter().chain(parts).map(str::to_string).collect(),
         };
         match self.kind.as_str() {
             "completion" => {
@@ -1131,6 +1151,12 @@ pub enum InvalidDocument {
     CliSpec(String),
     #[error("cli-spec {0:?} describes {1:?}, which is not a bin name of any artifact")]
     CliSpecBin(String, String),
+    #[error("resource {0:?} is for {1:?}, which is not a bin name of any artifact")]
+    ResourceBin(String, String),
+    #[error(
+        "resource {0:?} does not say which executable it is for, and the release has several: {1}"
+    )]
+    ResourceNeedsBin(String, String),
     #[error("skill {0:?} needs a name without a slash")]
     SkillName(String),
     #[error("app {0:?} must come from an archive")]
@@ -1412,6 +1438,18 @@ impl Statement {
             if resource.url.is_some() && source != ResourceSource::Asset {
                 return Err(InvalidDocument::ResourceUrl(label));
             }
+            if matches!(resource.kind.as_str(), "completion" | "man") {
+                match &resource.bin {
+                    Some(bin) if !is_bin(bin) => {
+                        return Err(InvalidDocument::ResourceBin(label, bin.clone()));
+                    }
+                    None if bin_names.len() > 1 => {
+                        let names: Vec<&str> = bin_names.iter().copied().collect();
+                        return Err(InvalidDocument::ResourceNeedsBin(label, names.join(", ")));
+                    }
+                    _ => {}
+                }
+            }
             match resource.kind.as_str() {
                 "completion" => {
                     if resource.shell.is_some() == !resource.shells.is_empty() {
@@ -1464,6 +1502,23 @@ impl Statement {
             }
         }
         Ok(())
+    }
+
+    /// The release's only executable, by name, when every artifact's
+    /// `bin` entries name the same one (a Windows `.exe` counting as the
+    /// same). A completion or man page may then leave `bin` out.
+    pub fn sole_bin(&self) -> Option<&str> {
+        let names: std::collections::BTreeSet<&str> = self
+            .predicate
+            .artifacts
+            .iter()
+            .flat_map(|a| a.bin.iter())
+            .map(|b| b.name.strip_suffix(".exe").unwrap_or(&b.name))
+            .collect();
+        match names.iter().collect::<Vec<_>>().as_slice() {
+            [one] => Some(one),
+            _ => None,
+        }
     }
 
     /// The host part of the project name: `github.com` for
@@ -2097,6 +2152,13 @@ mod tests {
                 },
                 |e| matches!(e, InvalidDocument::CliSpecBin(_, _)),
             ),
+            (
+                Resource {
+                    bin: Some("other".into()),
+                    ..archive("man", "mise.1")
+                },
+                |e| matches!(e, InvalidDocument::ResourceBin(_, _)),
+            ),
             (archive("skill", "skills/mise"), |e| {
                 matches!(e, InvalidDocument::SkillName(_))
             }),
@@ -2533,6 +2595,78 @@ mod tests {
         assert!(
             !resource_fits(&windows, &artifacts[4]),
             "a portable artifact is not a Windows one"
+        );
+    }
+
+    #[test]
+    fn a_release_with_several_executables_says_which_one_a_completion_is_for() {
+        let mut s = sample();
+        s.predicate.artifacts[0].bin.push(Bin::new("bin/other"));
+        let completion = |bin: Option<&str>| Resource {
+            shell: Some("zsh".into()),
+            archive: Some("share/_x".into()),
+            bin: bin.map(Into::into),
+            ..Resource::new("completion")
+        };
+        s.predicate.resources = vec![completion(None)];
+        let err = s.validate().unwrap_err();
+        assert!(
+            matches!(&err, InvalidDocument::ResourceNeedsBin(_, names) if names == "mise, other"),
+            "{err}"
+        );
+        s.predicate.resources = vec![completion(Some("other"))];
+        s.validate().unwrap();
+        s.predicate.resources = vec![completion(Some("mise.exe"))];
+        s.validate().unwrap();
+        let mut man = Resource::new("man");
+        man.archive = Some("share/man/other.1".into());
+        s.predicate.resources = vec![man];
+        assert!(matches!(
+            s.validate(),
+            Err(InvalidDocument::ResourceNeedsBin(_, _))
+        ));
+        // Two entries for different executables are different things.
+        assert_ne!(
+            completion(Some("mise")).identities(),
+            completion(Some("other")).identities()
+        );
+        assert_eq!(
+            completion(Some("other"))
+                .identities()
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            ["completion/other/zsh"]
+        );
+        // In a release with one executable, an entry that leaves bin out is
+        // for that one and competes with an entry that names it.
+        assert_eq!(
+            completion(None).identities_for(Some("mise")),
+            completion(Some("mise")).identities()
+        );
+        assert_eq!(
+            completion(Some("mise.exe")).identities(),
+            completion(Some("mise")).identities(),
+            "the Windows form names the same executable"
+        );
+        assert_eq!(s.sole_bin(), None, "mise and other");
+        s.predicate.artifacts[0].bin.pop();
+        assert_eq!(s.sole_bin(), Some("mise"));
+        s.predicate.resources = vec![
+            completion(None),
+            Resource {
+                os: Some("linux".into()),
+                ..completion(Some("mise"))
+            },
+        ];
+        let linux: Artifact = serde_json::from_value(serde_json::json!({
+            "name": "t-linux.tar.gz", "os": "linux", "size": 1
+        }))
+        .unwrap();
+        assert_eq!(
+            select_resources(&s, &linux),
+            [&s.predicate.resources[1]],
+            "the scoped entry that names the sole executable hides the unnamed one"
         );
     }
 
