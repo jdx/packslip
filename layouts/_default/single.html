@@ -24,6 +24,7 @@
     <li><a href="#document">The release statement</a></li>
     <li><a href="#fields">Field reference</a></li>
     <li><a href="#resources">Resources</a></li>
+    <li><a href="#host-requirements">Host requirements</a></li>
     <li><a href="#extensions">Extensions</a></li>
     <li><a href="#repackager">Repackager attestation</a></li>
     <li><a href="#signing">Signing</a></li>
@@ -84,7 +85,7 @@
         "url": "https://github.com/jdx/mise/releases/download/v2026.9.1/mise-v2026.9.1-linux-x64.tar.xz",
         "format": "tar.xz",
         "bin": ["mise/bin/mise"],
-        "requires": { "glibc_min": "2.31" },
+        "requires": { "glibc_min": "2.31", "libs": [] },
         "provenance": ["https://api.github.com/repos/jdx/mise/attestations/sha256:..."]
       }
     ],
@@ -110,7 +111,7 @@
     <li><code>os</code>, <code>arch</code>, and <code>libc</code> use the values <code>linux</code>, <code>darwin</code>, <code>windows</code>, <code>freebsd</code>; <code>x86_64</code>, <code>aarch64</code>, <code>armv7</code>, <code>riscv64</code>, <code>i686</code>; <code>gnu</code>, <code>musl</code>. <code>format</code> is the archive or installer type: <code>tar.xz</code>, <code>tar.gz</code>, <code>tar.zst</code>, <code>tar.bz2</code>, <code>tgz</code>, <code>zip</code>, <code>7z</code>, <code>deb</code>, <code>rpm</code>, <code>dmg</code>, <code>pkg</code>, <code>msi</code>, <code>msix</code>, <code>exe</code>, <code>appimage</code>, or <code>raw</code> for a bare executable.</li>
     <li><code>variant</code> tells apart artifacts that share os, arch, libc, and format: <code>fips</code>, <code>baseline</code>, <code>debug</code>, <code>installer</code>, <code>source</code>. A vendor must not publish two artifacts that agree on all five; <code>packslip create</code> refuses to. Consumers that find such a pair refuse to choose.</li>
     <li><code>bin</code> lists the executables inside the artifact. Each entry is a path relative to the archive root, or the artifact's own name when it is a bare executable. When the name to put on PATH differs from the file name, the entry is <code>{ "path": "bin/oxlint-x86_64", "name": "oxlint" }</code>. Windows entries carry their <code>.exe</code>.</li>
-    <li><code>requires</code> states what the host needs: <code>os_min</code> in the OS's own terms (<code>12</code> for macOS Monterey, <code>10.0.17763</code> for Windows) and <code>glibc_min</code> for a <code>gnu</code> Linux build.</li>
+    <li><code>requires</code> states what the host must already provide: <code>os_min</code> in the OS's own terms (<code>12</code> for macOS Monterey, <code>10.0.17763</code> for Windows), <code>glibc_min</code> for a <code>gnu</code> Linux build, <code>libs</code>, the shared libraries the executables load, and <code>bin</code>, the commands they run. See <a href="#host-requirements">Host requirements</a>.</li>
     <li><code>provenance</code> holds URLs of <a href="https://slsa.dev/spec/v1.0/provenance">SLSA build provenance</a> statements for that artifact. The packslip proves the manifest; verified provenance proves the build, at whatever <a href="https://slsa.dev/spec/v1.0/levels">SLSA build level</a> its builder establishes.</li>
     <li><code>resources</code> lists what the release ships besides its executables, each entry a <code>kind</code> and one source. See <a href="#resources">Resources</a>.</li>
     <li><code>notes_url</code> points at the release notes. <code>sbom</code> points at a software bill of materials for the release.</li>
@@ -147,7 +148,11 @@
       <tr><td><code>artifacts[].url</code></td><td>string</td><td><span class="opt">optional</span></td><td>Download URL.</td></tr>
       <tr><td><code>artifacts[].format</code></td><td>string</td><td><span class="opt">optional</span></td><td>Archive or installer type, or <code>raw</code> for a bare executable.</td></tr>
       <tr><td><code>artifacts[].bin[]</code></td><td>array of string or object</td><td><span class="opt">optional</span></td><td>Executables inside the artifact: a path, or <code>{ path, name }</code> when the PATH name differs.</td></tr>
-      <tr><td><code>artifacts[].requires</code></td><td>object</td><td><span class="opt">optional</span></td><td><code>os_min</code> and <code>glibc_min</code>.</td></tr>
+      <tr><td><code>artifacts[].requires</code></td><td>object</td><td><span class="opt">optional</span></td><td>What the host must provide. See <a href="#host-requirements">Host requirements</a>.</td></tr>
+      <tr><td><code>requires.os_min</code></td><td>string</td><td><span class="opt">optional</span></td><td>Minimum OS version in the OS's own terms.</td></tr>
+      <tr><td><code>requires.glibc_min</code></td><td>string</td><td><span class="opt">optional</span></td><td>Minimum glibc for a <code>gnu</code> Linux build.</td></tr>
+      <tr><td><code>requires.libs[]</code></td><td>array of string</td><td><span class="opt">optional</span></td><td>Shared libraries loaded from the host, by loader name (<code>libssl.so.3</code>, <code>vcruntime140.dll</code>). Read from the executables by <code>packslip create</code>; empty means none needed, absent means unchecked.</td></tr>
+      <tr><td><code>requires.bin[]</code></td><td>array of object</td><td><span class="opt">optional</span></td><td>Commands the executables need on PATH: <code>{ name, min? }</code>, a bare name and the lowest version that works.</td></tr>
       <tr><td><code>artifacts[].provenance[]</code></td><td>array of string</td><td><span class="opt">optional</span></td><td>URLs of SLSA build provenance statements for this artifact.</td></tr>
       <tr><td><code>artifacts[].extensions</code></td><td>object</td><td><span class="opt">optional</span></td><td>Vendor- or consumer-defined data about this artifact. See <a href="#extensions">Extensions</a>.</td></tr>
       <tr><td><code>predicate.resources[]</code></td><td>array of object</td><td><span class="opt">optional</span></td><td>What ships besides the executables. See <a href="#resources">Resources</a>.</td></tr>
@@ -195,6 +200,15 @@
   </ul>
   <p>For any one need, a consumer takes the first source it can use in the order above: an <code>archive</code> or <code>asset</code> entry, then <code>repo</code>, then one derived from a <code>cli-spec</code>, and only then <code>exec</code>. It ignores kinds and sources it does not know, so a vendor may ship a <code>font</code> or a kind of its own before the specification names it.</p>
   <p>An artifact with <code>bin</code> is something a command-line package manager installs. A release whose resources include <code>desktop</code> or <code>app</code> is something a desktop launcher installs. Many applications are both, and the entries say so without a category that would misfile them.</p>
+
+  <h2 id="host-requirements">Host requirements</h2>
+  <p>An executable that installs cleanly and fails on first use, because a library or a program it expected is not there, is the failure a release manifest is well placed to prevent. <code>requires</code> says what the host must already provide, in names the operating system defines rather than names a package manager defines, so any consumer can check them without a registry. Beside <code>os_min</code> and <code>glibc_min</code>:</p>
+  <ul>
+    <li><code>libs</code> lists the shared libraries the executables load from the host, each by the name the loader resolves: a soname on Linux and FreeBSD (<code>libssl.so.3</code>, <code>libstdc++.so.6</code>), a DLL name on Windows (<code>vcruntime140.dll</code>), the file name of a dylib on macOS (<code>libssl.3.dylib</code>). It leaves out the C runtime and loader that <code>libc</code> and <code>glibc_min</code> already describe (libc, libm, libdl, libpthread, librt, libgcc_s, and the dynamic loader; <code>/usr/lib</code> and <code>/System/Library</code> on macOS; the DLLs Windows ships), and any library the artifact carries itself and finds through its own rpath. <code>packslip create</code> reads the list from the executables named in <code>bin</code>, so it says what the bytes say, and a consumer holding the artifact can read the same list; the signed one lets it check before downloading. An empty list means the executables were read and need nothing beyond the baseline. An absent one means nothing was checked, as for an installer <code>create</code> does not open or an executable that is a script.</li>
+    <li><code>bin</code> lists the commands the executables run and cannot work without, each a bare name as the executable invokes it (<code>java</code>, <code>python3</code>, <code>git</code>; no directory, no <code>.exe</code>) with an optional <code>min</code>, the lowest version that works, matched as a prefix on dot-separated components like a requested version, so <code>17</code> means 17.0.0 and later. The vendor declares these; nothing in a binary says it runs <code>java</code>. Only hard requirements belong here; an optional integration goes under <code>extensions</code>. A required command may not be one the release itself provides.</li>
+  </ul>
+  <p>A consumer checks <code>requires</code> before installing and reports what is missing in its own terms: a distribution package for a soname, a tool it can install for a command. It fails on nothing it cannot check: a version it cannot read is a warning, not a refusal. Between two artifacts that fit the host, it prefers the one whose requirements the host meets.</p>
+  <p>That is the boundary. <code>requires</code> names what the host must have, by names the OS itself resolves. It does not name other projects, versions of them, or where to get them: that needs a namespace only a registry has, and a package manager's install hints go under <code>extensions</code>. Two things this version leaves out on purpose, to be added if vendors need them: a <code>bin</code> entry satisfied by any of several commands (<code>terraform</code> or <code>tofu</code>), and a symbol version on a library (<code>libstdc++.so.6</code> at <code>GLIBCXX_3.4.29</code>), which <code>glibc_min</code> covers for libc alone.</p>
 
   <h2 id="extensions">Extensions</h2>
   <p>A vendor or a consumer sometimes has something to say that the specification has no field for: a package manager's install hints, a Homebrew tap, an end-of-life date, a build id. It goes in <code>extensions</code>, an object that the release predicate, each artifact, each resource, the release-list predicate, and each release entry may carry:</p>
@@ -282,18 +296,19 @@
     <li>Apply any minimum release age to the log's integration time, falling back to <code>published_at</code> only for an unlogged bundle you chose to accept.</li>
     <li>Use the project's release list (GitHub's releases endpoint, or the signed list) and refuse a project that has neither. Refuse a signed list that has expired or whose <code>sequence</code> is below the last one accepted; never select a yanked entry; skip prereleases unless asked for them; rank by semver precedence.</li>
     <li>Select one artifact by os, arch, libc, format, and, when needed, variant. Refuse to guess between two artifacts that match.</li>
+    <li>Check <code>requires</code> against the host before installing, and report a missing library or command in your own terms. Fail on nothing you cannot check. Between two artifacts that fit, prefer the one whose requirements the host meets.</li>
     <li>Take each resource from the most verifiable source offered, in the order <a href="#resources">Resources</a> gives; run an <code>exec</code> entry only if you have chosen to run vendor code at install time; ignore kinds you do not know.</li>
   </ol>
 
   <h2 id="proves">What a verified packslip proves</h2>
   <p>A verified packslip proves that the named signer published exactly this list of artifacts, with these digests, at a time the log recorded. It does not by itself prove anything about how the artifacts were built. That is what SLSA provenance is for: an artifact whose linked provenance a consumer verifies earns the SLSA build level its builder establishes (GitHub-hosted runners with <a href="https://github.com/actions/attest-build-provenance"><code>actions/attest-build-provenance</code></a> give Build L2, or L3 when the build runs in a reusable workflow). Consumers record what they verified as a <a href="https://slsa.dev/spec/v1.0/verification_summary">SLSA Verification Summary</a> or in their own terms; packslip defines no level scale of its own.</p>
   <p>A resource from an <code>archive</code> or <code>asset</code> is covered by the same digests; one from <code>repo</code> by the commit; an <code>exec</code> entry by nothing beyond the executable it runs.</p>
-  <p><code>packslip verify</code> reports the scheme, the signer, who attested, the log time, whether every artifact links provenance, and the resources declared. It does not fetch or verify the provenance statements.</p>
+  <p><code>packslip verify</code> reports the scheme, the signer, who attested, the log time, whether every artifact links provenance, the resources declared, and what each artifact requires of the host. It does not fetch or verify the provenance statements.</p>
 
   <h2 id="tooling">Tooling</h2>
   <p>The reference implementation is the <code>packslip</code> crate and binary in <a href="https://github.com/jdx/packslip">jdx/packslip</a>, also usable as a GitHub Action.</p>
   <ul>
-    <li>In a release job: <code>uses: jdx/packslip@v1</code> with <code>artifacts: dist/*</code> attests build provenance for the artifacts, signs the packslip keylessly, links the provenance from it, verifies the result, and uploads the bundle to the release. <code>bin</code> names the executables and <code>resources</code>, one <code>--resource</code> value per line, the rest. A monorepo runs the step once per tool with <code>project: github.com/owner/repo/&lt;tool&gt;</code>.</li>
+    <li>In a release job: <code>uses: jdx/packslip@v1</code> with <code>artifacts: dist/*</code> attests build provenance for the artifacts, signs the packslip keylessly, links the provenance from it, verifies the result, and uploads the bundle to the release. <code>bin</code> names the executables, <code>resources</code>, one <code>--resource</code> value per line, the rest, and <code>require</code>, one <code>--require</code> value per line, the commands they need. A monorepo runs the step once per tool with <code>project: github.com/owner/repo/&lt;tool&gt;</code>.</li>
     <li><code>packslip create --project NAME --version X --out dist --url-base URL --source-repo URL --tag vX --bin NAME artifact...</code> digests the artifacts, infers platforms from file names, and writes the signed bundle.
       <ul>
         <li>Platforms: <code>path:os/arch[/libc]</code> overrides what the file name implies; <code>path@variant</code> marks a second build of one platform.</li>
@@ -301,6 +316,7 @@
         <li>URLs: <code>--url FILENAME=URL</code> sets one artifact's or asset's URL.</li>
         <li>Metadata: <code>--notes-url</code>, <code>--sbom</code>, <code>--no-sha512</code>, <code>--extension NAME=JSON</code> for a release-level extension, and <code>--attested-by repackager</code> with <code>--evidence KIND[=DETAIL]</code>.</li>
         <li>Resources: <code>--resource KIND[/QUALIFIER]=SOURCE:VALUE</code>, as in <code>completion/zsh=archive:share/zsh/site-functions/_tool</code>, <code>completion/bash,zsh,fish=exec:tool completion {shell}</code>, <code>man=archive:man/man1/tool.1</code>, <code>cli-spec/usage=exec:tool usage</code>, <code>skill/NAME=repo:skills/tool</code>, <code>skill/NAME=asset:dist/tool-skill.tar.gz</code>, <code>desktop=archive:...</code>, <code>icon=archive:...</code>, or <code>app=archive:Tool.app</code>. A <code>cli-spec</code> describes the sole <code>--bin</code> unless named as <code>cli-spec/usage/NAME</code>. An <code>asset</code> is a local file digested into the subject; a file given as both an artifact and an asset is the asset.</li>
+        <li>Host requirements: <code>--require bin:NAME[@MIN]</code>, as in <code>--require bin:java@17</code>, for a command the executables need. What they load from the host is read from them and recorded as <code>libs</code>; <code>--no-libs</code> leaves the artifacts unopened.</li>
         <li>Signing: <code>--key release.key</code> signs with a key; <code>--no-log</code> skips Rekor.</li>
       </ul>
     </li>

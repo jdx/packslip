@@ -54,6 +54,14 @@ inputs:
       matched is treated as the asset, not an artifact).
     required: false
     default: ""
+  require:
+    description: >
+      Commands the executables need on PATH, one per line, each a `packslip
+      create --require` value: bin:NAME or bin:NAME@MIN, such as bin:java@17.
+      What the executables load from the host is read from them and needs
+      no input.
+    required: false
+    default: ""
   notes-url:
     description: URL of the release notes; defaults to the release page
     required: false
@@ -179,6 +187,7 @@ runs:
         IN_BIN: ${{ inputs.bin }}
         IN_VARIANTS: ${{ inputs.variants }}
         IN_RESOURCES: ${{ inputs.resources }}
+        IN_REQUIRE: ${{ inputs.require }}
         IN_NOTES_URL: ${{ inputs.notes-url }}
         IN_SBOM: ${{ inputs.sbom }}
         IN_EXTENSIONS: ${{ inputs.extensions }}
@@ -216,6 +225,9 @@ runs:
         while IFS= read -r line; do
           [ -n "$line" ] && args+=(--resource "$line")
         done <<< "$IN_RESOURCES"
+        while IFS= read -r line; do
+          [ -n "$line" ] && args+=(--require "$line")
+        done <<< "$IN_REQUIRE"
         [ -n "$IN_SBOM" ] && args+=(--sbom "$IN_SBOM")
         while IFS= read -r line; do
           [ -n "$line" ] && args+=(--extension "$line")

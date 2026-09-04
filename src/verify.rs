@@ -52,6 +52,11 @@ pub struct Verified {
     /// specs, ...), one label per entry, in document order.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub resources: Vec<String>,
+    /// What each artifact requires of the host, one line per artifact
+    /// that declares anything: `name: glibc>=2.31; libs libz.so.1; bin
+    /// java>=17`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub requires: Vec<String>,
 }
 
 /// What verifying a release list established.
@@ -217,6 +222,15 @@ pub fn verify(
                     r.label(),
                     r.source().map_or("?".to_string(), |s| s.to_string())
                 )
+            })
+            .collect(),
+        requires: statement
+            .predicate
+            .artifacts
+            .iter()
+            .filter_map(|a| {
+                let requires = a.requires.as_ref().filter(|r| !r.is_empty())?;
+                Some(format!("{}: {}", a.name, requires.summary()))
             })
             .collect(),
     })

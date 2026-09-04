@@ -5,8 +5,8 @@ use std::path::Path;
 
 use crate::model::{
     Artifact, Attestor, Bin, Digest, Envelope, Evidence, Extensions, Identity, PREDICATE_TYPE,
-    Predicate, RELEASES_PREDICATE_TYPE, ReleaseList, ReleaseListStatement, ReleaseRef, Requires,
-    Resource, STATEMENT_TYPE, Source, Statement, Subject,
+    Predicate, RELEASES_PREDICATE_TYPE, ReleaseList, ReleaseListStatement, ReleaseRef, RequiredBin,
+    Requires, Resource, STATEMENT_TYPE, Source, Statement, Subject,
 };
 
 /// What `create` needs.
@@ -35,6 +35,12 @@ pub struct Request<'a> {
     pub evidence: Vec<Evidence>,
     /// Also record sha512 digests.
     pub sha512: bool,
+    /// Commands the executables need on PATH, recorded on every artifact
+    /// that has executables.
+    pub requires_bin: Vec<RequiredBin>,
+    /// Open the artifacts and record the shared libraries their
+    /// executables load from the host as `requires.libs`.
+    pub read_executables: bool,
 }
 
 impl<'a> Request<'a> {
@@ -56,6 +62,8 @@ impl<'a> Request<'a> {
             attested_by: Attestor::Vendor,
             evidence: Vec::new(),
             sha512: true,
+            requires_bin: Vec::new(),
+            read_executables: true,
         }
     }
 }
@@ -120,6 +128,8 @@ pub enum Error {
     },
     #[error("{0}")]
     Invalid(#[from] crate::model::InvalidDocument),
+    #[error("{0}")]
+    Executables(#[from] crate::linkage::Error),
     #[error("{path}: not a packslip bundle: {why}")]
     NotAPackslip { path: String, why: String },
     #[error(
@@ -250,7 +260,7 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
                 .is_some_and(|(_, ext)| !ext.is_empty());
             (!has_extension && os.is_some()).then(|| "raw".to_string())
         });
-        let bin = input
+        let bin: Vec<Bin> = input
             .bin
             .iter()
             .map(|b| {
@@ -266,6 +276,24 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
                 .url_base
                 .map(|base| format!("{}/{name}", base.trim_end_matches('/')))
         });
+        let mut requires = input.requires.clone().unwrap_or_default();
+        if !bin.is_empty() {
+            for required in &request.requires_bin {
+                if !requires.bin.contains(required) {
+                    requires.bin.push(required.clone());
+                }
+            }
+            // What the executables load is read from them, so the document
+            // says what the bytes say. An artifact `create` cannot open, or
+            // an executable that is a script, records nothing.
+            if request.read_executables
+                && requires.libs.is_none()
+                && let Some(executables) =
+                    crate::linkage::read_executables(input.path, format.as_deref(), &bin)?
+            {
+                requires.libs = crate::linkage::host_libraries(&executables);
+            }
+        }
         let artifact = Artifact {
             url,
             name: name.clone(),
@@ -276,7 +304,7 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
             size: digests.size,
             format,
             bin,
-            requires: input.requires.clone(),
+            requires: (!requires.is_empty()).then_some(requires),
             provenance: input.provenance.clone(),
             extensions: input.extensions.clone(),
         };

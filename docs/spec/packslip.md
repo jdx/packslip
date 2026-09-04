@@ -111,7 +111,7 @@ prints them; so does `jq -r .dsseEnvelope.payload | base64 -d`.
         "url": "https://github.com/jdx/mise/releases/download/v2026.9.1/mise-v2026.9.1-linux-x64.tar.xz",
         "format": "tar.xz",
         "bin": ["mise/bin/mise"],
-        "requires": { "glibc_min": "2.31" },
+        "requires": { "glibc_min": "2.31", "libs": [] },
         "provenance": ["https://api.github.com/repos/jdx/mise/attestations/sha256:..."]
       }
     ],
@@ -158,9 +158,11 @@ Rules:
   bare executable. When the name to put on PATH differs from the file name,
   the entry is `{ "path": "bin/oxlint-x86_64", "name": "oxlint" }`.
   Windows entries carry their `.exe`.
-- `requires` states what the host needs: `os_min` in the OS's own terms
-  (`12` for macOS Monterey, `10.0.17763` for Windows) and `glibc_min` for a
-  `gnu` Linux build.
+- `requires` states what the host must already provide: `os_min` in the
+  OS's own terms (`12` for macOS Monterey, `10.0.17763` for Windows),
+  `glibc_min` for a `gnu` Linux build, `libs`, the shared libraries the
+  executables load, and `bin`, the commands they run. See Host
+  requirements.
 - `provenance` holds URLs of [SLSA build provenance](https://slsa.dev/spec/v1.0/provenance)
   statements for that artifact. The packslip proves the manifest; verified
   provenance proves the build, at whatever [SLSA build level](https://slsa.dev/spec/v1.0/levels)
@@ -244,6 +246,55 @@ An artifact with `bin` is something a command-line package manager
 installs. A release whose resources include `desktop` or `app` is something
 a desktop launcher installs. Many applications are both, and the entries say
 so without a category that would misfile them.
+
+### Host requirements
+
+An executable that installs cleanly and fails on first use, because a
+library or a program it expected is not there, is the failure a release
+manifest is well placed to prevent. `requires` says what the host must
+already provide, in names the operating system defines rather than names
+a package manager defines, so any consumer can check them without a
+registry. Beside `os_min` and `glibc_min`:
+
+- `libs` lists the shared libraries the executables load from the host,
+  each by the name the loader resolves: a soname on Linux and FreeBSD
+  (`libssl.so.3`, `libstdc++.so.6`), a DLL name on Windows
+  (`vcruntime140.dll`), the file name of a dylib on macOS
+  (`libssl.3.dylib`). It leaves out the C runtime and loader that `libc`
+  and `glibc_min` already describe (libc, libm, libdl, libpthread, librt,
+  libgcc_s, and the dynamic loader; `/usr/lib` and `/System/Library` on
+  macOS; the DLLs Windows ships), and any library the artifact carries
+  itself and finds through its own rpath. `packslip create` reads the
+  list from the executables named in `bin`, so it says what the bytes
+  say, and a consumer holding the artifact can read the same list; the
+  signed one lets it check before downloading. An empty list means the
+  executables were read and need nothing beyond the baseline. An absent
+  one means nothing was checked, as for an installer `create` does not
+  open or an executable that is a script.
+- `bin` lists the commands the executables run and cannot work without,
+  each a bare name as the executable invokes it (`java`, `python3`,
+  `git`; no directory, no `.exe`) with an optional `min`, the lowest
+  version that works, matched as a prefix on dot-separated components
+  like a requested version, so `17` means 17.0.0 and later. The vendor
+  declares these; nothing in a binary says it runs `java`. Only hard
+  requirements belong here; an optional integration goes under
+  `extensions`. A required command may not be one the release itself
+  provides.
+
+A consumer checks `requires` before installing and reports what is
+missing in its own terms: a distribution package for a soname, a tool it
+can install for a command. It fails on nothing it cannot check: a version
+it cannot read is a warning, not a refusal. Between two artifacts that
+fit the host, it prefers the one whose requirements the host meets.
+
+That is the boundary. `requires` names what the host must have, by names
+the OS itself resolves. It does not name other projects, versions of
+them, or where to get them: that needs a namespace only a registry has,
+and a package manager's install hints go under `extensions`. Two things
+this version leaves out on purpose, to be added if vendors need them: a
+`bin` entry satisfied by any of several commands (`terraform` or `tofu`),
+and a symbol version on a library (`libstdc++.so.6` at `GLIBCXX_3.4.29`),
+which `glibc_min` covers for libc alone.
 
 ### Extensions
 
@@ -474,7 +525,11 @@ then needed had no honest home.
    for them; rank by semver precedence.
 6. Select one artifact by os, arch, libc, format, and, when needed,
    variant. Refuse to guess between two artifacts that match.
-7. Take each resource from the most verifiable source offered, in the
+7. Check `requires` against the host before installing, and report a
+   missing library or command in your own terms. Fail on nothing you
+   cannot check. Between two artifacts that fit, prefer the one whose
+   requirements the host meets.
+8. Take each resource from the most verifiable source offered, in the
    order Resources gives; run an `exec` entry only if you have chosen to
    run vendor code at install time; ignore kinds you do not know.
 
@@ -497,8 +552,9 @@ one from `repo` by the commit; an `exec` entry by nothing beyond the
 executable it runs.
 
 `packslip verify` reports the scheme, the signer, who attested, the log
-time, whether every artifact links provenance, and the resources declared.
-It does not fetch or verify the provenance statements.
+time, whether every artifact links provenance, the resources declared, and
+what each artifact requires of the host. It does not fetch or verify the
+provenance statements.
 
 ## Tooling
 
@@ -509,8 +565,9 @@ Action.
 - In a release job: `uses: jdx/packslip@v1` with `artifacts: dist/*`
   attests build provenance for the artifacts, signs the packslip
   keylessly, links the provenance from it, verifies the result, and
-  uploads the bundle to the release. `bin` names the executables and
-  `resources`, one `--resource` value per line, the rest. A monorepo runs
+  uploads the bundle to the release. `bin` names the executables,
+  `resources`, one `--resource` value per line, the rest, and `require`,
+  one `--require` value per line, the commands they need. A monorepo runs
   the step once per tool with `project: github.com/owner/repo/<tool>`.
 - `packslip create --project NAME --version X --out dist --url-base URL
   --source-repo URL --tag vX --bin NAME artifact...` digests the artifacts,
@@ -532,6 +589,10 @@ Action.
     `cli-spec` describes the sole `--bin` unless named as
     `cli-spec/usage/NAME`. An `asset` is a local file digested into the
     subject; a file given as both an artifact and an asset is the asset.
+  - Host requirements: `--require bin:NAME[@MIN]`, as in
+    `--require bin:java@17`, for a command the executables need. What
+    they load from the host is read from them and recorded as `libs`;
+    `--no-libs` leaves the artifacts unopened.
   - Signing: `--key release.key` signs with a key; `--no-log` skips Rekor.
 - `packslip keygen -o release.key` writes an Ed25519 secret seed (mode
   0600) and `release.pub`.
