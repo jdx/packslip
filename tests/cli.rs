@@ -312,6 +312,14 @@ fn schemas_are_json() {
     assert_eq!(code, 0);
     let schema: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert!(schema["properties"]["predicate"].is_object(), "{out}");
+    let extensions = &schema["$defs"]["Predicate"]["properties"]["extensions"];
+    assert_eq!(extensions["type"], "object", "{extensions}");
+    assert!(
+        extensions
+            .get("additionalProperties")
+            .is_none_or(|p| p != false),
+        "{extensions}"
+    );
     let (code, out, _) = packslip(dir.path(), &["schema", "--releases"]);
     assert_eq!(code, 0);
     let schema: serde_json::Value = serde_json::from_str(&out).unwrap();
@@ -400,6 +408,10 @@ fn variants_urls_evidence_and_monorepo_names() {
             "oxlint_v1.0.0",
             "--published-at",
             "2026-09-01T00:00:00Z",
+            "--extension",
+            r#"example.com={"build_id":"20260901.3"}"#,
+            "--extension",
+            "mise=true",
             "oxlint-linux-x64.tar.gz",
             "oxlint-fips-linux-x64.tar.gz@fips",
             "oxlint-linux-arm64",
@@ -410,6 +422,28 @@ fn variants_urls_evidence_and_monorepo_names() {
         out.contains("wrote dist/packslip.oxlint.sigstore.json (3 artifact(s)"),
         "{out}"
     );
+    for bad in ["nojson", "=1", "mise=not json", "mise={}", "mise=1"] {
+        let args = [
+            "create",
+            "--project",
+            "github.com/oxc-project/oxc/oxlint",
+            "--version",
+            "1.0.0",
+            "--key",
+            "k.key",
+            "--no-log",
+            "--out",
+            "bad",
+            "--extension",
+            "mise={}",
+            "--extension",
+            bad,
+            "oxlint-linux-x64.tar.gz",
+        ];
+        let (code, _, err) = packslip(d, &args);
+        assert_ne!(code, 0, "{bad}");
+        assert!(err.contains("--extension"), "{bad}: {err}");
+    }
     let (code, out, err) = packslip(d, &["show", "dist/packslip.oxlint.sigstore.json"]);
     assert_eq!(code, 0, "{err}");
     let doc: serde_json::Value = serde_json::from_str(&out).unwrap();
@@ -423,6 +457,11 @@ fn variants_urls_evidence_and_monorepo_names() {
     assert!(doc["predicate"].get("prerelease").is_none());
     assert!(doc["predicate"].get("channel").is_none());
     assert_eq!(doc["predicate"]["source"]["tag"], "oxlint_v1.0.0");
+    assert_eq!(
+        doc["predicate"]["extensions"]["example.com"]["build_id"],
+        "20260901.3"
+    );
+    assert_eq!(doc["predicate"]["extensions"]["mise"], true);
     assert_eq!(
         doc["subject"][0]["digest"]["sha512"].as_str().map(str::len),
         Some(128)

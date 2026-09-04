@@ -7,8 +7,8 @@ use packslip::cli::{BinInfo, Version};
 use packslip::create::{ArtifactInput, AssetInput, ListRequest, ListedRelease, Request};
 use packslip::minisign::{PublicKey, SecretKey, key_id_hex};
 use packslip::model::{
-    Attestor, Bin, Evidence, RELEASES_PREDICATE_TYPE, ReleaseListStatement, Resource, Source,
-    Statement,
+    Attestor, Bin, Evidence, Extensions, RELEASES_PREDICATE_TYPE, ReleaseListStatement, Resource,
+    Source, Statement,
 };
 use packslip::sigstore::{self, Policy, Signer, Trust};
 use packslip::verify::Options;
@@ -321,6 +321,12 @@ struct Create {
     /// SBOM URL
     #[usage(long)]
     sbom: Option<String>,
+    /// Release-level extension as NAME=JSON, where NAME is who defines it
+    /// (a consumer such as mise, or a domain the vendor controls) and JSON
+    /// is its value. Example: 'example.com={"build_id":"20260901.3"}'
+    /// (repeatable)
+    #[usage(long)]
+    extension: Vec<String>,
     /// Executable inside every archive, as PATH or NAME=PATH (repeatable)
     #[usage(long)]
     bin: Vec<String>,
@@ -447,6 +453,19 @@ fn parse_evidence(spec: &str) -> Evidence {
     }
 }
 
+/// `NAME=JSON` for `--extension`.
+fn parse_extension(spec: &str) -> Result<(String, serde_json::Value)> {
+    let Some((name, json)) = spec.split_once('=') else {
+        bail!("--extension wants NAME=JSON, got {spec:?}");
+    };
+    if name.is_empty() {
+        bail!("--extension wants a NAME before the =, got {spec:?}");
+    }
+    let value = serde_json::from_str(json)
+        .wrap_err_with(|| format!("--extension {name}: the value is not JSON: {json:?}"))?;
+    Ok((name.to_string(), value))
+}
+
 impl RunWith<BinInfo> for Create {
     type Output = Result<()>;
 
@@ -465,6 +484,13 @@ impl RunWith<BinInfo> for Create {
                 bail!("--url wants FILENAME=URL, got {spec:?}");
             };
             urls.insert(name.to_string(), url.to_string());
+        }
+        let mut extensions = Extensions::new();
+        for spec in &self.extension {
+            let (name, value) = parse_extension(spec)?;
+            if extensions.insert(name.clone(), value).is_some() {
+                bail!("--extension {name:?} is given twice");
+            }
         }
         let bins: Vec<Bin> = self.bin.iter().map(|s| parse_bin(s)).collect();
         let parsed: Vec<ArtifactSpec> = self.artifacts.iter().map(|s| parse_spec(s)).collect();
@@ -487,6 +513,7 @@ impl RunWith<BinInfo> for Create {
                     bin: bins.clone(),
                     requires: None,
                     provenance: self.provenance.get(i).cloned().into_iter().collect(),
+                    extensions: Extensions::new(),
                 }
             })
             .collect();
@@ -535,6 +562,7 @@ impl RunWith<BinInfo> for Create {
             url_base: self.url_base.as_deref(),
             notes_url: self.notes_url.as_deref(),
             sbom: self.sbom.as_deref(),
+            extensions,
             attested_by,
             evidence: self.evidence.iter().map(|s| parse_evidence(s)).collect(),
             sha512: !self.no_sha512,

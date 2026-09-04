@@ -62,6 +62,14 @@ inputs:
     description: URL of an SBOM for the release
     required: false
     default: ""
+  extensions:
+    description: >
+      Release-level extensions, one per line, each a `packslip create
+      --extension` value: NAME=JSON, where NAME is who defines the value (a
+      consumer such as mise, or a domain the vendor controls) and JSON is
+      the value, such as example.com={"build_id":"20260901.3"}.
+    required: false
+    default: ""
   attest:
     description: >
       Also attest SLSA build provenance for every artifact with
@@ -173,6 +181,7 @@ runs:
         IN_RESOURCES: ${{ inputs.resources }}
         IN_NOTES_URL: ${{ inputs.notes-url }}
         IN_SBOM: ${{ inputs.sbom }}
+        IN_EXTENSIONS: ${{ inputs.extensions }}
         IN_ATTEST: ${{ inputs.attest }}
         IN_OUT: ${{ inputs.out }}
         REPO: ${{ github.repository }}
@@ -208,6 +217,9 @@ runs:
           [ -n "$line" ] && args+=(--resource "$line")
         done <<< "$IN_RESOURCES"
         [ -n "$IN_SBOM" ] && args+=(--sbom "$IN_SBOM")
+        while IFS= read -r line; do
+          [ -n "$line" ] && args+=(--extension "$line")
+        done <<< "$IN_EXTENSIONS"
         mapfile -t files < "${RUNNER_TEMP}/packslip-files"
         if [ "$IN_ATTEST" = true ]; then
           # GitHub serves each artifact's provenance at the attestations API

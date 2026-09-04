@@ -58,6 +58,9 @@ Digests every artifact, infers os/arch/libc/format from file names (override wit
     flag --sbom help="SBOM URL" {
         arg <SBOM>
     }
+    flag --extension help="Release-level extension as NAME=JSON, where NAME is who defines it (a consumer such as mise, or a domain the vendor controls) and JSON is its value. Example: 'example.com={\"build_id\":\"20260901.3\"}' (repeatable)" var=#true {
+        arg <EXTENSION>
+    }
     flag --bin help="Executable inside every archive, as PATH or NAME=PATH (repeatable)" var=#true {
         arg <BIN>
     }

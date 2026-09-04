@@ -9,6 +9,13 @@ pub const STATEMENT_TYPE: &str = "https://in-toto.io/Statement/v1";
 pub const PREDICATE_TYPE: &str = "https://packslip.dev/release/v1";
 pub const RELEASES_PREDICATE_TYPE: &str = "https://packslip.dev/releases/v1";
 
+/// What the specification has no field for, keyed by who defines it: a
+/// consumer by its name (`mise`), a vendor by a domain it controls
+/// (`example.com`). packslip assigns no meaning to anything inside, so a
+/// key here never collides with a field a later revision adds. The
+/// signature covers it like everything else.
+pub type Extensions = serde_json::Map<String, serde_json::Value>;
+
 /// An in-toto statement carrying predicate `P`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Envelope<P> {
@@ -77,6 +84,10 @@ pub struct Predicate {
     pub notes_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sbom: Option<String>,
+    /// Vendor- or consumer-defined data about the release. See
+    /// [`Extensions`].
+    #[serde(default, skip_serializing_if = "Extensions::is_empty")]
+    pub extensions: Extensions,
 }
 
 /// Who signed the claim.
@@ -173,6 +184,10 @@ pub struct Artifact {
     /// URLs of build provenance statements (SLSA) for this artifact.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub provenance: Vec<String>,
+    /// Vendor- or consumer-defined data about this artifact. See
+    /// [`Extensions`].
+    #[serde(default, skip_serializing_if = "Extensions::is_empty")]
+    pub extensions: Extensions,
 }
 
 /// An executable inside an artifact. Serialises as the bare path when the
@@ -291,6 +306,10 @@ pub struct Resource {
     /// a `bin` name. A consumer may decline to run it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exec: Vec<String>,
+    /// Vendor- or consumer-defined data about this resource. See
+    /// [`Extensions`].
+    #[serde(default, skip_serializing_if = "Extensions::is_empty")]
+    pub extensions: Extensions,
 }
 
 /// Where a resource comes from, in order of how much a consumer can
@@ -438,6 +457,10 @@ pub struct ReleaseList {
     pub identity: Identity,
     /// In any order; consumers rank by semver precedence.
     pub releases: Vec<ReleaseRef>,
+    /// Vendor- or consumer-defined data about the list. See
+    /// [`Extensions`].
+    #[serde(default, skip_serializing_if = "Extensions::is_empty")]
+    pub extensions: Extensions,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -458,6 +481,10 @@ pub struct ReleaseRef {
     /// may shorten for it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub security: bool,
+    /// Vendor- or consumer-defined data about this release. See
+    /// [`Extensions`].
+    #[serde(default, skip_serializing_if = "Extensions::is_empty")]
+    pub extensions: Extensions,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -550,6 +577,16 @@ pub enum InvalidDocument {
     OrphanRelease(String),
     #[error("expires_at is not after generated_at")]
     Expiry,
+    #[error("{0} has an extension with an empty key")]
+    ExtensionKey(String),
+}
+
+/// Extension keys name who defines them, so an empty one is a mistake.
+fn check_extensions(owner: &str, extensions: &Extensions) -> Result<(), InvalidDocument> {
+    if extensions.contains_key("") {
+        return Err(InvalidDocument::ExtensionKey(owner.to_string()));
+    }
+    Ok(())
 }
 
 fn check_timestamp(field: &'static str, value: &str) -> Result<jiff::Timestamp, InvalidDocument> {
@@ -628,11 +665,16 @@ impl Statement {
         if p.artifacts.is_empty() {
             return Err(InvalidDocument::NoArtifacts);
         }
+        check_extensions("the release", &p.extensions)?;
         let mut seen = std::collections::BTreeSet::new();
         for artifact in &p.artifacts {
             if !seen.insert(artifact.name.as_str()) {
                 return Err(InvalidDocument::DuplicateArtifact(artifact.name.clone()));
             }
+            check_extensions(
+                &format!("artifact {:?}", artifact.name),
+                &artifact.extensions,
+            )?;
             if !self.subject.iter().any(|s| s.name == artifact.name) {
                 return Err(InvalidDocument::OrphanArtifact(artifact.name.clone()));
             }
@@ -661,6 +703,7 @@ impl Statement {
             if resource.kind.is_empty() {
                 return Err(InvalidDocument::ResourceKind);
             }
+            check_extensions(&format!("resource {label:?}"), &resource.extensions)?;
             let Some(source) = resource.source() else {
                 return Err(InvalidDocument::ResourceSource(label));
             };
@@ -788,12 +831,17 @@ impl ReleaseListStatement {
         if p.releases.is_empty() {
             return Err(InvalidDocument::NoReleases);
         }
+        check_extensions("the release list", &p.extensions)?;
         let mut seen = std::collections::BTreeSet::new();
         for release in &p.releases {
             parse_version(&release.version)?;
             if !seen.insert(release.version.as_str()) {
                 return Err(InvalidDocument::DuplicateRelease(release.version.clone()));
             }
+            check_extensions(
+                &format!("release {:?}", release.version),
+                &release.extensions,
+            )?;
             check_timestamp("published_at", &release.published_at)?;
             if self.digest_of(&release.packslip).is_none() {
                 return Err(InvalidDocument::OrphanRelease(release.version.clone()));
@@ -916,6 +964,7 @@ mod tests {
                     bin: vec![Bin::new("mise/bin/mise")],
                     requires: None,
                     provenance: vec![],
+                    extensions: Extensions::new(),
                 }],
                 resources: vec![],
                 identity: Identity {
@@ -927,6 +976,7 @@ mod tests {
                 evidence: vec![],
                 notes_url: None,
                 sbom: None,
+                extensions: Extensions::new(),
             },
         }
     }
@@ -958,6 +1008,7 @@ mod tests {
                     packslip: "https://dl.example/2026.9.1/packslip.sigstore.json".into(),
                     ..ReleaseRef::default()
                 }],
+                extensions: Extensions::new(),
             },
         }
     }
@@ -1410,6 +1461,66 @@ mod tests {
         }
         assert_eq!(project_host("github.com/jdx/mise"), "github.com");
         assert_eq!(sample().project_host(), "github.com");
+    }
+
+    #[test]
+    fn extensions_round_trip_and_unknown_fields_are_ignored() {
+        let mut doc = serde_json::to_value(sample()).unwrap();
+        doc["predicate"]["extensions"] =
+            serde_json::json!({ "mise": { "postinstall": "mise reshim" } });
+        doc["predicate"]["artifacts"][0]["extensions"] =
+            serde_json::json!({ "example.com": { "build_id": "20260901.3" } });
+        // A field this revision does not define is tolerated, not kept.
+        doc["predicate"]["future_field"] = serde_json::json!(true);
+        let parsed: Statement = serde_json::from_value(doc).unwrap();
+        parsed.validate().unwrap();
+        assert_eq!(
+            parsed.predicate.extensions["mise"]["postinstall"],
+            "mise reshim"
+        );
+        assert_eq!(
+            parsed.predicate.artifacts[0].extensions["example.com"]["build_id"],
+            "20260901.3"
+        );
+        let again: serde_json::Value = serde_json::to_value(&parsed).unwrap();
+        assert_eq!(
+            again["predicate"]["extensions"]["mise"]["postinstall"],
+            "mise reshim"
+        );
+        assert!(again["predicate"].get("future_field").is_none());
+        // Nothing declared, nothing written.
+        let bare = serde_json::to_value(sample()).unwrap();
+        assert!(bare["predicate"].get("extensions").is_none());
+        assert!(
+            bare["predicate"]["artifacts"][0]
+                .get("extensions")
+                .is_none()
+        );
+
+        let mut doc = sample();
+        doc.predicate
+            .extensions
+            .insert("".into(), serde_json::json!(1));
+        assert_eq!(
+            doc.validate(),
+            Err(InvalidDocument::ExtensionKey("the release".into()))
+        );
+        let mut doc = sample();
+        doc.predicate.artifacts[0]
+            .extensions
+            .insert("".into(), serde_json::json!(1));
+        assert!(matches!(
+            doc.validate(),
+            Err(InvalidDocument::ExtensionKey(_))
+        ));
+        let mut list = sample_list();
+        list.predicate.releases[0]
+            .extensions
+            .insert("".into(), serde_json::json!(1));
+        assert!(matches!(
+            list.validate(),
+            Err(InvalidDocument::ExtensionKey(_))
+        ));
     }
 
     #[test]

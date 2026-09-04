@@ -88,6 +88,12 @@ completions, a man page, and docs with its own tooling. Desktop
 applications add `desktop`, `icon`, and `app` entries; there is no CLI or
 GUI type, since the entries say which a release is.
 
+Anything the spec has no field for goes under `extensions`, keyed by who
+defines it: `--extension 'example.com={"build_id":"20260901.3"}'` for the
+vendor's own data, or a consumer's name such as `mise` for hints that
+consumer documents. packslip never assigns meaning to a key there, so it
+cannot collide with a field a later revision adds.
+
 ## Layout
 
 - `src/`, `tests/` — the `packslip` crate: schema, generator, verifier.

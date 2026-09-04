@@ -24,6 +24,7 @@
     <li><a href="#document">The release statement</a></li>
     <li><a href="#fields">Field reference</a></li>
     <li><a href="#resources">Resources</a></li>
+    <li><a href="#extensions">Extensions</a></li>
     <li><a href="#repackager">Repackager attestation</a></li>
     <li><a href="#signing">Signing</a></li>
     <li><a href="#discovery">Discovery</a></li>
@@ -113,6 +114,7 @@
     <li><code>provenance</code> holds URLs of SLSA build provenance statements for that artifact. The packslip proves the manifest; verified provenance proves the build, at whatever SLSA build level its builder establishes.</li>
     <li><code>resources</code> lists what the release ships besides its executables, each entry a <code>kind</code> and one source. See <a href="#resources">Resources</a>.</li>
     <li><code>notes_url</code> points at the release notes. <code>sbom</code> points at a software bill of materials for the release.</li>
+    <li><code>extensions</code> carries what the specification has no field for, keyed by who defines it. See <a href="#extensions">Extensions</a>.</li>
     <li><code>identity</code> says how the document is signed and by whom, so a consumer can check what it pinned against what it received. For <code>sigstore-oidc</code>, <code>key_id</code> is the certificate's subject identity (a workflow URI for CI, an email for a person) and <code>issuer</code> the OIDC issuer. For <code>sigstore-key</code>, <code>key_id</code> is the key id in uppercase hex.</li>
     <li><code>attested_by</code> is <code>vendor</code> (default) or <code>repackager</code>. See below.</li>
   </ul>
@@ -147,6 +149,7 @@
       <tr><td><code>artifacts[].bin[]</code></td><td>array of string or object</td><td><span class="opt">optional</span></td><td>Executables inside the artifact: a path, or <code>{ path, name }</code> when the PATH name differs.</td></tr>
       <tr><td><code>artifacts[].requires</code></td><td>object</td><td><span class="opt">optional</span></td><td><code>os_min</code> and <code>glibc_min</code>.</td></tr>
       <tr><td><code>artifacts[].provenance[]</code></td><td>array of string</td><td><span class="opt">optional</span></td><td>URLs of SLSA build provenance statements for this artifact.</td></tr>
+      <tr><td><code>artifacts[].extensions</code></td><td>object</td><td><span class="opt">optional</span></td><td>Vendor- or consumer-defined data about this artifact. See <a href="#extensions">Extensions</a>.</td></tr>
       <tr><td><code>predicate.resources[]</code></td><td>array of object</td><td><span class="opt">optional</span></td><td>What ships besides the executables. See <a href="#resources">Resources</a>.</td></tr>
       <tr><td><code>resources[].kind</code></td><td>string</td><td><span class="req">required</span></td><td><code>completion</code>, <code>man</code>, <code>cli-spec</code>, <code>skill</code>, <code>desktop</code>, <code>icon</code>, <code>app</code>, or a kind consumers may not know yet.</td></tr>
       <tr><td><code>resources[].archive</code></td><td>string</td><td><span class="opt">one source</span></td><td>Path inside the selected artifact, relative to the archive root.</td></tr>
@@ -159,6 +162,7 @@
       <tr><td><code>resources[].format</code></td><td>string</td><td><span class="opt">cli-spec</span></td><td>The spec format. <code>usage</code> is documented.</td></tr>
       <tr><td><code>resources[].bin</code></td><td>string</td><td><span class="opt">cli-spec</span></td><td>The executable the spec describes, by its <code>bin</code> name.</td></tr>
       <tr><td><code>resources[].name</code></td><td>string</td><td><span class="opt">skill</span></td><td>The skill's name.</td></tr>
+      <tr><td><code>resources[].extensions</code></td><td>object</td><td><span class="opt">optional</span></td><td>Vendor- or consumer-defined data about this resource. See <a href="#extensions">Extensions</a>.</td></tr>
       <tr><td><code>predicate.identity.scheme</code></td><td>string</td><td><span class="req">required</span></td><td><code>sigstore-oidc</code> or <code>sigstore-key</code>.</td></tr>
       <tr><td><code>predicate.identity.key_id</code></td><td>string</td><td><span class="req">required</span></td><td>The certificate identity, or the key id in uppercase hex.</td></tr>
       <tr><td><code>predicate.identity.issuer</code></td><td>string</td><td><span class="opt">optional</span></td><td>The OIDC issuer, for <code>sigstore-oidc</code>.</td></tr>
@@ -166,6 +170,7 @@
       <tr><td><code>predicate.evidence[]</code></td><td>array of object</td><td><span class="opt">optional</span></td><td>What a repackager checked: <code>{ kind, detail }</code>.</td></tr>
       <tr><td><code>predicate.notes_url</code></td><td>string</td><td><span class="opt">optional</span></td><td>URL of the release notes.</td></tr>
       <tr><td><code>predicate.sbom</code></td><td>string</td><td><span class="opt">optional</span></td><td>URL of a software bill of materials for the release.</td></tr>
+      <tr><td><code>predicate.extensions</code></td><td>object</td><td><span class="opt">optional</span></td><td>Vendor- or consumer-defined data about the release, keyed by who defines it. See <a href="#extensions">Extensions</a>.</td></tr>
     </tbody>
   </table>
   </div>
@@ -190,6 +195,15 @@
   </ul>
   <p>For any one need, a consumer takes the first source it can use in the order above: an <code>archive</code> or <code>asset</code> entry, then <code>repo</code>, then one derived from a <code>cli-spec</code>, and only then <code>exec</code>. It ignores kinds and sources it does not know, so a vendor may ship a <code>font</code> or a kind of its own before the specification names it.</p>
   <p>An artifact with <code>bin</code> is something a command-line package manager installs. A release whose resources include <code>desktop</code> or <code>app</code> is something a desktop launcher installs. Many applications are both, and the entries say so without a category that would misfile them.</p>
+
+  <h2 id="extensions">Extensions</h2>
+  <p>A vendor or a consumer sometimes has something to say that the specification has no field for: a package manager's install hints, a Homebrew tap, an end-of-life date, a build id. It goes in <code>extensions</code>, an object that the release predicate, each artifact, each resource, the release-list predicate, and each release entry may carry:</p>
+<pre><code>"extensions": {
+  "mise": { "postinstall": "mise reshim" },
+  "example.com": { "build_id": "20260901.3" }
+}</code></pre>
+  <p>Each key names the party that defines its value: a consumer by its name (<code>mise</code>, <code>pacvamp</code>), a vendor by a domain it controls (<code>example.com</code>). The value is whatever that party documents. packslip assigns no meaning to anything under <code>extensions</code> and never will, so nothing put there can collide with a field a later revision adds. The signature covers it like everything else, and <code>packslip show</code> prints it unchanged. A consumer reads the keys it defines and ignores the rest.</p>
+  <p>Everywhere else, a consumer ignores fields it does not know, so a later revision of this version can add fields without breaking older consumers. A vendor does not use that room for its own data: a field it invents may be claimed by a later revision with another meaning, while a key under <code>extensions</code> never is. Something many vendors put under <code>extensions</code> is a candidate for a field of its own; when that happens the extension key keeps working beside it.</p>
 
   <h2 id="repackager">Repackager attestation</h2>
   <p>A repository or mirror that redistributes a vendor's artifacts, and whose vendor publishes no packslip, may sign one itself with <code>"attested_by": "repackager"</code>. The <code>project</code> still names the vendor's project and the artifacts are still the vendor's files, but <code>identity</code> is the repackager's, and <code>evidence</code> says what it checked before signing:</p>
@@ -283,7 +297,7 @@
         <li>Platforms: <code>path:os/arch[/libc]</code> overrides what the file name implies; <code>path@variant</code> marks a second build of one platform.</li>
         <li>Executables: <code>--bin NAME=PATH</code> when the name on PATH differs from the file.</li>
         <li>URLs: <code>--url FILENAME=URL</code> sets one artifact's or asset's URL.</li>
-        <li>Metadata: <code>--notes-url</code>, <code>--no-sha512</code>, and <code>--attested-by repackager</code> with <code>--evidence KIND[=DETAIL]</code>.</li>
+        <li>Metadata: <code>--notes-url</code>, <code>--sbom</code>, <code>--no-sha512</code>, <code>--extension NAME=JSON</code> for a release-level extension, and <code>--attested-by repackager</code> with <code>--evidence KIND[=DETAIL]</code>.</li>
         <li>Resources: <code>--resource KIND[/QUALIFIER]=SOURCE:VALUE</code>, as in <code>completion/zsh=archive:share/zsh/site-functions/_tool</code>, <code>completion/bash,zsh,fish=exec:tool completion {shell}</code>, <code>man=archive:man/man1/tool.1</code>, <code>cli-spec/usage=exec:tool usage</code>, <code>skill/NAME=repo:skills/tool</code>, <code>skill/NAME=asset:dist/tool-skill.tar.gz</code>, <code>desktop=archive:...</code>, <code>icon=archive:...</code>, or <code>app=archive:Tool.app</code>. A <code>cli-spec</code> describes the sole <code>--bin</code> unless named as <code>cli-spec/usage/NAME</code>. An <code>asset</code> is a local file digested into the subject; a file given as both an artifact and an asset is the asset.</li>
         <li>Signing: <code>--key release.key</code> signs with a key; <code>--no-log</code> skips Rekor.</li>
       </ul>

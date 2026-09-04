@@ -4,9 +4,9 @@
 use std::path::Path;
 
 use crate::model::{
-    Artifact, Attestor, Bin, Digest, Envelope, Evidence, Identity, PREDICATE_TYPE, Predicate,
-    RELEASES_PREDICATE_TYPE, ReleaseList, ReleaseListStatement, ReleaseRef, Requires, Resource,
-    STATEMENT_TYPE, Source, Statement, Subject,
+    Artifact, Attestor, Bin, Digest, Envelope, Evidence, Extensions, Identity, PREDICATE_TYPE,
+    Predicate, RELEASES_PREDICATE_TYPE, ReleaseList, ReleaseListStatement, ReleaseRef, Requires,
+    Resource, STATEMENT_TYPE, Source, Statement, Subject,
 };
 
 /// What `create` needs.
@@ -27,6 +27,8 @@ pub struct Request<'a> {
     pub url_base: Option<&'a str>,
     pub notes_url: Option<&'a str>,
     pub sbom: Option<&'a str>,
+    /// Release-level extensions, keyed by who defines them.
+    pub extensions: Extensions,
     /// Who will sign the document.
     pub identity: Identity,
     pub attested_by: Attestor,
@@ -49,6 +51,7 @@ impl<'a> Request<'a> {
             url_base: None,
             notes_url: None,
             sbom: None,
+            extensions: Extensions::new(),
             identity,
             attested_by: Attestor::Vendor,
             evidence: Vec::new(),
@@ -71,6 +74,8 @@ pub struct ArtifactInput<'a> {
     pub bin: Vec<Bin>,
     pub requires: Option<Requires>,
     pub provenance: Vec<String>,
+    /// Artifact-level extensions, keyed by who defines them.
+    pub extensions: Extensions,
 }
 
 impl<'a> ArtifactInput<'a> {
@@ -85,6 +90,7 @@ impl<'a> ArtifactInput<'a> {
             bin: Vec::new(),
             requires: None,
             provenance: Vec::new(),
+            extensions: Extensions::new(),
         }
     }
 }
@@ -272,6 +278,7 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
             bin,
             requires: input.requires.clone(),
             provenance: input.provenance.clone(),
+            extensions: input.extensions.clone(),
         };
         if let (Some(_), Some(_), Some(_)) = (&artifact.os, &artifact.arch, &artifact.format)
             && let Some(other) = artifacts.iter().find(|a| {
@@ -377,6 +384,7 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
             evidence: request.evidence.clone(),
             notes_url: request.notes_url.map(str::to_string),
             sbom: request.sbom.map(str::to_string),
+            extensions: request.extensions.clone(),
         },
     };
     statement.validate()?;
@@ -479,6 +487,7 @@ pub fn create_release_list(request: &ListRequest<'_>) -> Result<CreatedList, Err
                 .then_some(crate::model::ReleaseStatus::Yanked),
             status_reason: listed.yanked.clone(),
             security: listed.security,
+            extensions: Extensions::new(),
         });
     }
     let statement = Envelope {
@@ -492,6 +501,7 @@ pub fn create_release_list(request: &ListRequest<'_>) -> Result<CreatedList, Err
             sequence: request.sequence,
             identity: request.identity.clone(),
             releases,
+            extensions: Extensions::new(),
         },
     };
     statement.validate()?;

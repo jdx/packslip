@@ -27,6 +27,7 @@ Digests every artifact, infers os/arch/libc/format from file names (override wit
 - **`--published-at <PUBLISHED_AT>`** — RFC 3339 publish time; defaults to now
 - **`--notes-url <NOTES_URL>`** — URL of the release notes
 - **`--sbom <SBOM>`** — SBOM URL
+- **`--extension <EXTENSION>`** — Release-level extension as NAME=JSON, where NAME is who defines it (a consumer such as mise, or a domain the vendor controls) and JSON is its value. Example: 'example.com={"build_id":"20260901.3"}' (repeatable)
 - **`--bin <BIN>`** — Executable inside every archive, as PATH or NAME=PATH (repeatable)
 - **`--resource <RESOURCE>`** — Something else the release ships, as KIND[/QUALIFIER]=SOURCE:VALUE where SOURCE is archive (a path inside every archive), asset (a separate release file, by local path), repo (a path at --commit), or exec (a command whose stdout is the file). Kinds: completion/SHELL (or completion/SHELL,SHELL with exec and a {shell} placeholder), man, cli-spec/FORMAT[/BIN], skill/NAME, desktop, icon, app. Example: 'completion/zsh=archive:share/zsh/site-functions/_tool' (repeatable)
 - **`--provenance <PROVENANCE>`** — Provenance URL for every artifact (repeatable, positional order)
