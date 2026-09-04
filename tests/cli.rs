@@ -1089,7 +1089,8 @@ fn resources_and_assets() {
 }
 
 /// An archive member: `(path, Some(bytes), None)` for a file,
-/// `(path, None, Some(target))` for a symbolic link.
+/// `(path, None, Some(target))` for a symbolic link, or a hard link when
+/// the target starts with `hard:`.
 type TarMember<'a> = (&'a str, Option<&'a [u8]>, Option<&'a str>);
 
 fn tar_gz(path: &std::path::Path, members: &[TarMember<'_>]) {
@@ -1106,7 +1107,11 @@ fn tar_gz(path: &std::path::Path, members: &[TarMember<'_>]) {
                 tar.append_data(&mut header, name, *bytes).unwrap();
             }
             (None, Some(target)) => {
-                header.set_entry_type(tar::EntryType::Symlink);
+                let (kind, target) = match target.strip_prefix("hard:") {
+                    Some(target) => (tar::EntryType::Link, target),
+                    None => (tar::EntryType::Symlink, *target),
+                };
+                header.set_entry_type(kind);
                 header.set_size(0);
                 header.set_mode(0o777);
                 header.set_cksum();
@@ -1157,6 +1162,18 @@ fn host_requirements_are_read_and_declared() {
             ("./tool-1.0/lib/libz.so.1", Some(b"not really"), None),
         ],
     );
+    // A hard link's target is a path from the archive root.
+    tar_gz(
+        &d.join("tool-freebsd-x64.tar.gz"),
+        &[
+            ("tool-1.0/libexec/tool-real", Some(&elf), None),
+            (
+                "tool-1.0/bin/tool",
+                None,
+                Some("hard:tool-1.0/libexec/tool-real"),
+            ),
+        ],
+    );
     // A script records nothing.
     tar_gz(
         &d.join("tool-darwin-arm64.tar.gz"),
@@ -1191,6 +1208,7 @@ fn host_requirements_are_read_and_declared() {
         "tool-darwin-arm64.tar.gz",
         "tool-windows-x64.zip",
         "tool-linux-riscv64",
+        "tool-freebsd-x64.tar.gz",
     ];
     let create = |extra: &[&str]| {
         let mut args = base.to_vec();
@@ -1240,6 +1258,11 @@ fn host_requirements_are_read_and_declared() {
     assert_eq!(arts[4]["format"], "raw");
     assert_eq!(
         arts[4]["requires"]["libs"],
+        serde_json::json!(["libz.so.1"])
+    );
+    assert_eq!(arts[5]["os"], "freebsd");
+    assert_eq!(
+        arts[5]["requires"]["libs"],
         serde_json::json!(["libz.so.1"])
     );
 

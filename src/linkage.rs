@@ -394,12 +394,21 @@ fn read_tar(path: &Path, format: &str, wanted: &[String]) -> Result<Option<Execu
             };
             let member_path = archive::normalize(&entry_path.to_string_lossy());
             let kind = entry.header().entry_type();
-            let link = if kind.is_symlink() || kind.is_hard_link() {
+            // A symbolic link's target is relative to the link; a hard
+            // link's is another member's path from the archive root, so it
+            // is marked absolute for `resolve_link`.
+            let link = if kind.is_symlink() {
                 entry
                     .link_name()
                     .ok()
                     .flatten()
                     .map(|t| t.to_string_lossy().into_owned())
+            } else if kind.is_hard_link() {
+                entry
+                    .link_name()
+                    .ok()
+                    .flatten()
+                    .map(|t| format!("/{}", archive::normalize(&t.to_string_lossy())))
             } else {
                 None
             };
