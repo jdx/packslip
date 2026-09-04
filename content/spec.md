@@ -269,6 +269,7 @@ Windows installer.
 | `artifacts[].provenance[]` | array of string | optional | URLs of SLSA build provenance statements for this artifact. |
 | `predicate.resources[]` | array of object | optional | What ships besides the executables. See Resources. |
 | `resources[].kind` | string | required | `completion`, `man`, `cli-spec`, `skill`, `sbom`, `desktop`, `icon`, `app`, or a kind consumers may not know yet. |
+| `resources[].artifact` | string | optional | Exact artifact filename. Limits this resource to that artifact and outranks platform-only scope. |
 | `resources[].os`, `arch`, `libc` | string | optional | Limit the entry to artifacts of that platform, when layouts differ. |
 | `resources[].archive` | string | one source | Path inside the selected artifact, from the archive root. |
 | `resources[].asset` | string | one source | Name of a separate release file, listed in `subject` with its digest. |
@@ -317,7 +318,16 @@ prefers them in this order:
 Layouts differ by platform more often than by file, so an entry may carry
 `os`, `arch`, or `libc` to say which artifacts it describes; an entry
 without them describes every artifact. A resource applies to the selected
-artifact when each field it carries equals the artifact's.
+artifact when each field it carries equals the artifact's. An entry may
+also name `artifact`, the exact filename in `artifacts`, when archives for
+the same platform have different layouts or a resource belongs to one
+variant. That artifact must exist and match any platform scope on the
+entry. An artifact-specific entry outranks every platform-only entry for
+the same resource; among equally scoped entries the platform specificity
+and source ordering below apply. For example, a man page inside
+`tool-linux-x64.tar.xz` can name that artifact without claiming the bare
+`tool-linux-x64` executable holds a man page. A TOML manifest spells this
+as `artifact = "tool-linux-x64.tar.xz"` inside `[[resource]]`.
 
 Entries compete only with entries for the same thing. Two entries are for
 the same thing when they share a `kind` and an identity: `bin` and
