@@ -892,6 +892,9 @@ struct Releases {
     /// Increases with every list published
     #[usage(long)]
     sequence: u64,
+    /// Recommend this exact listed version for unconstrained latest requests
+    #[usage(long)]
+    latest: Option<String>,
     /// How long the list stays current: 30d, 12h, 2w
     #[usage(long, default = "30d")]
     valid_for: String,
@@ -980,6 +983,7 @@ impl RunWith<BinInfo> for Releases {
             generated_at: self.generated_at.as_deref(),
             valid_for: parse_duration(&self.valid_for)?,
             sequence: self.sequence,
+            latest: self.latest.as_deref(),
             releases,
             identity: signer.identity(),
         })?;

@@ -628,6 +628,8 @@ fn variants_urls_evidence_and_monorepo_names() {
             "releases",
             "--project",
             "packages.example.com/tool",
+            "--latest",
+            "2.0.0",
             "--sequence",
             "1",
             "--release",
@@ -660,6 +662,7 @@ fn variants_urls_evidence_and_monorepo_names() {
     let (code, out, _) = packslip(d, &["show", "list.sigstore.json"]);
     assert_eq!(code, 0);
     let list: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(list["predicate"]["latest"], "2.0.0");
     assert_eq!(list["predicate"]["releases"][0]["status"], "yanked");
     assert_eq!(
         list["predicate"]["releases"][0]["status_reason"],

@@ -10,6 +10,7 @@ For a project on its own domain: lists released packslips with their digests so 
 ## Flags
 - **`--project <PROJECT>`** — The project's name, which every listed packslip must carry
 - **`--sequence <SEQUENCE>`** — Increases with every list published
+- **`--latest <LATEST>`** — Recommend this exact listed version for unconstrained latest requests
 - **`--valid-for <VALID_FOR>`** — How long the list stays current: 30d, 12h, 2w
 
   **Default:** `30d`

@@ -633,6 +633,7 @@ A signed list is a bundle of the same shape as a packslip, with the
     "generated_at": "2026-09-01T12:00:00Z",
     "expires_at": "2026-10-01T12:00:00Z",
     "sequence": 42,
+    "latest": "2026.9.1",
     "identity": { "scheme": "sigstore-key", "key_id": "5A0A0B8B9C6D7E1F" },
     "releases": [
       { "version": "2026.9.1", "tag": "v2026.9.1", "published_at": "2026-09-01T12:00:00Z",
@@ -659,7 +660,13 @@ spells it, and `published_at`, copied from the packslip. It may carry
 someone other than the vendor, `evidence` saying what the publisher
 checked. A consumer never selects a yanked release, warns when it holds
 one, and may shorten its minimum release age for a security release.
-Nothing else about a release lives on the list: its version says the rest.
+The optional list-level `latest` is the vendor's recommended default, as
+an exact semver string matching an entry's `version`, including any build
+metadata. It is not a tag, range, or per-release flag. A pointer to a
+version absent from the list makes the list invalid. Its target may be
+yanked or otherwise ineligible; that does not invalidate the list, and
+Latest below defines the fallback. `packslip releases --latest 2.8.4`
+sets it. Omitting the option omits the pointer.
 
 The list is published at
 
@@ -717,8 +724,9 @@ It is signed by the same identity the packslips are, and it is
 supplementary: a version it names is taken as it says, yanked or flagged,
 and pinned to the packslip digest it gives; a version it omits still comes
 from the endpoint. So a vendor touches it only to withdraw a release, to
-mark a security fix, or to list a release whose tag names no version, and
-a vendor that never needs those never writes it. Withdrawing a release
+mark a security fix, recommend a default with `latest`, or list a release
+whose tag names no version, and a vendor that never needs those never
+writes it. Withdrawing a release
 this way works on a repository with immutable releases, where the release
 and its packslip cannot be deleted.
 
@@ -774,11 +782,11 @@ One required scheme is what lets everything about a release follow from
 its signed version string, with no flag anywhere that could disagree with
 it:
 
-- Order is semver precedence. "Latest" is the highest eligible version, so
-  a backport such as 20.19.1 published after 22.0.0 never masquerades as
-  the newest release, and range constraints (`^1.2`) have meaning. Build
-  metadata takes no part, as semver says. The order of the release list,
-  GitHub's or the vendor's, is not consulted.
+- Order is semver precedence. A backport such as 20.19.1 published after
+  22.0.0 still ranks below it, and range constraints (`^1.2`) have meaning.
+  Build metadata takes no part, as semver says. The order of the release
+  list, GitHub's or the vendor's, is not consulted. A vendor may separately
+  recommend a default for `latest`, as Latest defines.
 - A prerelease is a version with a prerelease part: `1.2.0-rc.1` is one,
   `1.2.0` is not. Consumers skip prereleases unless asked for them.
   Promoting a release candidate means cutting the final version, not
@@ -805,10 +813,58 @@ and on a GitHub repository with immutable releases it can never be
 replaced, while GitHub's own prerelease flag stays editable after
 publishing. A flag in the document would end up either frozen or
 contradicted. So the packslip says what shipped, the version says how to
-treat it, and the one thing that stays mutable, withdrawing a release, is
-the release list's job. An earlier draft let a vendor declare list order
+treat it, and mutable withdrawal and default recommendations belong in
+discovery metadata. An earlier draft let a vendor declare list order
 instead of semver; it went, because the prerelease and channel fields it
 then needed had no honest home.
+
+### Latest
+
+An unconstrained `latest` request (including a consumer's default install
+request) asks for the vendor's recommended eligible release. Ordering
+and recommendation are separate: a vendor may publish `3.0.0` while
+recommending `2.8.4`. Exact versions, version prefixes, ranges, and channel
+requests continue to use their matching rules and semver precedence;
+the default pointer does not reorder them.
+
+Consumers choose a recommendation in this order:
+
+1. Use `latest` from the vendor's accepted signed release list, if present.
+   On GitHub this includes the supplementary list. The list must pass its
+   normal signature, identity, expiry, and sequence checks first.
+2. For a GitHub project without a signed `latest`, use the release returned
+   by GitHub's [latest release endpoint](https://docs.github.com/en/rest/releases/releases#get-the-latest-release).
+   Resolve its tag through the normal discovery rules, including a signed
+   list entry's `tag` mapping. It must belong to the requested project;
+   a repository-wide pointer to another tool is not a recommendation for
+   this one. This is an unsigned discovery hint, not proof of authenticity
+   or a sequence-protected recommendation.
+3. Elsewhere, without a signed pointer there is no recommendation.
+
+Select the recommendation only if it passes the same checks as any other
+candidate: verified release signature and identity, manifest version and
+digest consistency, no vendor yank, prerelease policy, minimum release
+age, configured stamping policy, and artifact/host eligibility. A pointer
+never admits a release a consumer would otherwise refuse. Pointers on
+third-party stamping lists do not replace the vendor's recommendation;
+those lists determine which candidates are admitted.
+
+If there is no recommendation, or its target is absent from discovery or
+excluded by eligibility policy, select the highest eligible semver from
+the normal candidate set. An ineligible signed pointer falls directly
+back to semver selection, not to GitHub's pointer. Report when a declared
+recommendation is skipped and why; if no eligible release exists, fail.
+For example, if `latest` is `2.8.4` but it is yanked or too young, `3.0.0`
+may be selected if it is eligible. Vendors who must exclude `3.0.0` must
+withdraw it or use an admission policy, rather than relying on `latest`.
+
+Fallback does not turn verification failures into missing metadata.
+An invalid, expired, rolled-back, or unexpectedly missing signed list
+remains an error; a candidate with a bad signature or inconsistent digest
+or version remains an error. A GitHub latest endpoint response indicating
+no latest release supplies no pointer; other fetch errors remain errors.
+Changing or removing a signed recommendation requires publishing a new
+list with an increased sequence, without replacing any release manifest.
 
 ### Spelling a version
 
