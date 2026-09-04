@@ -315,14 +315,16 @@ pub fn select_resources<'a>(resources: &'a [Resource], artifact: &Artifact) -> V
     let mut keep = vec![false; resources.len()];
     let mut seen = std::collections::BTreeSet::new();
     for resource in resources {
-        for identity in resource.identities() {
+        for identity in resource.identities(Some(artifact)) {
             if !seen.insert(identity.clone()) {
                 continue;
             }
             let fitting: Vec<usize> = resources
                 .iter()
                 .enumerate()
-                .filter(|(_, r)| r.identities().contains(&identity) && resource_fits(r, artifact))
+                .filter(|(_, r)| {
+                    r.identities(Some(artifact)).contains(&identity) && resource_fits(r, artifact)
+                })
                 .map(|(i, _)| i)
                 .collect();
             let best = fitting
@@ -836,8 +838,19 @@ impl Resource {
     /// SBOM, and for every other kind `bin`, if any, and the file name of
     /// the source, or the kind alone for an `exec` source. Each is
     /// prefixed by the kind.
-    pub fn identities(&self) -> Vec<String> {
-        let kind = match &self.bin {
+    pub fn identities(&self, artifact: Option<&Artifact>) -> Vec<String> {
+        // The executable this entry is for, canonicalized as validation
+        // canonicalizes a bin name (no `.exe`), and resolved to the
+        // artifact's sole executable when the entry leaves `bin` out, so
+        // an omitted name and the explicit one are the same thing.
+        let canonical = |name: &str| name.strip_suffix(".exe").unwrap_or(name).to_string();
+        let bin = self.bin.as_deref().map(canonical).or_else(|| {
+            artifact
+                .filter(|_| matches!(self.kind.as_str(), "completion" | "man" | "cli-spec"))
+                .filter(|a| a.bin.len() == 1)
+                .map(|a| canonical(&a.bin[0].name))
+        });
+        let kind = match &bin {
             Some(bin) if self.kind != "cli-spec" => format!("{}/{bin}", self.kind),
             _ => self.kind.clone(),
         };
@@ -859,7 +872,7 @@ impl Resource {
             "cli-spec" => vec![format!(
                 "{kind}/{}/{}",
                 self.format.as_deref().unwrap_or_default(),
-                self.bin.as_deref().unwrap_or_default()
+                bin.as_deref().unwrap_or_default()
             )],
             "skill" => vec![format!(
                 "{kind}/{}",
@@ -2670,13 +2683,35 @@ mod tests {
         ));
         // Two entries for different executables are different things.
         assert_ne!(
-            completion(Some("mise")).identities(),
-            completion(Some("other")).identities()
+            completion(Some("mise")).identities(None),
+            completion(Some("other")).identities(None)
         );
         assert_eq!(
-            completion(Some("other")).identities(),
+            completion(Some("other")).identities(None),
             ["completion/other/zsh"]
         );
+        // A `.exe` name is the same command as the bare one, and an
+        // omitted name resolves to a single-executable artifact's own, so
+        // all three name the same completion.
+        let art = |bins: &[&str]| -> Artifact {
+            serde_json::from_value(serde_json::json!({
+                "name": "m.tar.gz", "size": 1, "format": "tar.gz",
+                "bin": bins,
+            }))
+            .unwrap()
+        };
+        let one = art(&["mise"]);
+        assert_eq!(
+            completion(Some("mise.exe")).identities(Some(&one)),
+            completion(Some("mise")).identities(Some(&one))
+        );
+        assert_eq!(
+            completion(None).identities(Some(&one)),
+            completion(Some("mise")).identities(Some(&one))
+        );
+        // With more than one executable an omitted name cannot be resolved.
+        let two = art(&["mise", "rtx"]);
+        assert_eq!(completion(None).identities(Some(&two)), ["completion/zsh"]);
     }
 
     #[test]
@@ -2760,12 +2795,12 @@ mod tests {
             "the darwin man page hides the unscoped one of the same file name"
         );
         assert_eq!(
-            resources[7].identities(),
+            resources[7].identities(None),
             ["completion/bash", "completion/zsh"]
         );
-        assert_eq!(resources[3].identities(), ["skill/both"]);
-        assert_eq!(resources[8].identities(), ["man/t.1"]);
-        assert_eq!(Resource::new("man").identities(), ["man"]);
+        assert_eq!(resources[3].identities(None), ["skill/both"]);
+        assert_eq!(resources[8].identities(None), ["man/t.1"]);
+        assert_eq!(Resource::new("man").identities(None), ["man"]);
     }
 
     #[test]
