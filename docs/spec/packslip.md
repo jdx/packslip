@@ -175,11 +175,11 @@ The JSON schema is printed by `packslip schema` and published at
 
 ### Resources
 
-A release usually ships more than its executables: shell completions, a
-man page, a spec of the CLI, an agent skill, and, for a desktop
-application, the entry, icons, or app bundle a launcher needs. `resources`
-lists them. Each entry names a `kind` and exactly one source. The sources differ in what a consumer can
-verify, and a consumer prefers them in this order:
+A release usually ships more than its executables: shell completions, a man
+page, a spec of the CLI, an agent skill, and, for a desktop application, the
+entry, icons, or app bundle a launcher needs. `resources` lists them. Each
+entry names a `kind` and exactly one source. The sources differ in what a
+consumer can verify, and a consumer prefers them in this order:
 
 - `archive`: a path inside the artifact the consumer selected, relative to
   the archive root. The artifact's digest already covers it. Most vendors
