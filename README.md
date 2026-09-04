@@ -17,6 +17,9 @@ no per-vendor logic and no registry entry.
 Site and specification: [packslip.dev](https://packslip.dev) ·
 [release/v1](https://packslip.dev/release/v1/)
 
+Created by [Jeff Dickey (@jdx)](https://github.com/jdx), the author of
+[mise](https://mise.jdx.dev) and [usage](https://usage.jdx.dev).
+
 ## In a GitHub release job
 
 ```yaml
@@ -92,4 +95,4 @@ Run `mise x hugo@0.165.0 -- hugo server` to preview the site locally. The
 Pages workflow fetches the current GitHub star count into `data/github.json`
 before building, so visitors receive it in the rendered HTML.
 
-MIT licensed.
+MIT licensed. Copyright (c) 2026 Jeff Dickey (@jdx).
