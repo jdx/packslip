@@ -100,8 +100,7 @@
       "issuer": "https://token.actions.githubusercontent.com"
     },
     "notes_url": "https://github.com/jdx/mise/releases/tag/v2026.9.1",
-    "sbom": "https://.../sbom.cdx.json",
-    "supersedes": "2026.9.0"
+    "sbom": "https://.../sbom.cdx.json"
   }
 }</code></pre>
   <p>Rules:</p>
@@ -115,7 +114,7 @@
     <li><code>requires</code> states what the host needs: <code>os_min</code> in the OS's own terms (<code>12</code> for macOS Monterey, <code>10.0.17763</code> for Windows) and <code>glibc_min</code> for a <code>gnu</code> Linux build.</li>
     <li><code>provenance</code> holds URLs of SLSA build provenance statements for that artifact. The packslip proves the manifest; verified provenance proves the build, at whatever SLSA build level its builder establishes.</li>
     <li><code>resources</code> lists what the release ships besides its executables, each entry a <code>kind</code> and one source. See <a href="#resources">Resources</a>.</li>
-    <li><code>supersedes</code> names the release this one replaces, so a consumer can detect a rollback without a version-ordering scheme. <code>notes_url</code> points at the release notes.</li>
+    <li><code>notes_url</code> points at the release notes. <code>sbom</code> points at a software bill of materials for the release.</li>
     <li><code>identity</code> says how the document is signed and by whom, so a consumer can check what it pinned against what it received. For <code>sigstore-oidc</code>, <code>key_id</code> is the certificate's subject identity (a workflow URI for CI, an email for a person) and <code>issuer</code> the OIDC issuer. For <code>sigstore-key</code>, <code>key_id</code> is the key id in uppercase hex.</li>
     <li><code>attested_by</code> is <code>vendor</code> (default) or <code>repackager</code>. See below.</li>
   </ul>
@@ -172,7 +171,6 @@
       <tr><td><code>predicate.evidence[]</code></td><td>array of object</td><td><span class="opt">optional</span></td><td>What a repackager checked: <code>{ kind, detail }</code>.</td></tr>
       <tr><td><code>predicate.notes_url</code></td><td>string</td><td><span class="opt">optional</span></td><td>URL of the release notes.</td></tr>
       <tr><td><code>predicate.sbom</code></td><td>string</td><td><span class="opt">optional</span></td><td>URL of a software bill of materials for the release.</td></tr>
-      <tr><td><code>predicate.supersedes</code></td><td>string</td><td><span class="opt">optional</span></td><td>The version this release replaces.</td></tr>
     </tbody>
   </table>
   </div>
@@ -261,7 +259,7 @@
     <li><code>source</code> (default): the release list's order, newest first, is the ranking. On GitHub that is the releases endpoint's order; on a vendor's own list it is the array order. "Latest" is the first eligible entry.</li>
     <li><code>semver</code>: versions are strict <code>MAJOR.MINOR.PATCH</code> (calver such as <code>2026.9.1</code> qualifies) and sort as semver. "Latest" is the highest eligible version, so a backport such as 20.19.1 published after 22.0.0 never masquerades as the newest release, and range constraints (<code>^1.2</code>) have meaning.</li>
   </ul>
-  <p>Eligible means not yanked, not a prerelease unless prereleases were asked for, and in the requested channel when one was given. A requested version matches as a prefix on dot-separated components under either order, so <code>20</code> and <code>3.12</code> mean what people expect; range constraints are refused under <code>source</code> rather than guessed. <code>supersedes</code> remains a rollback hint and takes no part in ordering.</p>
+  <p>Eligible means not yanked, not a prerelease unless prereleases were asked for, and in the requested channel when one was given. A requested version matches as a prefix on dot-separated components under either order, so <code>20</code> and <code>3.12</code> mean what people expect; range constraints are refused under <code>source</code> rather than guessed. Rollback protection comes from the release list's <code>sequence</code>, not from anything a single release says.</p>
 
   <h2 id="consumer-rules">Consumer rules</h2>
   <ol>
@@ -269,7 +267,6 @@
     <li>Verify the bundle: signature, certificate chain and log entry as sigstore defines them, then the statement's structure, then the subject digest of every artifact or asset you downloaded, and the size of every artifact.</li>
     <li>Enforce no-downgrade: refuse a release whose <code>identity.scheme</code> is weaker than the last accepted one, whose signer changed without a human saying so, whose <code>attested_by</code> went from vendor to repackager, or that dropped per-artifact provenance the last release carried. For a keyless signer, compare the workflow path, not the ref: a new tag of the same workflow is the same signer.</li>
     <li>Apply any minimum release age to the log's integration time, falling back to <code>published_at</code> only for an unlogged bundle you chose to accept.</li>
-    <li>Treat <code>supersedes</code> as the ordering hint for rollback detection.</li>
     <li>Use the project's release list (GitHub's releases endpoint, or the signed list) and refuse a project that has neither. Refuse a signed list that has expired or whose <code>sequence</code> is below the last one accepted; never select a yanked entry; skip prereleases unless asked for them; order as <code>version_order</code> says.</li>
     <li>Select one artifact by os, arch, libc, format, and, when needed, variant. Refuse to guess between two artifacts that match.</li>
     <li>Take each resource from the most verifiable source offered, in the order <a href="#resources">Resources</a> gives; run an <code>exec</code> entry only if you have chosen to run vendor code at install time; ignore kinds you do not know.</li>

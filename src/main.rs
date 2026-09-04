@@ -330,9 +330,6 @@ struct Create {
     /// SBOM URL
     #[usage(long)]
     sbom: Option<String>,
-    /// The version this release replaces
-    #[usage(long)]
-    supersedes: Option<String>,
     /// Executable inside every archive, as PATH or NAME=PATH (repeatable)
     #[usage(long)]
     bin: Vec<String>,
@@ -550,7 +547,6 @@ impl RunWith<BinInfo> for Create {
             url_base: self.url_base.as_deref(),
             notes_url: self.notes_url.as_deref(),
             sbom: self.sbom.as_deref(),
-            supersedes: self.supersedes.as_deref(),
             attested_by,
             evidence: self.evidence.iter().map(|s| parse_evidence(s)).collect(),
             sha512: !self.no_sha512,

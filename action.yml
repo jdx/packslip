@@ -66,10 +66,6 @@ inputs:
     description: URL of the release notes; defaults to the release page
     required: false
     default: ""
-  supersedes:
-    description: The version this release replaces
-    required: false
-    default: ""
   sbom:
     description: URL of an SBOM for the release
     required: false
@@ -186,7 +182,6 @@ runs:
         IN_PRERELEASE: ${{ inputs.prerelease }}
         IN_CHANNEL: ${{ inputs.channel }}
         IN_NOTES_URL: ${{ inputs.notes-url }}
-        IN_SUPERSEDES: ${{ inputs.supersedes }}
         IN_SBOM: ${{ inputs.sbom }}
         IN_ATTEST: ${{ inputs.attest }}
         IN_OUT: ${{ inputs.out }}
@@ -226,7 +221,6 @@ runs:
         while IFS= read -r line; do
           [ -n "$line" ] && args+=(--resource "$line")
         done <<< "$IN_RESOURCES"
-        [ -n "$IN_SUPERSEDES" ] && args+=(--supersedes "$IN_SUPERSEDES")
         [ -n "$IN_SBOM" ] && args+=(--sbom "$IN_SBOM")
         mapfile -t files < "${RUNNER_TEMP}/packslip-files"
         if [ "$IN_ATTEST" = true ]; then

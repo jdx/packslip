@@ -122,8 +122,7 @@ understand the bundle as-is.
       "issuer": "https://token.actions.githubusercontent.com"
     },
     "notes_url": "https://github.com/jdx/mise/releases/tag/v2026.9.1",
-    "sbom": "https://.../sbom.cdx.json",
-    "supersedes": "2026.9.0"
+    "sbom": "https://.../sbom.cdx.json"
   }
 }
 ```
@@ -165,9 +164,8 @@ Rules:
   the build, at whatever SLSA build level its builder establishes.
 - `resources` lists what the release ships besides its executables, each
   entry a `kind` and one source. See Resources.
-- `supersedes` names the release this one replaces, so a consumer can
-  detect a rollback without a version-ordering scheme. `notes_url` points
-  at the release notes.
+- `notes_url` points at the release notes. `sbom` points at a software
+  bill of materials for the release.
 - `identity` says how the document is signed and by whom, so a consumer
   can check what it pinned against what it received. For `sigstore-oidc`,
   `key_id` is the certificate's subject identity (a workflow URI for CI, an
@@ -393,8 +391,8 @@ Eligible means not yanked, not a prerelease unless prereleases were asked
 for, and in the requested channel when one was given. A requested version
 matches as a prefix on dot-separated components under either order, so
 `20` and `3.12` mean what people expect; range constraints are refused
-under `source` rather than guessed. `supersedes` remains a rollback hint
-and takes no part in ordering.
+under `source` rather than guessed. Rollback protection comes from the
+release list's `sequence`, not from anything a single release says.
 
 ## Consumer rules
 
@@ -415,15 +413,14 @@ and takes no part in ordering.
    workflow is the same signer.
 4. Apply any minimum release age to the log's integration time, falling
    back to `published_at` only for an unlogged bundle you chose to accept.
-5. Treat `supersedes` as the ordering hint for rollback detection.
-6. Use the project's release list (GitHub's releases endpoint, or the
+5. Use the project's release list (GitHub's releases endpoint, or the
    signed list) and refuse a project that has neither. Refuse a signed
    list that has expired or whose `sequence` is below the last one
    accepted; never select a yanked entry; skip prereleases unless asked
    for them; order as `version_order` says.
-7. Select one artifact by os, arch, libc, format, and, when needed,
+6. Select one artifact by os, arch, libc, format, and, when needed,
    variant. Refuse to guess between two artifacts that match.
-8. Take each resource from the most verifiable source offered, in the
+7. Take each resource from the most verifiable source offered, in the
    order Resources gives; run an `exec` entry only if you have chosen to
    run vendor code at install time; ignore kinds you do not know.
 
