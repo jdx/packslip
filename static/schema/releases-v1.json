@@ -4,10 +4,12 @@
       "properties": {
         "sha256": {
           "description": "Lowercase hex.",
+          "pattern": "^[0-9a-f]{64}$",
           "type": "string"
         },
         "sha512": {
           "description": "Lowercase hex, for consumers that want it (electron-updater,\nBalrog, Scoop).",
+          "pattern": "^[0-9a-f]{128}$",
           "type": [
             "string",
             "null"
@@ -16,6 +18,25 @@
       },
       "required": [
         "sha256"
+      ],
+      "type": "object"
+    },
+    "Evidence": {
+      "description": "One thing a repackager or a release list's publisher checked.\nDocumented kinds: `pkgbuild-checksums`, `checksum-file-over-tls`,\n`apt-release-gpg`, `vendor-signature`, `vendor-packslip`,\n`github-attestation`, `provenance-verified`, `scan`, `none`.",
+      "properties": {
+        "detail": {
+          "description": "A key id, URL, or note that lets a reader check the claim: the\nvendor packslip's digest, a scan report's URL.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
       ],
       "type": "object"
     },
@@ -91,6 +112,13 @@
     },
     "ReleaseRef": {
       "properties": {
+        "evidence": {
+          "description": "What the list's publisher checked about this release beyond the\nvendor's own document: a scan, verified provenance. Empty for a\nvendor's own list.",
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "type": "array"
+        },
         "extensions": {
           "additionalProperties": true,
           "description": "Vendor- or consumer-defined data about this release. See\n[`Extensions`].",
@@ -102,6 +130,7 @@
         },
         "published_at": {
           "description": "RFC 3339 UTC, copied from the release's packslip.",
+          "format": "date-time",
           "type": "string"
         },
         "security": {
@@ -125,7 +154,15 @@
             "null"
           ]
         },
+        "tag": {
+          "description": "The vendor's own spelling of the release, copied from the packslip's\n`source.tag`, so a consumer can accept a request in either form.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "version": {
+          "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$",
           "type": "string"
         }
       },

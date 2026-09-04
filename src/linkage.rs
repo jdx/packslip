@@ -2,11 +2,13 @@
 //! libraries named in an ELF's `DT_NEEDED` entries, a Mach-O's load
 //! commands, or a PE's import table, read out of the artifact so that
 //! `requires.libs` is a fact about the bytes rather than a claim.
+//! Archives are decoded by [`crate::archive`].
 
 use std::collections::BTreeSet;
-use std::io::{BufReader, Read};
+use std::io::Read;
 use std::path::Path;
 
+use crate::archive;
 use crate::model::Bin;
 
 /// The executables read out of one artifact.
@@ -21,6 +23,8 @@ pub struct Executables {
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("{0}")]
+    Archive(#[from] archive::Error),
     #[error("{path}: {source}")]
     Io {
         path: String,
@@ -55,14 +59,15 @@ pub fn read_executables(
         path: path.display().to_string(),
         source,
     };
-    let wanted: Vec<String> = bins.iter().map(|b| normalize(&b.path)).collect();
+    let wanted: Vec<String> = bins.iter().map(|b| archive::normalize(&b.path)).collect();
     let executables = match format {
-        Some("raw") => Some(read_raw(path, &wanted).map_err(io)?),
-        Some("exe") if !is_installer(&name) => Some(read_raw(path, &wanted).map_err(io)?),
-        Some("tar" | "tar.gz" | "tgz" | "tar.xz" | "tar.zst" | "tar.bz2") => {
-            read_tar(path, format.unwrap_or_default(), &wanted).map_err(io)?
-        }
+        Some(f) if crate::model::is_bare_format(f) => match read_bare(path, f, &wanted) {
+            Ok(executables) => Some(executables),
+            Err(archive::Error::Undecodable { .. }) => None,
+            Err(err) => return Err(err.into()),
+        },
         Some("zip") => read_zip(path, &wanted).map_err(io)?,
+        Some(f) if archive::can_list(f) => read_tar(path, f, &wanted)?,
         _ => None,
     };
     let Some(executables) = executables else {
@@ -268,29 +273,18 @@ pub fn pe_host_libraries(libraries: &[&str]) -> Vec<String> {
     out.into_iter().collect()
 }
 
-/// An `.exe` that is an installer rather than the program. The names
-/// vendors use: `tool-setup.exe`, `tool-installer.exe`, `install-tool.exe`.
-fn is_installer(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    lower.contains("setup") || lower.contains("install")
-}
-
-/// A path as it is compared: no leading `./`, no trailing slash.
-fn normalize(path: &str) -> String {
-    let mut p = path;
-    while let Some(rest) = p.strip_prefix("./") {
-        p = rest;
-    }
-    p.trim_end_matches('/').to_string()
-}
-
-/// A bare executable: the file is the one executable, whatever its
-/// `bin` entry calls it.
-fn read_raw(path: &Path, wanted: &[String]) -> std::io::Result<Executables> {
-    let bytes = std::fs::read(path)?;
+/// A bare executable, possibly compressed: the file is the one
+/// executable, whatever its `bin` entry calls it.
+fn read_bare(path: &Path, format: &str, wanted: &[String]) -> Result<Executables, archive::Error> {
+    let mut bytes = Vec::new();
+    archive::decoder(path, format)?
+        .read_to_end(&mut bytes)
+        .map_err(|e| archive::Error::Undecodable {
+            path: path.display().to_string(),
+            format: format.to_string(),
+            why: e.to_string(),
+        })?;
     let mut executables = Executables::default();
-    // The entry may name the file, or be a name for it; either way the
-    // file is what it means.
     for w in wanted {
         executables.found.push((w.clone(), bytes.clone()));
     }
@@ -375,33 +369,16 @@ where
     Ok(Some(executables))
 }
 
-/// A decompressing reader over a tar file, by format.
-fn open_tar(path: &Path, format: &str) -> std::io::Result<Option<Box<dyn Read>>> {
-    let file = std::fs::File::open(path)?;
-    Ok(Some(match format {
-        "tar" => Box::new(file),
-        "tar.gz" | "tgz" => Box::new(flate2::read::MultiGzDecoder::new(file)),
-        "tar.bz2" => Box::new(bzip2::read::MultiBzDecoder::new(file)),
-        "tar.zst" => match ruzstd::decoding::StreamingDecoder::new(file) {
-            Ok(decoder) => Box::new(decoder),
-            Err(_) => return Ok(None),
-        },
-        "tar.xz" => {
-            let mut input = BufReader::new(file);
-            let mut output = Vec::new();
-            if lzma_rs::xz_decompress(&mut input, &mut output).is_err() {
+fn read_tar(path: &Path, format: &str, wanted: &[String]) -> Result<Option<Executables>, Error> {
+    let mut failed = None;
+    let result = assemble(wanted, |targets| {
+        let reader = match archive::decoder(path, format) {
+            Ok(reader) => reader,
+            Err(archive::Error::Undecodable { .. }) => return Ok(None),
+            Err(err) => {
+                failed = Some(err);
                 return Ok(None);
             }
-            Box::new(std::io::Cursor::new(output))
-        }
-        _ => return Ok(None),
-    }))
-}
-
-fn read_tar(path: &Path, format: &str, wanted: &[String]) -> std::io::Result<Option<Executables>> {
-    assemble(wanted, |targets| {
-        let Some(reader) = open_tar(path, format)? else {
-            return Ok(None);
         };
         let mut archive = tar::Archive::new(reader);
         let Ok(entries) = archive.entries() else {
@@ -415,7 +392,7 @@ fn read_tar(path: &Path, format: &str, wanted: &[String]) -> std::io::Result<Opt
             let Ok(entry_path) = entry.path() else {
                 continue;
             };
-            let member_path = normalize(&entry_path.to_string_lossy());
+            let member_path = archive::normalize(&entry_path.to_string_lossy());
             let kind = entry.header().entry_type();
             let link = if kind.is_symlink() || kind.is_hard_link() {
                 entry
@@ -440,6 +417,13 @@ fn read_tar(path: &Path, format: &str, wanted: &[String]) -> std::io::Result<Opt
             });
         }
         Ok(Some(members))
+    });
+    if let Some(err) = failed {
+        return Err(err.into());
+    }
+    result.map_err(|source| Error::Io {
+        path: path.display().to_string(),
+        source,
     })
 }
 
@@ -457,7 +441,7 @@ fn read_zip(path: &Path, wanted: &[String]) -> std::io::Result<Option<Executable
             if entry.is_dir() {
                 continue;
             }
-            let member_path = normalize(entry.name());
+            let member_path = archive::normalize(entry.name());
             let mut bytes = None;
             let mut link = None;
             if entry.is_symlink() {
@@ -549,7 +533,7 @@ mod tests {
         );
         assert_eq!(resolve_link("tool", "./real"), "real");
         assert_eq!(resolve_link("a/b/c", "/x/y"), "x/y");
-        assert_eq!(normalize("./tool/bin/tool"), "tool/bin/tool");
+        assert_eq!(archive::normalize("./tool/bin/tool"), "tool/bin/tool");
     }
 
     #[test]

@@ -39,7 +39,7 @@ jobs:
           # built-in token starts no workflow, so CI would never run on
           # the release PR and release.yml would never build the binaries.
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
-      - name: Regenerate CLI documentation in the release PR
+      - name: Squash generated CLI documentation into the release PR
         if: steps.release-plz.outputs.prs_created == 'true'
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
@@ -51,8 +51,8 @@ jobs:
           mise run render
           git add packslip.usage.kdl content/cli
           if ! git diff --cached --quiet; then
-            git commit -m "chore: regenerate CLI documentation"
-            git push
+            git commit --amend --no-edit
+            git push --force-with-lease
           fi
 
   # Publishes to crates.io and pushes the tag once a release PR has been

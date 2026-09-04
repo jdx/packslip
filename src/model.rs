@@ -43,11 +43,86 @@ pub struct Subject {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Digest {
     /// Lowercase hex.
+    #[schemars(regex(pattern = r"^[0-9a-f]{64}$"))]
     pub sha256: String,
     /// Lowercase hex, for consumers that want it (electron-updater,
     /// Balrog, Scoop).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(regex(pattern = r"^[0-9a-f]{128}$"))]
     pub sha512: Option<String>,
+}
+
+/// Semver 2.0.0, as its specification spells the grammar.
+pub const SEMVER_PATTERN: &str = r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$";
+
+/// The shape of an `os`, `arch`, `libc`, `format`, or `variant` value: a
+/// lowercase word of letters, digits, `_`, `-`, and `.`, starting with a
+/// letter or digit. The documented vocabularies below are the values
+/// consumers know; a value outside them is well-formed but matches no
+/// host and unpacks with nothing, so a vendor uses one only for a
+/// platform or format the specification has not named yet.
+pub const TOKEN_PATTERN: &str = r"^[a-z0-9][a-z0-9_.-]*$";
+
+/// Documented `os` values, after Rust's target triples.
+pub const OS_VALUES: &[&str] = &[
+    "linux", "darwin", "windows", "freebsd", "netbsd", "openbsd", "illumos", "android", "ios",
+];
+
+/// Documented `arch` values, after Rust's target triples.
+pub const ARCH_VALUES: &[&str] = &[
+    "x86_64",
+    "aarch64",
+    "armv7",
+    "armv6",
+    "riscv64",
+    "i686",
+    "powerpc64le",
+    "s390x",
+    "loongarch64",
+];
+
+/// Documented `libc` values, for Linux builds.
+pub const LIBC_VALUES: &[&str] = &["gnu", "musl"];
+
+/// Documented `format` values: archives, then single compressed
+/// executables, then installers, then a bare executable.
+pub const FORMAT_VALUES: &[&str] = &[
+    "tar.xz", "tar.gz", "tar.zst", "tar.bz2", "tgz", "tar", "zip", "7z", "gz", "xz", "zst", "bz2",
+    "deb", "rpm", "dmg", "pkg", "msi", "msix", "exe", "appimage", "raw",
+];
+
+/// Formats whose artifact is one executable rather than an archive: `raw`
+/// is the file itself, the others are that file compressed. Their `bin`
+/// names the artifact, without any compression suffix.
+pub const BARE_FORMATS: &[&str] = &["raw", "gz", "xz", "zst", "bz2"];
+
+/// Whether `format` names a single executable rather than an archive or
+/// installer.
+pub fn is_bare_format(format: &str) -> bool {
+    BARE_FORMATS.contains(&format)
+}
+
+/// The file inside a bare-format artifact: the artifact's own name, minus
+/// the compression suffix for `gz`, `xz`, `zst`, and `bz2`.
+pub fn bare_file_name<'a>(artifact_name: &'a str, format: &str) -> &'a str {
+    match format {
+        "raw" => artifact_name,
+        compressed if is_bare_format(compressed) => artifact_name
+            .strip_suffix(&format!(".{compressed}"))
+            .unwrap_or(artifact_name),
+        _ => artifact_name,
+    }
+}
+
+/// Whether a value has the shape [`TOKEN_PATTERN`] describes.
+pub fn valid_token(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes
+        .first()
+        .is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        && bytes.iter().all(|b| {
+            b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'-' | b'.')
+        })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -60,9 +135,12 @@ pub struct Predicate {
     pub project: String,
     /// Semver 2.0.0 (calver such as `2026.9.1` qualifies). Its prerelease
     /// part, if any, marks a prerelease, and the first identifier of that
-    /// part names the channel: see [`channel`].
+    /// part names the channel: see [`channel`]. On a forge, the release
+    /// tag names this version: see [`tag_version`].
+    #[schemars(regex(pattern = SEMVER_PATTERN))]
     pub version: String,
     /// RFC 3339 UTC.
+    #[schemars(extend("format" = "date-time"))]
     pub published_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<Source>,
@@ -82,8 +160,6 @@ pub struct Predicate {
     pub evidence: Vec<Evidence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes_url: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sbom: Option<String>,
     /// Vendor- or consumer-defined data about the release. See
     /// [`Extensions`].
     #[serde(default, skip_serializing_if = "Extensions::is_empty")]
@@ -135,13 +211,187 @@ pub fn channel(version: &semver::Version) -> Option<&str> {
     (!first.is_empty() && !first.bytes().all(|b| b.is_ascii_digit())).then_some(first)
 }
 
-/// One thing a repackager checked. Documented kinds:
-/// `pkgbuild-checksums`, `checksum-file-over-tls`, `apt-release-gpg`,
-/// `vendor-signature`, `github-attestation`, `none`.
+/// The version a forge release tag names, if it names one: the version
+/// itself, optionally after a `v`, and optionally after a prefix that is
+/// the tool's subpath, the last segment of it, or the repository name,
+/// followed by `/`, `-`, `_`, or `@`. `v1.2.3` names `1.2.3`;
+/// `oxlint_v1.0.0` names `1.0.0` for `github.com/oxc-project/oxc/oxlint`;
+/// `jq-1.7.1` names `1.7.1` for `github.com/jqlang/jq`; `cli/v1.9.4`
+/// names `1.9.4` for `github.com/biomejs/biome/crates/cli`.
+///
+/// This is how a consumer lists a forge project's versions without
+/// downloading a bundle per release. The packslip inside the release is
+/// the authority: its `version` must equal what the tag names, or the
+/// consumer refuses it. A tag that names no version is skipped, and the
+/// release is reachable only through a signed release list.
+pub fn tag_version(tag: &str, project: &str) -> Option<String> {
+    let mut rest = tag;
+    let mut prefixes: Vec<&str> = Vec::new();
+    if let Some(sub) = repository_subpath(project) {
+        prefixes.push(sub);
+        if let Some(last) = sub.rsplit('/').next()
+            && last != sub
+        {
+            prefixes.push(last);
+        }
+    }
+    if let Some((_, _, repo)) = repository(project) {
+        prefixes.push(repo);
+    }
+    'strip: for prefix in prefixes {
+        for sep in ['/', '-', '_', '@'] {
+            if let Some(after) = rest.strip_prefix(prefix)
+                && let Some(after) = after.strip_prefix(sep)
+            {
+                rest = after;
+                break 'strip;
+            }
+        }
+    }
+    let version = normalize_version(rest.strip_prefix('v').unwrap_or(rest))?;
+    parse_version(&version).ok()?;
+    Some(version)
+}
+
+/// The semver spelling of a version a vendor writes loosely: a missing
+/// patch component becomes `.0` (`4.1` is `4.1.0`) and leading zeros go
+/// (`25.07.1` is `25.7.1`). A date is calver already once its zeros go
+/// (`2026.08.31` is `2026.8.31`); one with dashes, `2026-08-31`, has to be
+/// respelled by the vendor. Prerelease and build parts pass through.
+pub fn normalize_version(text: &str) -> Option<String> {
+    let (core, tail) = match text.find(['-', '+']) {
+        Some(i) => (&text[..i], &text[i..]),
+        None => (text, ""),
+    };
+    let parts: Vec<&str> = core.split('.').collect();
+    if !(2..=3).contains(&parts.len())
+        || parts
+            .iter()
+            .any(|p| p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit()))
+    {
+        return None;
+    }
+    let mut numbers: Vec<&str> = parts
+        .iter()
+        .map(|p| {
+            let trimmed = p.trim_start_matches('0');
+            if trimmed.is_empty() { "0" } else { trimmed }
+        })
+        .collect();
+    if numbers.len() == 2 {
+        numbers.push("0");
+    }
+    Some(format!("{}{tail}", numbers.join(".")))
+}
+
+/// Whether a resource applies to an artifact: each of the resource's
+/// `os`, `arch`, and `libc` is absent or equal to the artifact's. A
+/// consumer choosing among same-kind entries takes the one naming the
+/// most of those fields.
+pub fn resource_fits(resource: &Resource, artifact: &Artifact) -> bool {
+    [
+        (&resource.os, &artifact.os),
+        (&resource.arch, &artifact.arch),
+        (&resource.libc, &artifact.libc),
+    ]
+    .into_iter()
+    .all(|(scope, value)| scope.is_none() || scope == value)
+}
+
+/// This host, in the packslip's vocabulary, for [`select_artifact`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Host<'a> {
+    pub os: &'a str,
+    pub arch: &'a str,
+    /// The C library a Linux host reports, if the consumer knows it.
+    pub libc: Option<&'a str>,
+}
+
+/// Why [`select_artifact`] found nothing to install.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum Selection {
+    #[error("no artifact fits this host")]
+    NoMatch,
+    #[error("artifacts {0:?} and {1:?} both fit this host and nothing tells them apart")]
+    Ambiguous(String, String),
+}
+
+/// The one artifact for a host, as the specification's consumer rules
+/// say. `formats` is what the consumer can unpack, best first.
+///
+/// An artifact fits when each of its `os`, `arch`, and `libc` is either
+/// absent or equal to the host's; when its `variant` is the one asked
+/// for, or absent when none was; and when its `format` is one the
+/// consumer handles. Among those that fit, the one naming the most of
+/// `os`, `arch`, and `libc` wins, so a build for the host beats a
+/// portable one; among equally specific artifacts the consumer's format
+/// preference decides. Two artifacts that still tie are a vendor error
+/// and the consumer refuses to guess.
+pub fn select_artifact<'a>(
+    artifacts: &'a [Artifact],
+    host: &Host<'_>,
+    variant: Option<&str>,
+    formats: &[&str],
+) -> Result<&'a Artifact, Selection> {
+    let fits = |value: Option<&str>, wanted: Option<&str>| match (value, wanted) {
+        (None, _) => true,
+        (Some(v), Some(w)) => v == w,
+        (Some(_), None) => false,
+    };
+    let rank = |artifact: &Artifact| {
+        let specificity = [&artifact.os, &artifact.arch, &artifact.libc]
+            .into_iter()
+            .filter(|field| field.is_some())
+            .count();
+        let format = artifact
+            .format
+            .as_deref()
+            .and_then(|f| formats.iter().position(|known| *known == f));
+        format.map(|f| (specificity, f))
+    };
+    let mut best: Option<(&Artifact, (usize, usize))> = None;
+    let mut tied: Option<&Artifact> = None;
+    for artifact in artifacts {
+        if !fits(artifact.os.as_deref(), Some(host.os))
+            || !fits(artifact.arch.as_deref(), Some(host.arch))
+            || !fits(artifact.libc.as_deref(), host.libc)
+            || artifact.variant.as_deref() != variant
+        {
+            continue;
+        }
+        let Some((specificity, format)) = rank(artifact) else {
+            continue;
+        };
+        // Higher specificity first, then the lower format index.
+        let key = (specificity, formats.len() - format);
+        match best {
+            Some((_, current)) if key < current => {}
+            Some((_, current)) if key == current => tied = Some(artifact),
+            _ => {
+                best = Some((artifact, key));
+                tied = None;
+            }
+        }
+    }
+    match (best, tied) {
+        (Some((chosen, _)), None) => Ok(chosen),
+        (Some((chosen, _)), Some(other)) => Err(Selection::Ambiguous(
+            chosen.name.clone(),
+            other.name.clone(),
+        )),
+        (None, _) => Err(Selection::NoMatch),
+    }
+}
+
+/// One thing a repackager or a release list's publisher checked.
+/// Documented kinds: `pkgbuild-checksums`, `checksum-file-over-tls`,
+/// `apt-release-gpg`, `vendor-signature`, `vendor-packslip`,
+/// `github-attestation`, `provenance-verified`, `scan`, `none`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Evidence {
     pub kind: String,
-    /// A key id, URL, or note that lets a reader check the claim.
+    /// A key id, URL, or note that lets a reader check the claim: the
+    /// vendor packslip's digest, a scan report's URL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
 }
@@ -158,24 +408,45 @@ pub struct Source {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Artifact {
     pub name: String,
+    /// `linux`, `darwin`, `windows`, `freebsd`, `netbsd`, `openbsd`,
+    /// `illumos`, `android`, `ios`. Absent when the artifact runs on any
+    /// OS.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(regex(pattern = TOKEN_PATTERN))]
     pub os: Option<String>,
+    /// `x86_64`, `aarch64`, `armv7`, `armv6`, `riscv64`, `i686`,
+    /// `powerpc64le`, `s390x`, `loongarch64`. Absent when the artifact
+    /// runs on any architecture.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(regex(pattern = TOKEN_PATTERN))]
     pub arch: Option<String>,
+    /// `gnu` or `musl`, for a Linux build. Absent when the artifact does
+    /// not depend on one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(regex(pattern = TOKEN_PATTERN))]
     pub libc: Option<String>,
-    /// Tells apart artifacts that share os, arch, libc, and format:
-    /// `fips`, `baseline`, `debug`, `installer`, `source`.
+    /// Tells apart builds that share os, arch, and libc: `fips`,
+    /// `baseline`, `debug`, `installer`, `source`. A consumer selects only
+    /// artifacts without a variant unless asked for one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(regex(pattern = TOKEN_PATTERN))]
     pub variant: Option<String>,
     pub size: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// The archive type (`tar.xz`, `tar.gz`, `tar.zst`, `tar.bz2`, `tgz`,
+    /// `tar`, `zip`, `7z`), a single compressed executable (`gz`, `xz`,
+    /// `zst`, `bz2`), an installer (`deb`, `rpm`, `dmg`, `pkg`, `msi`,
+    /// `msix`, `exe`, `appimage`), or `raw` for a bare executable. Two
+    /// artifacts that differ only in format carry the same build, and a
+    /// consumer takes whichever it prefers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(regex(pattern = TOKEN_PATTERN))]
     pub format: Option<String>,
     /// Executables inside the artifact, as paths relative to the archive
-    /// root, or the artifact's own name when it is a bare executable. A
-    /// consumer puts these on PATH under `name`.
+    /// root, or the artifact's own name (minus any compression suffix)
+    /// when it is a bare executable. A consumer puts these on PATH under
+    /// `name`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bin: Vec<Bin>,
     /// What the artifact needs from the host.
@@ -376,11 +647,24 @@ fn valid_min_version(min: &str) -> bool {
 /// Something the release ships besides its executables, and where to get
 /// it. The kind says what it is; exactly one of `archive`, `asset`,
 /// `repo`, and `exec` says where it comes from. Documented kinds:
-/// `completion`, `man`, `cli-spec`, `skill`, `desktop`, `icon`, `app`.
-/// Consumers ignore kinds they do not know.
+/// `completion`, `man`, `cli-spec`, `skill`, `desktop`, `icon`, `app`,
+/// `sbom`. Consumers ignore kinds they do not know.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Resource {
     pub kind: String,
+    /// Limits the entry to artifacts of this `os`, when layouts differ by
+    /// platform. Absent means any artifact. See [`resource_fits`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(regex(pattern = TOKEN_PATTERN))]
+    pub os: Option<String>,
+    /// Likewise for `arch`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(regex(pattern = TOKEN_PATTERN))]
+    pub arch: Option<String>,
+    /// Likewise for `libc`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(regex(pattern = TOKEN_PATTERN))]
+    pub libc: Option<String>,
     /// For `completion` with a static source: the shell, such as `bash`,
     /// `zsh`, `fish`, `powershell`, `nushell`, `elvish`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -396,7 +680,8 @@ pub struct Resource {
     /// name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bin: Option<String>,
-    /// For `cli-spec`: the spec format. `usage` is documented.
+    /// For `cli-spec`: the spec format, of which `usage` is documented.
+    /// For `sbom`: `cyclonedx` or `spdx`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
     /// A path inside the selected artifact, relative to the archive root.
@@ -575,8 +860,14 @@ pub struct ReleaseList {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ReleaseRef {
+    #[schemars(regex(pattern = SEMVER_PATTERN))]
     pub version: String,
+    /// The vendor's own spelling of the release, copied from the packslip's
+    /// `source.tag`, so a consumer can accept a request in either form.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
     /// RFC 3339 UTC, copied from the release's packslip.
+    #[schemars(extend("format" = "date-time"))]
     pub published_at: String,
     /// URL of the release's `packslip.sigstore.json`. The statement's
     /// subject of the same name carries that file's digest.
@@ -595,6 +886,11 @@ pub struct ReleaseRef {
     /// [`Extensions`].
     #[serde(default, skip_serializing_if = "Extensions::is_empty")]
     pub extensions: Extensions,
+    /// What the list's publisher checked about this release beyond the
+    /// vendor's own document: a scan, verified provenance. Empty for a
+    /// vendor's own list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence: Vec<Evidence>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -663,6 +959,22 @@ pub enum InvalidDocument {
     DuplicateRequiredBin(String, String),
     #[error("artifact {0:?} requires command {1:?}, which the release itself provides")]
     RequiredBinIsOwn(String, String),
+    #[error(
+        "artifact {artifact:?} is a bare executable, so its bin must be {expected:?}, not {path:?}"
+    )]
+    BareBin {
+        artifact: String,
+        expected: String,
+        path: String,
+    },
+    #[error(
+        "artifact {0:?} has {1} {2:?}; a value is a lowercase word of letters, digits, _, -, and ."
+    )]
+    Token(String, &'static str, String),
+    #[error(
+        "artifacts {0:?} and {1:?} describe the same os, arch, libc, variant, and format; give one a variant"
+    )]
+    AmbiguousArtifacts(String, String),
     #[error("at least one artifact is required")]
     NoArtifacts,
     #[error("a resource has an empty kind")]
@@ -695,6 +1007,8 @@ pub enum InvalidDocument {
     SkillName(String),
     #[error("app {0:?} must come from an archive")]
     AppSource(String),
+    #[error("sbom {0:?} needs a format (cyclonedx or spdx) and a static source, not exec")]
+    Sbom(String),
     #[error("at least one release is required")]
     NoReleases,
     #[error("release {0:?} appears more than once")]
@@ -793,7 +1107,7 @@ impl Statement {
         }
         check_extensions("the release", &p.extensions)?;
         let mut seen = std::collections::BTreeSet::new();
-        for artifact in &p.artifacts {
+        for (i, artifact) in p.artifacts.iter().enumerate() {
             if !seen.insert(artifact.name.as_str()) {
                 return Err(InvalidDocument::DuplicateArtifact(artifact.name.clone()));
             }
@@ -804,6 +1118,28 @@ impl Statement {
             if !self.subject.iter().any(|s| s.name == artifact.name) {
                 return Err(InvalidDocument::OrphanArtifact(artifact.name.clone()));
             }
+            for (field, value) in [
+                ("os", &artifact.os),
+                ("arch", &artifact.arch),
+                ("libc", &artifact.libc),
+                ("variant", &artifact.variant),
+                ("format", &artifact.format),
+            ] {
+                if let Some(value) = value
+                    && !valid_token(value)
+                {
+                    return Err(InvalidDocument::Token(
+                        artifact.name.clone(),
+                        field,
+                        value.clone(),
+                    ));
+                }
+            }
+            let bare = artifact
+                .format
+                .as_deref()
+                .filter(|f| is_bare_format(f))
+                .map(|f| bare_file_name(&artifact.name, f));
             for bin in &artifact.bin {
                 if bin.path.is_empty() {
                     return Err(InvalidDocument::BinPath(artifact.name.clone()));
@@ -814,6 +1150,30 @@ impl Statement {
                         bin.name.clone(),
                     ));
                 }
+                if let Some(expected) = bare
+                    && bin.path != expected
+                {
+                    return Err(InvalidDocument::BareBin {
+                        artifact: artifact.name.clone(),
+                        expected: expected.to_string(),
+                        path: bin.path.clone(),
+                    });
+                }
+            }
+            // Two artifacts for one platform, variant, and format leave a
+            // consumer nothing to choose by.
+            if let Some(other) = p.artifacts[..i].iter().find(|a| {
+                a.os == artifact.os
+                    && a.arch == artifact.arch
+                    && a.libc == artifact.libc
+                    && a.variant == artifact.variant
+                    && a.format == artifact.format
+                    && a.format.is_some()
+            }) {
+                return Err(InvalidDocument::AmbiguousArtifacts(
+                    other.name.clone(),
+                    artifact.name.clone(),
+                ));
             }
         }
         let bin_names: std::collections::BTreeSet<&str> = p
@@ -878,6 +1238,17 @@ impl Statement {
             let Some(source) = resource.source() else {
                 return Err(InvalidDocument::ResourceSource(label));
             };
+            for (field, value) in [
+                ("os", &resource.os),
+                ("arch", &resource.arch),
+                ("libc", &resource.libc),
+            ] {
+                if let Some(value) = value
+                    && !valid_token(value)
+                {
+                    return Err(InvalidDocument::Token(label, field, value.clone()));
+                }
+            }
             match source {
                 ResourceSource::Archive => {
                     if !valid_relative_path(resource.archive.as_deref().unwrap_or_default()) {
@@ -952,6 +1323,9 @@ impl Statement {
                 }
                 "app" if source != ResourceSource::Archive => {
                     return Err(InvalidDocument::AppSource(label));
+                }
+                "sbom" if resource.format.is_none() || source == ResourceSource::Exec => {
+                    return Err(InvalidDocument::Sbom(label));
                 }
                 _ => {}
             }
@@ -1146,7 +1520,6 @@ mod tests {
                 attested_by: Attestor::Vendor,
                 evidence: vec![],
                 notes_url: None,
-                sbom: None,
                 extensions: Extensions::new(),
             },
         }
@@ -1788,6 +2161,390 @@ mod tests {
             repository_subpath("github.com/biomejs/biome/crates/cli"),
             Some("crates/cli")
         );
+    }
+
+    #[test]
+    fn tags_name_versions() {
+        let cases = [
+            ("v1.2.3", "github.com/o/r", Some("1.2.3")),
+            ("1.2.3", "github.com/o/r", Some("1.2.3")),
+            ("v1.2.3-rc.1", "github.com/o/r", Some("1.2.3-rc.1")),
+            ("jq-1.7.1", "github.com/jqlang/jq", Some("1.7.1")),
+            ("jq@1.7.1", "github.com/jqlang/jq", Some("1.7.1")),
+            (
+                "oxlint_v1.0.0",
+                "github.com/oxc-project/oxc/oxlint",
+                Some("1.0.0"),
+            ),
+            (
+                "cli/v1.9.4",
+                "github.com/biomejs/biome/crates/cli",
+                Some("1.9.4"),
+            ),
+            (
+                "crates/cli@1.9.4",
+                "github.com/biomejs/biome/crates/cli",
+                Some("1.9.4"),
+            ),
+            // Loose spellings normalize.
+            ("v4.1", "github.com/Genymobile/scrcpy", Some("4.1.0")),
+            ("25.07.1", "github.com/helix-editor/helix", Some("25.7.1")),
+            ("2026.08.31", "github.com/o/r", Some("2026.8.31")),
+            // Another tool's tag, or no version at all.
+            ("web-v2026.8.1", "github.com/bitwarden/clients/cli", None),
+            ("rust-v0.1.0", "github.com/openai/codex", None),
+            ("2026-08-31", "github.com/o/r", None),
+            ("latest", "github.com/o/r", None),
+            ("nightly", "github.com/o/r", None),
+            ("r42", "github.com/o/r", None),
+            ("1.2.3.4", "github.com/o/r", None),
+            ("v1.2.3", "tool.example.com", Some("1.2.3")),
+        ];
+        for (tag, project, expected) in cases {
+            assert_eq!(
+                tag_version(tag, project).as_deref(),
+                expected,
+                "{tag} in {project}"
+            );
+        }
+        assert_eq!(
+            normalize_version("1.2.3+build.7").as_deref(),
+            Some("1.2.3+build.7")
+        );
+        assert_eq!(normalize_version("1").as_deref(), None);
+        assert_eq!(normalize_version("1.x").as_deref(), None);
+    }
+
+    #[test]
+    fn selection_follows_the_consumer_rules() {
+        let artifact = |name: &str,
+                        os: Option<&str>,
+                        arch: Option<&str>,
+                        libc: Option<&str>,
+                        format: &str,
+                        variant: Option<&str>| Artifact {
+            name: name.into(),
+            os: os.map(str::to_string),
+            arch: arch.map(str::to_string),
+            libc: libc.map(str::to_string),
+            variant: variant.map(str::to_string),
+            size: 1,
+            url: None,
+            format: Some(format.into()),
+            bin: vec![],
+            requires: None,
+            provenance: vec![],
+            extensions: Extensions::new(),
+        };
+        let linux = Host {
+            os: "linux",
+            arch: "x86_64",
+            libc: Some("gnu"),
+        };
+        let formats = ["tar.xz", "tar.gz", "zip", "raw"];
+        let artifacts = vec![
+            artifact(
+                "a.tar.gz",
+                Some("linux"),
+                Some("x86_64"),
+                Some("gnu"),
+                "tar.gz",
+                None,
+            ),
+            artifact(
+                "a.zip",
+                Some("linux"),
+                Some("x86_64"),
+                Some("gnu"),
+                "zip",
+                None,
+            ),
+            artifact(
+                "a-musl.tar.gz",
+                Some("linux"),
+                Some("x86_64"),
+                Some("musl"),
+                "tar.gz",
+                None,
+            ),
+            artifact(
+                "a-fips.tar.gz",
+                Some("linux"),
+                Some("x86_64"),
+                Some("gnu"),
+                "tar.gz",
+                Some("fips"),
+            ),
+            artifact("a.jar", None, None, None, "zip", None),
+            artifact("a-mac", Some("darwin"), None, None, "raw", None),
+            artifact(
+                "a.deb",
+                Some("linux"),
+                Some("x86_64"),
+                Some("gnu"),
+                "deb",
+                None,
+            ),
+        ];
+        // Format is a preference, never a tie: tar.gz beats zip.
+        assert_eq!(
+            select_artifact(&artifacts, &linux, None, &formats)
+                .unwrap()
+                .name,
+            "a.tar.gz"
+        );
+        // A variant is only taken when asked for.
+        assert_eq!(
+            select_artifact(&artifacts, &linux, Some("fips"), &formats)
+                .unwrap()
+                .name,
+            "a-fips.tar.gz"
+        );
+        assert_eq!(
+            select_artifact(&artifacts, &linux, Some("debug"), &formats),
+            Err(Selection::NoMatch)
+        );
+        // The universal macOS binary fits either arch; the jar fits any host.
+        let mac = Host {
+            os: "darwin",
+            arch: "aarch64",
+            libc: None,
+        };
+        assert_eq!(
+            select_artifact(&artifacts, &mac, None, &formats)
+                .unwrap()
+                .name,
+            "a-mac"
+        );
+        let bsd = Host {
+            os: "freebsd",
+            arch: "x86_64",
+            libc: None,
+        };
+        assert_eq!(
+            select_artifact(&artifacts, &bsd, None, &formats)
+                .unwrap()
+                .name,
+            "a.jar"
+        );
+        // A host that reports no libc takes only artifacts that need none.
+        let unknown_libc = Host {
+            os: "linux",
+            arch: "x86_64",
+            libc: None,
+        };
+        assert_eq!(
+            select_artifact(&artifacts, &unknown_libc, None, &formats)
+                .unwrap()
+                .name,
+            "a.jar"
+        );
+        // Only formats the consumer handles count.
+        assert_eq!(
+            select_artifact(&artifacts, &linux, None, &["deb"])
+                .unwrap()
+                .name,
+            "a.deb"
+        );
+        assert_eq!(
+            select_artifact(&artifacts, &linux, None, &["7z"]),
+            Err(Selection::NoMatch)
+        );
+        // Two artifacts nothing tells apart are refused, not guessed at.
+        let twins = vec![
+            artifact(
+                "x.tar.gz",
+                Some("linux"),
+                Some("x86_64"),
+                Some("gnu"),
+                "tar.gz",
+                None,
+            ),
+            artifact(
+                "y.tar.gz",
+                Some("linux"),
+                Some("x86_64"),
+                Some("gnu"),
+                "tar.gz",
+                None,
+            ),
+        ];
+        assert_eq!(
+            select_artifact(&twins, &linux, None, &formats),
+            Err(Selection::Ambiguous("x.tar.gz".into(), "y.tar.gz".into()))
+        );
+        let mut doc = sample();
+        doc.subject.push(Subject {
+            name: "twin".into(),
+            digest: doc.subject[0].digest.clone(),
+        });
+        doc.predicate.artifacts.push(Artifact {
+            name: "twin".into(),
+            ..doc.predicate.artifacts[0].clone()
+        });
+        assert!(matches!(
+            doc.validate(),
+            Err(InvalidDocument::AmbiguousArtifacts(_, _))
+        ));
+
+        // Resources apply to the artifacts their scope names.
+        let any = Resource {
+            archive: Some("man/t.1".into()),
+            ..Resource::new("man")
+        };
+        let windows = Resource {
+            os: Some("windows".into()),
+            ..any.clone()
+        };
+        assert!(resource_fits(&any, &artifacts[0]));
+        assert!(!resource_fits(&windows, &artifacts[0]));
+        assert!(resource_fits(
+            &windows,
+            &artifact("w.zip", Some("windows"), Some("x86_64"), None, "zip", None)
+        ));
+        assert!(
+            !resource_fits(&windows, &artifacts[4]),
+            "a portable artifact is not a Windows one"
+        );
+    }
+
+    #[test]
+    fn vocabularies_and_bare_executables_validate() {
+        for ok in ["linux", "x86_64", "tar.gz", "7z", "install_only", "musl"] {
+            assert!(valid_token(ok), "{ok}");
+        }
+        for bad in ["", "Linux", "tar gz", ".hidden", "x86-64!", "ünix"] {
+            assert!(!valid_token(bad), "{bad}");
+        }
+        for (field, set) in [
+            ("os", OS_VALUES),
+            ("arch", ARCH_VALUES),
+            ("libc", LIBC_VALUES),
+            ("format", FORMAT_VALUES),
+        ] {
+            for value in set {
+                assert!(valid_token(value), "{field} {value}");
+            }
+        }
+        let mut s = sample();
+        s.predicate.artifacts[0].os = Some("Linux".into());
+        assert!(matches!(
+            s.validate(),
+            Err(InvalidDocument::Token(_, "os", _))
+        ));
+        let mut s = sample();
+        s.predicate.resources.push(Resource {
+            arch: Some("X64".into()),
+            archive: Some("m.1".into()),
+            ..Resource::new("man")
+        });
+        assert!(matches!(
+            s.validate(),
+            Err(InvalidDocument::Token(_, "arch", _))
+        ));
+
+        assert!(is_bare_format("raw") && is_bare_format("gz") && !is_bare_format("tar.gz"));
+        assert_eq!(
+            bare_file_name("argo-linux-amd64.gz", "gz"),
+            "argo-linux-amd64"
+        );
+        assert_eq!(
+            bare_file_name("argo-linux-amd64", "raw"),
+            "argo-linux-amd64"
+        );
+        assert_eq!(bare_file_name("tool.tar.gz", "tar.gz"), "tool.tar.gz");
+        let mut s = sample();
+        s.predicate.artifacts[0].format = Some("gz".into());
+        s.predicate.artifacts[0].name = "mise-linux-x64.gz".into();
+        s.subject[0].name = "mise-linux-x64.gz".into();
+        s.predicate.artifacts[0].bin = vec![Bin::named("mise-linux-x64", "mise")];
+        s.validate().unwrap();
+        s.predicate.artifacts[0].bin = vec![Bin::new("mise")];
+        assert!(matches!(s.validate(), Err(InvalidDocument::BareBin { .. })));
+
+        // An SBOM is a resource with a format and a source that verifies.
+        let sbom = |source: Resource| {
+            let mut s = sample();
+            s.subject.push(Subject {
+                name: "mise.cdx.json".into(),
+                digest: Digest {
+                    sha256: "e".repeat(64),
+                    sha512: None,
+                },
+            });
+            s.predicate.resources.push(Resource {
+                format: Some("cyclonedx".into()),
+                ..source
+            });
+            s
+        };
+        sbom(Resource {
+            asset: Some("mise.cdx.json".into()),
+            ..Resource::new("sbom")
+        })
+        .validate()
+        .unwrap();
+        let mut no_format = sbom(Resource {
+            asset: Some("mise.cdx.json".into()),
+            ..Resource::new("sbom")
+        });
+        no_format.predicate.resources[0].format = None;
+        assert!(matches!(
+            no_format.validate(),
+            Err(InvalidDocument::Sbom(_))
+        ));
+        let mut by_exec = sbom(Resource {
+            asset: Some("mise.cdx.json".into()),
+            ..Resource::new("sbom")
+        });
+        by_exec.predicate.resources[0].asset = None;
+        by_exec.predicate.resources[0].exec = vec!["mise".into(), "sbom".into()];
+        by_exec.subject.pop();
+        assert!(matches!(by_exec.validate(), Err(InvalidDocument::Sbom(_))));
+
+        // A list entry may carry what its publisher checked.
+        let mut list = sample_list();
+        list.predicate.releases[0].evidence = vec![Evidence {
+            kind: "scan".into(),
+            detail: Some("https://scans.example/1".into()),
+        }];
+        list.predicate.releases[0].tag = Some("v2026.9.1".into());
+        list.validate().unwrap();
+        let json = serde_json::to_string(&list).unwrap();
+        assert!(
+            json.contains(r#""tag":"v2026.9.1""#) && json.contains(r#""kind":"scan""#),
+            "{json}"
+        );
+    }
+
+    #[test]
+    fn portable_duplicates_are_ambiguous() {
+        let mut s = sample();
+        for artifact in &mut s.predicate.artifacts {
+            artifact.os = None;
+            artifact.arch = None;
+            artifact.libc = None;
+            artifact.format = Some("zip".into());
+        }
+        s.validate().unwrap();
+        s.subject.push(Subject {
+            name: "twin.zip".into(),
+            digest: s.subject[0].digest.clone(),
+        });
+        s.predicate.artifacts.push(Artifact {
+            name: "twin.zip".into(),
+            ..s.predicate.artifacts[0].clone()
+        });
+        assert!(matches!(
+            s.validate(),
+            Err(InvalidDocument::AmbiguousArtifacts(_, _))
+        ));
+        // Without a format neither is selectable, so nothing is ambiguous.
+        for artifact in &mut s.predicate.artifacts {
+            artifact.format = None;
+            artifact.bin.clear();
+        }
+        s.validate().unwrap();
     }
 
     #[test]
