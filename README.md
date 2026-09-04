@@ -10,8 +10,9 @@
 A signed release manifest for vendor binaries. One file per release,
 `packslip.sigstore.json`, says what shipped and how to verify it; any
 consumer checks it against one pinned identity or key and gets checksums,
-platforms, executables, and provenance links, with no per-vendor logic and
-no registry entry.
+platforms, executables, provenance links, and whatever else ships with
+them (completions, man pages, a CLI spec, a skill, a desktop entry), with
+no per-vendor logic and no registry entry.
 
 Site and specification: [packslip.dev](https://packslip.dev) ·
 [release/v1](https://packslip.dev/release/v1/)
@@ -29,6 +30,10 @@ steps:
     with:
       artifacts: dist/*
       bin: mytool
+      resources: |
+        completion/zsh=archive:share/zsh/site-functions/_mytool
+        man=archive:share/man/man1/mytool.1
+        cli-spec/usage=exec:mytool usage
 ```
 
 That attests SLSA build provenance for the artifacts, digests them, signs
@@ -63,6 +68,18 @@ the repository. Two builds for one platform take a variant
 from its file is `--bin oxlint=bin/oxlint-x86_64`, and a repository that
 redistributes a vendor's artifacts without a vendor packslip signs one of
 its own with `--attested-by repackager --evidence apt-release-gpg=<key>`.
+
+What ships besides the executables is a `resources` entry with a kind and
+one source: `--resource completion/zsh=archive:share/zsh/site-functions/_mytool`
+for a file inside every archive, `--resource skill/mytool=repo:skills/mytool`
+for a path at the release commit, `--resource skill/mytool=asset:dist/skill.tar.gz`
+for a separate release file digested alongside the artifacts, and
+`--resource 'completion/bash,zsh,fish=exec:mytool completion {shell}'` for
+a command consumers may run. A `cli-spec/usage` entry points at a
+[usage](https://usage.jdx.dev) spec, from which a consumer derives
+completions, a man page, and docs with its own tooling. Desktop
+applications add `desktop`, `icon`, and `app` entries; there is no CLI or
+GUI type, since the entries say which a release is.
 
 ## Layout
 

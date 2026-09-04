@@ -43,6 +43,16 @@ inputs:
       whitespace separated (tool-fips-linux-x64.tar.gz=fips).
     required: false
     default: ""
+  resources:
+    description: >
+      What ships besides the executables, one per line, each a `packslip
+      create --resource` value: KIND[/QUALIFIER]=SOURCE:VALUE, such as
+      completion/zsh=archive:share/zsh/site-functions/_tool,
+      man=archive:share/man/man1/tool.1, cli-spec/usage=exec:tool usage,
+      skill/tool=repo:skills/tool, or skill/tool=asset:dist/tool-skill.tar.gz
+      (a file digested alongside the artifacts).
+    required: false
+    default: ""
   prerelease:
     description: Mark the release as not for general use; defaults to the GitHub release's flag
     required: false
@@ -171,6 +181,7 @@ runs:
         IN_URL_BASE: ${{ inputs.url-base }}
         IN_BIN: ${{ inputs.bin }}
         IN_VARIANTS: ${{ inputs.variants }}
+        IN_RESOURCES: ${{ inputs.resources }}
         IN_PRERELEASE: ${{ inputs.prerelease }}
         IN_CHANNEL: ${{ inputs.channel }}
         IN_NOTES_URL: ${{ inputs.notes-url }}
@@ -211,6 +222,9 @@ runs:
         [ "$prerelease" = true ] && args+=(--prerelease)
         [ -n "$IN_CHANNEL" ] && args+=(--channel "$IN_CHANNEL")
         for b in $IN_BIN; do args+=(--bin "$b"); done
+        while IFS= read -r line; do
+          [ -n "$line" ] && args+=(--resource "$line")
+        done <<< "$IN_RESOURCES"
         [ -n "$IN_SUPERSEDES" ] && args+=(--supersedes "$IN_SUPERSEDES")
         [ -n "$IN_SBOM" ] && args+=(--sbom "$IN_SBOM")
         mapfile -t files < "${RUNNER_TEMP}/packslip-files"

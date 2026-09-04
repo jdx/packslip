@@ -9,8 +9,9 @@ A vendor publishes one signed, machine-readable document per release that
 says what the artifacts are and how to verify them. Any consumer (mise,
 omapac and the Omarchy Package Repository, aqua, Homebrew, a corporate
 mirror) verifies it against a single pinned identity or key and gets
-checksums, platform mapping, executables, and provenance links, without
-per-vendor logic and without a registry entry. The name is neutral on
+checksums, platform mapping, executables, provenance links, and what
+else ships with them (completions, man pages, a CLI spec, a skill, a
+desktop entry), without per-vendor logic and without a registry entry. The name is neutral on
 purpose: a packing slip is the paper in the box listing exactly what
 shipped.
 
@@ -107,6 +108,12 @@ understand the bundle as-is.
         "provenance": ["https://api.github.com/repos/jdx/mise/attestations/sha256:..."]
       }
     ],
+    "resources": [
+      { "kind": "completion", "shell": "zsh", "archive": "mise/share/zsh/site-functions/_mise" },
+      { "kind": "man", "archive": "mise/man/man1/mise.1" },
+      { "kind": "cli-spec", "format": "usage", "bin": "mise", "archive": "mise/share/usage/mise.kdl" },
+      { "kind": "skill", "name": "mise", "repo": "skills/mise" }
+    ],
     "identity": {
       "scheme": "sigstore-oidc",
       "key_id": "https://github.com/jdx/mise/.github/workflows/release.yml@refs/tags/v2026.9.1",
@@ -121,12 +128,13 @@ understand the bundle as-is.
 
 Rules:
 
-- `subject` lists every artifact by file name with its digests;
-  `artifacts` carries the same names with platform, size, download URL,
-  format, executables, requirements, and provenance links. The two sets of
-  names must match exactly, and neither may contain a duplicate. At least
-  one artifact is required. `sha256` is required and is 64 lowercase hex
-  characters; `sha512` is optional and 128.
+- `subject` lists every artifact by file name with its digests, and any
+  separate file a resource comes from; `artifacts` carries the artifact
+  names with platform, size, download URL, format, executables,
+  requirements, and provenance links. Every artifact is a subject, every
+  subject is an artifact or a resource's `asset`, and neither list contains
+  a duplicate. At least one artifact is required. `sha256` is required and
+  is 64 lowercase hex characters; `sha512` is optional and 128.
 - `project` is a name as defined above. `version` is the vendor's version
   string, compared as opaque text. `published_at` is RFC 3339 UTC.
 - `prerelease` (default false) marks a release not meant for general use;
@@ -153,6 +161,8 @@ Rules:
 - `provenance` holds URLs of SLSA build provenance statements for that
   artifact. The packslip proves the manifest; verified provenance proves
   the build, at whatever SLSA build level its builder establishes.
+- `resources` lists what the release ships besides its executables, each
+  entry a `kind` and one source. See Resources.
 - `supersedes` names the release this one replaces, so a consumer can
   detect a rollback without a version-ordering scheme. `notes_url` points
   at the release notes.
@@ -165,6 +175,73 @@ Rules:
 
 The JSON schema is printed by `packslip schema` and published at
 `https://packslip.dev/schema/release-v1.json`.
+
+### Resources
+
+A release usually ships more than its executables: shell completions, a
+man page, a spec of the CLI, an agent skill, and, for a desktop
+application, the entry, icons, or app bundle a launcher needs. A registry
+entry would hold all of these, so `resources` does. Each entry names a
+`kind` and exactly one source. The sources differ in what a consumer can
+verify, and a consumer prefers them in this order:
+
+- `archive`: a path inside the artifact the consumer selected, relative to
+  the archive root. The artifact's digest already covers it. Most vendors
+  use one layout on every platform; one that does not uses another source
+  for the platforms that differ.
+- `asset`: a separate release file. It is listed in `subject` with its
+  digest and the entry carries its download `url`, so it verifies exactly
+  as an artifact does. A skill directory ships this way as an archive of
+  its own.
+- `repo`: a path in the source repository at `source.commit`, which pins
+  its content. `source.commit` is required.
+- `exec`: an argv whose first element is a `bin` name and whose stdout is
+  the file, run once the executable is installed. Nothing verifies it
+  beyond the executable itself, and it runs a freshly downloaded binary at
+  install time rather than at first use. A consumer may decline to run
+  anything; one that declines treats the entry as absent rather than
+  failing. A vendor lists a static source first and an `exec` entry last.
+
+Documented kinds:
+
+- `completion`: a shell completion script. With a static source, `shell`
+  names the shell: `bash`, `zsh`, `fish`, `powershell`, `nushell`,
+  `elvish`. With `exec`, `shells` lists every shell the command generates
+  and the argv carries a `{shell}` placeholder.
+- `man`: a man page. The section is the file's suffix, as in `mise.1`.
+- `cli-spec`: a machine-readable description of the executable named by
+  `bin`, in `format`. `usage` is the documented format: a
+  [usage](https://usage.jdx.dev) spec, from which the consumer's own copy
+  of `usage` generates completions for any shell, a man page, and
+  markdown documentation, so nothing of the vendor's runs at install time.
+  Completions derived from a usage spec call `usage complete-word` at
+  shell runtime, so a consumer that derives them installs `usage` beside
+  the tool; man pages and documentation carry no such dependency. A
+  vendor that does not want that dependency on its users' machines ships
+  static completions as well.
+- `skill`: an agent skill in the Agent Skills format: a directory holding
+  `SKILL.md` and whatever it references, named by `name`. With `exec`, the
+  command prints a single `SKILL.md`.
+- `desktop`: a freedesktop desktop entry, for a Linux launcher. AppImage,
+  deb, rpm, and the Windows installer formats carry their own.
+- `icon`: an icon file. A hicolor path (`share/icons/hicolor/512x512/...`)
+  gives its size.
+- `app`: a macOS application bundle inside a `dmg` or `zip`, by its path
+  in the archive, which a consumer copies to Applications. Archive only.
+  Whether Gatekeeper runs it is a matter of Apple's notarization, which a
+  packslip says nothing about.
+
+For any one need, a consumer takes the first source it can use in the
+order above: an `archive` or `asset` entry, then `repo`, then one derived
+from a `cli-spec`, and only then `exec`. It ignores kinds and sources it
+does not know, so a vendor may ship a `font` or a kind of its own before
+the specification names it.
+
+There is no type field. An artifact with `bin` is something a
+command-line package manager installs; a release whose resources include
+`desktop` or `app` is something a desktop launcher installs; many
+applications are both, and the entries say so without a category that
+would misfile them.
 
 ### Repackager attestation
 
@@ -326,7 +403,8 @@ and takes no part in ordering.
    from the document itself, and never trust a bundle's key hint.
 2. Verify the bundle: signature, certificate chain and log entry as
    sigstore defines them, then the statement's structure, then the
-   subject digest and size of every artifact you downloaded.
+   subject digest of every artifact or asset you downloaded, and the size
+   of every artifact.
 3. Enforce no-downgrade: refuse a release whose `identity.scheme` is
    weaker than the last accepted one, whose signer changed without a human
    saying so, whose `attested_by` went from vendor to repackager, or that
@@ -343,6 +421,9 @@ and takes no part in ordering.
    for them; order as `version_order` says.
 7. Select one artifact by os, arch, libc, format, and, when needed,
    variant. Refuse to guess between two artifacts that match.
+8. Take each resource from the most verifiable source offered, in the
+   order Resources gives; run an `exec` entry only if you have chosen to
+   run vendor code at install time; ignore kinds you do not know.
 
 ## What a verified packslip proves
 
@@ -355,9 +436,13 @@ consumer verifies earns the SLSA build level its builder establishes
 L3). Consumers record what they verified as a SLSA Verification Summary
 or in their own terms; packslip defines no level scale of its own.
 
+A resource from an `archive` or `asset` is covered by the same digests;
+one from `repo` by the commit; an `exec` entry by nothing beyond the
+executable it runs.
+
 `packslip verify` reports the scheme, the signer, who attested, the log
-time, and whether every artifact links provenance. It does not fetch or
-verify the provenance statements.
+time, whether every artifact links provenance, and the resources declared.
+It does not fetch or verify the provenance statements.
 
 ## Tooling
 
@@ -368,17 +453,26 @@ Action.
 - In a release job: `uses: jdx/packslip@v1` with `artifacts: dist/*`
   attests build provenance for the artifacts, signs the packslip
   keylessly, links the provenance from it, verifies the result, and
-  uploads the bundle to the release. A monorepo runs the step once per
-  tool with `project: github.com/owner/repo/<tool>`.
+  uploads the bundle to the release. `bin` names the executables and
+  `resources`, one `--resource` value per line, the rest. A monorepo runs
+  the step once per tool with `project: github.com/owner/repo/<tool>`.
 - `packslip create --project NAME --version X --out dist --url-base URL
   --source-repo URL --tag vX --bin NAME artifact...` digests the artifacts,
   infers platforms from file names (`path:os/arch[/libc]` overrides,
   `@variant` for a second build of one platform), and writes the signed
   bundle. `--bin NAME=PATH` names an executable differently from its file,
-  `--url FILENAME=URL` sets one artifact's URL, `--prerelease`,
+  `--url FILENAME=URL` sets one artifact's or asset's URL, `--prerelease`,
   `--channel`, `--notes-url`, `--no-sha512`, `--attested-by repackager`
-  with `--evidence KIND[=DETAIL]`. Add `--key release.key` to sign with a
-  key; `--no-log` skips Rekor.
+  with `--evidence KIND[=DETAIL]`. `--resource KIND[/QUALIFIER]=SOURCE:VALUE`
+  adds a resource: `completion/zsh=archive:share/zsh/site-functions/_tool`,
+  `completion/bash,zsh,fish=exec:tool completion {shell}`,
+  `man=archive:man/man1/tool.1`, `cli-spec/usage=exec:tool usage` (the
+  executable defaults to the sole `--bin`; otherwise
+  `cli-spec/usage/NAME`), `skill/NAME=repo:skills/tool`,
+  `skill/NAME=asset:dist/tool-skill.tar.gz` (a local file, digested into
+  the subject), `desktop=archive:...`, `icon=archive:...`,
+  `app=archive:Tool.app`. Add `--key release.key` to sign with a key;
+  `--no-log` skips Rekor.
 - `packslip keygen -o release.key` writes an Ed25519 secret seed (mode
   0600) and `release.pub`.
 - `packslip verify BUNDLE [--artifact file...]` verifies and exits 1 on

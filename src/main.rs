@@ -4,11 +4,11 @@ use std::path::{Path, PathBuf};
 
 use eyre::{Context as _, Result, bail};
 use packslip::cli::{BinInfo, Version};
-use packslip::create::{ArtifactInput, ListRequest, ListedRelease, Request};
+use packslip::create::{ArtifactInput, AssetInput, ListRequest, ListedRelease, Request};
 use packslip::minisign::{PublicKey, SecretKey, key_id_hex};
 use packslip::model::{
-    Attestor, Bin, Evidence, RELEASES_PREDICATE_TYPE, ReleaseListStatement, Source, Statement,
-    VersionOrder,
+    Attestor, Bin, Evidence, RELEASES_PREDICATE_TYPE, ReleaseListStatement, Resource, Source,
+    Statement, VersionOrder,
 };
 use packslip::sigstore::{self, Policy, Signer, Trust};
 use packslip::verify::Options;
@@ -336,6 +336,16 @@ struct Create {
     /// Executable inside every archive, as PATH or NAME=PATH (repeatable)
     #[usage(long)]
     bin: Vec<String>,
+    /// Something else the release ships, as KIND[/QUALIFIER]=SOURCE:VALUE
+    /// where SOURCE is archive (a path inside every archive), asset (a
+    /// separate release file, by local path), repo (a path at --commit),
+    /// or exec (a command whose stdout is the file). Kinds: completion/SHELL
+    /// (or completion/SHELL,SHELL with exec and a {shell} placeholder),
+    /// man, cli-spec/FORMAT[/BIN], skill/NAME, desktop, icon, app.
+    /// Example: 'completion/zsh=archive:share/zsh/site-functions/_tool'
+    /// (repeatable)
+    #[usage(long)]
+    resource: Vec<String>,
     /// Provenance URL for every artifact (repeatable, positional order)
     #[usage(long)]
     provenance: Vec<String>,
@@ -356,6 +366,78 @@ fn parse_bin(spec: &str) -> Bin {
         Some((name, path)) if !name.is_empty() && !path.is_empty() => Bin::named(path, name),
         _ => Bin::new(spec),
     }
+}
+
+/// A parsed `--resource`: the entry, and the local file behind an `asset`
+/// source.
+struct ResourceSpec {
+    resource: Resource,
+    asset_path: Option<PathBuf>,
+}
+
+/// `KIND[/QUALIFIER...]=SOURCE:VALUE`. `completion/zsh=archive:PATH`,
+/// `completion/bash,zsh,fish=exec:tool completion {shell}`,
+/// `skill/NAME=repo:PATH`, `cli-spec/usage[/BIN]=exec:tool usage`,
+/// `man=archive:PATH`, `app=archive:Tool.app`. With one `--bin`, a
+/// `cli-spec` may omit the executable's name.
+fn parse_resource(spec: &str, default_bin: Option<&str>) -> Result<ResourceSpec> {
+    let Some((head, value)) = spec.split_once('=') else {
+        bail!("--resource wants KIND[/QUALIFIER]=SOURCE:VALUE, got {spec:?}");
+    };
+    let mut parts = head.split('/');
+    let kind = parts.next().unwrap_or_default();
+    if kind.is_empty() {
+        bail!("--resource {spec:?} has an empty kind");
+    }
+    let qualifiers: Vec<&str> = parts.collect();
+    let mut resource = Resource::new(kind);
+    match (kind, qualifiers.as_slice()) {
+        ("completion", [shell]) if shell.contains(',') => {
+            resource.shells = shell.split(',').map(str::to_string).collect();
+        }
+        ("completion", [shell]) => resource.shell = Some(shell.to_string()),
+        ("completion", _) => bail!("--resource {spec:?}: completion wants completion/SHELL"),
+        ("cli-spec", [format]) => {
+            resource.format = Some(format.to_string());
+            let Some(bin) = default_bin else {
+                bail!("--resource {spec:?}: say which executable, as cli-spec/{format}/BIN");
+            };
+            resource.bin = Some(bin.to_string());
+        }
+        ("cli-spec", [format, bin]) => {
+            resource.format = Some(format.to_string());
+            resource.bin = Some(bin.to_string());
+        }
+        ("cli-spec", _) => bail!("--resource {spec:?}: cli-spec wants cli-spec/FORMAT[/BIN]"),
+        ("skill", [name]) => resource.name = Some(name.to_string()),
+        ("skill", _) => bail!("--resource {spec:?}: skill wants skill/NAME"),
+        (_, []) => {}
+        (_, [name]) => resource.name = Some(name.to_string()),
+        (_, _) => bail!("--resource {spec:?}: {kind} takes at most one qualifier"),
+    }
+    let mut asset_path = None;
+    match value.split_once(':') {
+        Some(("archive", path)) => resource.archive = Some(path.to_string()),
+        Some(("repo", path)) => resource.repo = Some(path.to_string()),
+        Some(("exec", argv)) => {
+            resource.exec = argv.split_whitespace().map(str::to_string).collect();
+        }
+        Some(("asset", path)) => {
+            let path = PathBuf::from(path);
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                bail!("--resource {spec:?}: asset wants a file path");
+            };
+            resource.asset = Some(name.to_string());
+            asset_path = Some(path);
+        }
+        _ => bail!(
+            "--resource {spec:?}: the value must start with archive:, asset:, repo:, or exec:"
+        ),
+    }
+    Ok(ResourceSpec {
+        resource,
+        asset_path,
+    })
 }
 
 /// `KIND` or `KIND=DETAIL`.
@@ -415,12 +497,35 @@ impl RunWith<BinInfo> for Create {
                 }
             })
             .collect();
-        for name in urls.keys() {
-            if !parsed
-                .iter()
-                .any(|s| s.path.file_name().and_then(|n| n.to_str()) == Some(name.as_str()))
+        let default_bin = match bins.as_slice() {
+            [only] => Some(only.name.as_str()),
+            _ => None,
+        };
+        let mut resources = Vec::new();
+        let mut asset_paths: Vec<PathBuf> = Vec::new();
+        for spec in &self.resource {
+            let parsed = parse_resource(spec, default_bin)?;
+            if let Some(path) = parsed.asset_path
+                && !asset_paths.contains(&path)
             {
-                bail!("--url names {name:?}, which is not among the artifacts");
+                asset_paths.push(path);
+            }
+            resources.push(parsed.resource);
+        }
+        let assets: Vec<AssetInput<'_>> = asset_paths
+            .iter()
+            .map(|path| AssetInput {
+                path,
+                url: path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .and_then(|name| urls.get(name).cloned()),
+            })
+            .collect();
+        for name in urls.keys() {
+            let is_file = |path: &Path| path.file_name().and_then(|n| n.to_str()) == Some(name);
+            if !parsed.iter().any(|s| is_file(&s.path)) && !asset_paths.iter().any(|p| is_file(p)) {
+                bail!("--url names {name:?}, which is not among the artifacts or assets");
             }
         }
         let source = self.source_repo.as_ref().map(|repo| Source {
@@ -435,6 +540,8 @@ impl RunWith<BinInfo> for Create {
             version_order: self.version_order.map(|v| v.0).unwrap_or_default(),
             source,
             artifacts,
+            resources,
+            assets,
             url_base: self.url_base.as_deref(),
             notes_url: self.notes_url.as_deref(),
             sbom: self.sbom.as_deref(),
@@ -450,10 +557,16 @@ impl RunWith<BinInfo> for Create {
             .wrap_err_with(|| format!("creating {}", self.out.display()))?;
         let path = self.out.join(bundle_name(&self.project));
         std::fs::write(&path, &bundle)?;
+        let resource_count = created.statement.predicate.resources.len();
         println!(
-            "wrote {} ({} artifact(s), signed by {}{}{})",
+            "wrote {} ({} artifact(s){}, signed by {}{}{})",
             path.display(),
             created.statement.predicate.artifacts.len(),
+            if resource_count > 0 {
+                format!(", {resource_count} resource(s)")
+            } else {
+                String::new()
+            },
             identity.key_id,
             if attested_by == Attestor::Repackager {
                 ", repackager-attested"
@@ -806,7 +919,7 @@ impl RunWith<BinInfo> for Verify {
                     println!("{}", serde_json::to_string_pretty(&verified)?);
                 } else {
                     println!(
-                        "ok: {} {}{} published {} signed by {} ({}){}{} ({} of {} artifact(s) checked{})",
+                        "ok: {} {}{} published {} signed by {} ({}){}{} ({} of {} artifact(s) checked{}{})",
                         verified.project,
                         verified.version,
                         if verified.prerelease {
@@ -832,6 +945,11 @@ impl RunWith<BinInfo> for Verify {
                             ", provenance linked"
                         } else {
                             ""
+                        },
+                        if verified.resources.is_empty() {
+                            String::new()
+                        } else {
+                            format!(", {} resource(s)", verified.resources.len())
                         }
                     );
                 }
@@ -895,6 +1013,55 @@ mod tests {
             parse_evidence("apt-release-gpg=3FEF9748").detail.as_deref(),
             Some("3FEF9748")
         );
+    }
+
+    #[test]
+    fn resources_parse() {
+        let r = parse_resource(
+            "completion/zsh=archive:share/zsh/site-functions/_tool",
+            None,
+        )
+        .unwrap();
+        assert_eq!(r.resource.kind, "completion");
+        assert_eq!(r.resource.shell.as_deref(), Some("zsh"));
+        assert_eq!(
+            r.resource.archive.as_deref(),
+            Some("share/zsh/site-functions/_tool")
+        );
+        assert!(r.asset_path.is_none());
+        let r = parse_resource(
+            "completion/bash,zsh,fish=exec:tool completion {shell}",
+            None,
+        )
+        .unwrap();
+        assert_eq!(r.resource.shells, ["bash", "zsh", "fish"]);
+        assert_eq!(r.resource.exec, ["tool", "completion", "{shell}"]);
+        let r = parse_resource("cli-spec/usage=exec:tool usage", Some("tool")).unwrap();
+        assert_eq!(r.resource.format.as_deref(), Some("usage"));
+        assert_eq!(r.resource.bin.as_deref(), Some("tool"));
+        let r = parse_resource("cli-spec/usage/other=repo:specs/other.kdl", Some("tool")).unwrap();
+        assert_eq!(r.resource.bin.as_deref(), Some("other"));
+        assert_eq!(r.resource.repo.as_deref(), Some("specs/other.kdl"));
+        assert!(parse_resource("cli-spec/usage=repo:x", None).is_err());
+        let r = parse_resource("skill/tool=asset:dist/tool-skill.tar.gz", None).unwrap();
+        assert_eq!(r.resource.name.as_deref(), Some("tool"));
+        assert_eq!(r.resource.asset.as_deref(), Some("tool-skill.tar.gz"));
+        assert_eq!(r.asset_path, Some(PathBuf::from("dist/tool-skill.tar.gz")));
+        let r = parse_resource("man=archive:man/man1/tool.1", None).unwrap();
+        assert!(r.resource.name.is_none());
+        let r = parse_resource("font/Tool=archive:fonts/Tool.ttf", None).unwrap();
+        assert_eq!(r.resource.name.as_deref(), Some("Tool"));
+        for bad in [
+            "man",
+            "=archive:x",
+            "man=x",
+            "man=ftp:x",
+            "completion=archive:x",
+            "skill=archive:x",
+            "man/a/b=archive:x",
+        ] {
+            assert!(parse_resource(bad, None).is_err(), "{bad}");
+        }
     }
 
     #[test]

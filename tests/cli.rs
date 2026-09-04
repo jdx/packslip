@@ -548,3 +548,119 @@ fn variants_urls_evidence_and_monorepo_names() {
     assert_ne!(code, 0);
     assert!(err.contains("not among the --release entries"), "{err}");
 }
+
+#[test]
+fn resources_and_assets() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let (code, _, err) = packslip(d, &["keygen", "-o", "k.key"]);
+    assert_eq!(code, 0, "{err}");
+    std::fs::write(d.join("tool-linux-x64.tar.gz"), b"a").unwrap();
+    std::fs::write(d.join("tool-windows-x64.zip"), b"w").unwrap();
+    std::fs::write(d.join("tool-skill.tar.gz"), b"s").unwrap();
+    let create = |extra: &[&str]| {
+        let mut args = vec![
+            "create",
+            "--project",
+            "tool.example.com",
+            "--version",
+            "1.0.0",
+            "--key",
+            "k.key",
+            "--no-log",
+            "--out",
+            "dist",
+            "--url-base",
+            "https://dl.example.com/1.0.0",
+            "--source-repo",
+            "https://github.com/example/tool",
+            "--commit",
+            "0123456789abcdef0123456789abcdef01234567",
+            "--bin",
+            "tool",
+        ];
+        args.extend_from_slice(extra);
+        args.extend_from_slice(&["tool-linux-x64.tar.gz", "tool-windows-x64.zip"]);
+        packslip(d, &args)
+    };
+
+    let (code, out, err) = create(&[
+        "--resource",
+        "completion/zsh=archive:share/zsh/site-functions/_tool",
+        "--resource",
+        "completion/bash,zsh,fish=exec:tool completion {shell}",
+        "--resource",
+        "man=repo:man/tool.1",
+        "--resource",
+        "cli-spec/usage=exec:tool usage",
+        "--resource",
+        "skill/tool=asset:tool-skill.tar.gz",
+        "--resource",
+        "desktop=archive:share/applications/tool.desktop",
+        "--url",
+        "tool-skill.tar.gz=https://cdn.example.com/tool-skill.tar.gz",
+    ]);
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.contains("(2 artifact(s), 6 resource(s), signed by"),
+        "{out}"
+    );
+    let (code, out, err) = packslip(d, &["show", "dist/packslip.sigstore.json"]);
+    assert_eq!(code, 0, "{err}");
+    let doc: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(doc["subject"][2]["name"], "tool-skill.tar.gz");
+    let res = &doc["predicate"]["resources"];
+    assert_eq!(res[0]["shell"], "zsh");
+    assert_eq!(res[1]["shells"][2], "fish");
+    assert_eq!(res[1]["exec"][2], "{shell}");
+    assert_eq!(res[2]["repo"], "man/tool.1");
+    assert_eq!(res[3]["bin"], "tool");
+    assert_eq!(res[3]["format"], "usage");
+    assert_eq!(res[4]["asset"], "tool-skill.tar.gz");
+    assert_eq!(res[4]["url"], "https://cdn.example.com/tool-skill.tar.gz");
+    assert_eq!(res[5]["archive"], "share/applications/tool.desktop");
+    let (code, out, err) = packslip(
+        d,
+        &[
+            "verify",
+            "dist/packslip.sigstore.json",
+            "--pubkey",
+            "k.pub",
+            "--allow-unlogged",
+            "--artifact",
+            "tool-skill.tar.gz",
+            "--json",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    let verified: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(verified["checked_artifacts"][0], "tool-skill.tar.gz");
+    assert_eq!(verified["resources"][4], "skill/tool (asset)");
+    let (code, out, err) = packslip(
+        d,
+        &[
+            "verify",
+            "dist/packslip.sigstore.json",
+            "--pubkey",
+            "k.pub",
+            "--allow-unlogged",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("6 resource(s))"), "{out}");
+
+    // An exec that is not a declared executable, a cli-spec for an
+    // unknown bin, and a malformed spec are refused.
+    let (code, _, err) = create(&["--resource", "man=exec:other man"]);
+    assert_ne!(code, 0);
+    assert!(err.contains("not a bin name"), "{err}");
+    let (code, _, err) = create(&["--resource", "cli-spec/usage/other=repo:x.kdl"]);
+    assert_ne!(code, 0);
+    assert!(err.contains("not a bin name"), "{err}");
+    let (code, _, err) = create(&["--resource", "completion=archive:x"]);
+    assert_ne!(code, 0);
+    assert!(err.contains("completion/SHELL"), "{err}");
+    let (code, _, err) = create(&["--resource", "man=archive:../x"]);
+    assert_ne!(code, 0);
+    assert!(err.contains("relative"), "{err}");
+}
