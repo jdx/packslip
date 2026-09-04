@@ -1,0 +1,4 @@
+[tools]
+# Keep release-note generation reproducible. `latest` is resolved by mise.lock;
+# update the lock deliberately with `mise lock`.
+communique = "latest"

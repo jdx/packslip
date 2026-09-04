@@ -14,8 +14,15 @@ Nothing is released by pushing to `main`.
    `publish = true` in `release-plz.toml`, publishes the crate to
    crates.io first.
 4. The tag starts `release.yml`, which builds the five binaries, attests
-   them, creates the GitHub release, publishes the release's own packslip,
-   and moves the `v1` tag so `uses: jdx/packslip@v1` follows.
+   them, creates a draft GitHub release, rewrites its generated notes with
+   [Communiqué](https://github.com/jdx/communique), publishes the release's
+   own packslip, publishes the draft, and moves the `v1` tag so
+   `uses: jdx/packslip@v1` follows.
+
+Communiqué's project context and tone instructions live in
+`communique.toml`. Its version is declared in `mise.toml` and resolved in
+`mise.lock`; update the lock deliberately with `mise lock`. If note generation
+fails, the release keeps GitHub's generated notes and continues.
 
 The action reads its default packslip version from its own `Cargo.toml`,
 so the release PR bumps it too; no other file needs editing.
@@ -26,6 +33,8 @@ so the release PR bumps it too; no other file needs editing.
   repository with `contents: write` and `pull-requests: write`, stored as
   a repository secret. The built-in `GITHUB_TOKEN` cannot be used: pushes
   and pull requests it makes start no workflows.
+- `ANTHROPIC_API_KEY`: the API key Communiqué uses to generate narrative
+  release notes. Without it, releases fall back to GitHub's generated notes.
 - Set the repository variable `RELEASE_PLZ_RELEASE` to `true` to let the
   `release` job run. Until it is set, merging the release PR does nothing,
   so enabling the workflow cannot release on its own.
