@@ -10,19 +10,7 @@
 </head>
 <body>
 
-<header class="wrap top">
-  <a class="brand" href="/" aria-label="packslip">
-    <picture>
-      <source srcset="/logo-dark.svg" media="(prefers-color-scheme: dark)">
-      <img src="/logo.svg" alt="" width="246" height="64">
-    </picture>
-  </a>
-  <nav>
-    <a href="/">Overview</a>
-    <a href="/schema/release-v1.json">JSON schema</a>
-    {{ partial "github-link.html" . }}
-  </nav>
-</header>
+{{ partial "header.html" . }}
 
 <main class="wrap doc">
 
