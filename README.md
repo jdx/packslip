@@ -33,7 +33,7 @@ permissions:
   attestations: write   # attest build provenance for the artifacts
 
 steps:
-  - uses: jdx/packslip@v1
+  - uses: jdx/packslip@v0
     with:
       artifacts: dist/*
       bin: mytool
@@ -49,6 +49,11 @@ links the provenance from it, and uploads `packslip.sigstore.json` to the
 release. There is no key to create or store. Consumers verify against the
 repository name: a packslip for `github.com/owner/repo` must be signed by
 a workflow of that repository.
+
+The action and CLI share a version: `@v0` follows CLI 0.x releases, and
+`@v0.2.0` pins both to 0.2.0. By default, the action installs the CLI
+version from its own commit's `Cargo.toml`. `packslip-version` explicitly
+overrides that selection when needed.
 
 ## The binary
 

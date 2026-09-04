@@ -998,7 +998,7 @@ The reference implementation is the `packslip` crate and binary in
 [jdx/packslip](https://github.com/jdx/packslip), also usable as a GitHub
 Action.
 
-- In a release job: `uses: jdx/packslip@v1` with `artifacts: dist/*`
+- In a release job: `uses: jdx/packslip@v0` with `artifacts: dist/*`
   attests build provenance for the artifacts, signs the packslip
   keylessly, links the provenance from it, verifies the result, and
   uploads the bundle to the release. `bin` names the executables,
