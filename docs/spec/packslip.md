@@ -656,6 +656,11 @@ host. For `mise.jdx.dev` that is
 which github.com does not serve, and the next section says what a
 consumer does there. A forge that does serve it needs nothing else.
 
+The reference implementation gives the URL as `list_url`, for a project's
+own list and for one another publisher keeps for it (see Lists from other
+publishers), and the path of a GitHub repository's supplementary list as
+`github_list_path`.
+
 A project on its own domain must publish the list: a consumer that finds
 none refuses the project rather than guessing at URLs. `packslip releases`
 produces the list from local copies of the released bundles; the JSON
@@ -702,7 +707,8 @@ and its packslip cannot be deleted.
 A list need not come from the vendor. A registry, a mirror, or a scanning
 service publishes lists under its own host, one per vendor project it
 covers, at the well-known path with the vendor's project name:
-`https://registry.example/.well-known/packslip/github.com/jdx/mise.json`.
+`https://registry.example/.well-known/packslip/github.com/jdx/mise.json`,
+which `list_url` gives for a publisher that is not the project's host.
 A consumer configures which such hosts it trusts, one setting per host.
 
 Each entry points at a packslip and pins its digest. The packslip may be

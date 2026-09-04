@@ -1673,6 +1673,42 @@ pub fn repository_subpath(project: &str) -> Option<&str> {
     rest.strip_prefix('/').filter(|s| !s.is_empty())
 }
 
+/// Where a publisher keeps its release list for a project, as Discovery
+/// says. A project's own list, when `publisher` is the project's host,
+/// is at `https://<host>/.well-known/packslip/<path>.json`, or
+/// `https://<host>/.well-known/packslip.json` when the name is a bare
+/// host. Another publisher's list for the project, a registry's or a
+/// mirror's, is under that publisher's host with the whole project name
+/// as the path: `https://<publisher>/.well-known/packslip/<project>.json`.
+pub fn list_url(publisher: &str, project: &str) -> String {
+    let host = project_host(project);
+    let path = if publisher == host {
+        project
+            .get(host.len()..)
+            .unwrap_or_default()
+            .trim_start_matches('/')
+    } else {
+        project
+    };
+    if path.is_empty() {
+        format!("https://{publisher}/.well-known/packslip.json")
+    } else {
+        format!("https://{publisher}/.well-known/packslip/{path}.json")
+    }
+}
+
+/// Where a GitHub repository keeps its supplementary signed list, as a
+/// path on its default branch: `.well-known/packslip.json`, or
+/// `.well-known/packslip/<tool>.json` for a monorepo tool. `None` for a
+/// project that is not a GitHub repository.
+pub fn github_list_path(project: &str) -> Option<String> {
+    repository(project)?;
+    Some(match repository_subpath(project) {
+        Some(tool) => format!(".well-known/packslip/{tool}.json"),
+        None => ".well-known/packslip.json".to_string(),
+    })
+}
+
 /// A project name is a lowercase DNS host, optionally followed by path
 /// segments: `github.com/jdx/mise`, `mise.jdx.dev`. No scheme, no empty
 /// or dot segments, no trailing slash, and the host has at least one dot.
@@ -2770,6 +2806,39 @@ mod tests {
             [&s.predicate.resources[1]],
             "the scoped entry that names the sole executable hides the unnamed one"
         );
+    }
+
+    #[test]
+    fn list_urls_follow_discovery() {
+        assert_eq!(
+            list_url("mise.jdx.dev", "mise.jdx.dev"),
+            "https://mise.jdx.dev/.well-known/packslip.json"
+        );
+        assert_eq!(
+            list_url("jdx.dev", "jdx.dev/mise"),
+            "https://jdx.dev/.well-known/packslip/mise.json"
+        );
+        assert_eq!(
+            list_url("github.com", "github.com/jdx/mise"),
+            "https://github.com/.well-known/packslip/jdx/mise.json"
+        );
+        assert_eq!(
+            list_url("registry.example", "github.com/jdx/mise"),
+            "https://registry.example/.well-known/packslip/github.com/jdx/mise.json"
+        );
+        assert_eq!(
+            list_url("registry.example", "mise.jdx.dev"),
+            "https://registry.example/.well-known/packslip/mise.jdx.dev.json"
+        );
+        assert_eq!(
+            github_list_path("github.com/jdx/mise").as_deref(),
+            Some(".well-known/packslip.json")
+        );
+        assert_eq!(
+            github_list_path("github.com/oxc-project/oxc/oxlint").as_deref(),
+            Some(".well-known/packslip/oxlint.json")
+        );
+        assert_eq!(github_list_path("mise.jdx.dev"), None);
     }
 
     #[test]
