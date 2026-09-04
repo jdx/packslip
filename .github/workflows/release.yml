@@ -55,12 +55,14 @@ jobs:
           AWS_LC_SYS_PREBUILT_NASM: "1"
       - name: Package
         shell: bash
+        env:
+          PACKAGE_TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
           name="packslip-v${version}-${{ matrix.asset }}"
           mkdir -p "dist/$name"
-          if [[ "${{ matrix.target }}" == *windows* ]]; then
+          if [[ "$PACKAGE_TARGET" == *windows* ]]; then
             cp "target/${{ matrix.target }}/release/packslip.exe" "dist/$name/"
             (cd dist && 7z a -bd "$name.zip" "$name" >/dev/null)
           else
@@ -100,7 +102,9 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: Attest the archives
+      - name: Include the CLI specification
+        run: cp packslip.usage.kdl dist/packslip.usage.kdl
+      - name: Attest the release files
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: dist/*
@@ -133,7 +137,7 @@ jobs:
           args=()
           for f in dist/*; do
             digest=$(sha256sum "$f" | cut -d' ' -f1)
-            args+=(--provenance "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/attestations/sha256:${digest}")
+            args+=(--provenance "${f##*/}=${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/attestations/sha256:${digest}")
           done
           bin/packslip create \
             --project "github.com/${GITHUB_REPOSITORY}" \
@@ -144,9 +148,12 @@ jobs:
             --tag "$GITHUB_REF_NAME" \
             --commit "$GITHUB_SHA" \
             --bin packslip \
+            --resource cli-spec/usage=asset:dist/packslip.usage.kdl \
             "${args[@]}" \
             dist/*
-          bin/packslip verify packslip/packslip.sigstore.json --artifact dist/packslip-v${version}-linux-x64.tar.xz
+          bin/packslip verify packslip/packslip.sigstore.json \
+            --artifact "dist/packslip-v${version}-linux-x64.tar.xz" \
+            --artifact dist/packslip.usage.kdl
           gh release upload "$GITHUB_REF_NAME" packslip/packslip.sigstore.json --clobber
       - name: Publish the release
         env:
