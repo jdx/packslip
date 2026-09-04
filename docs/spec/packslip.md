@@ -8,17 +8,24 @@ Author: Jeff Dickey ([@jdx](https://github.com/jdx)).
 ## Goal
 
 A vendor publishes one signed, machine-readable document per release that
-says what the artifacts are and how to verify them. A consumer, whether that
-is [mise](https://mise.jdx.dev), [pacvamp](https://pacvamp.com), or a
-corporate mirror, verifies it against one pinned identity or key. In return
+says what the artifacts are and how to verify them. The artifacts are the
+files the release ships: usually an archive, installer, or bare executable
+per platform for a command-line or desktop application, but any file the
+vendor wants verified can be listed, from a source tarball to a data file.
+A consumer, whether that is [mise](https://mise.jdx.dev),
+[pacvamp](https://pacvamp.com), or a corporate mirror, verifies it against
+one pinned identity or key. In return
 it gets checksums, platform mapping, executables, provenance links, and
 whatever else ships with the release: completions, man pages, a CLI spec, a
 skill, a desktop entry.
 
-packslip invents as little as it can. The document is an in-toto statement
-in a sigstore bundle, the same shape GitHub artifact attestations, npm
-provenance, and Homebrew bottles use. Identity comes from sigstore's
-certificate authority and transparency log. What packslip adds is the
+packslip invents as little as it can. The document is an
+[in-toto statement](https://github.com/in-toto/attestation/blob/main/spec/v1/statement.md) in a
+[sigstore bundle](https://docs.sigstore.dev/), the same shape
+[GitHub artifact attestations](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-to-establish-provenance-for-builds),
+[npm provenance](https://docs.npmjs.com/generating-provenance-statements), and Homebrew bottles
+use. Identity comes from sigstore's certificate authority and transparency
+log. What packslip adds is the
 predicate: the release manifest itself.
 
 ## Names
@@ -68,16 +75,18 @@ a release and keep the one whose `predicateType` is `release/v1` and whose
 
 A release ships one file per project: a
 [sigstore bundle](https://github.com/sigstore/protobuf-specs) (v0.3). Its
-content is a DSSE envelope of type `application/vnd.in-toto+json` carrying
-the statement below. Its verification material is the signer's Fulcio
-certificate or a public-key hint, plus the Rekor transparency log entry for
-the signature. Only an air-gapped key-signed release omits the log entry;
+content is a [DSSE](https://github.com/secure-systems-lab/dsse) envelope of type
+`application/vnd.in-toto+json` carrying the statement below. Its
+verification material is the signer's [Fulcio](https://docs.sigstore.dev/certificate_authority/overview/)
+certificate or a public-key hint, plus the [Rekor](https://docs.sigstore.dev/logging/overview/)
+transparency log entry for the signature. Only an air-gapped key-signed release omits the log entry;
 see Signing.
 
 The bundle carries the statement, so the signed bytes are exactly the
 payload bytes and a consumer needs no canonicalization step. `packslip show`
-prints them; so does `jq -r .dsseEnvelope.payload | base64 -d`. `cosign`
-and `gh attestation` understand the bundle as-is.
+prints them; so does `jq -r .dsseEnvelope.payload | base64 -d`.
+[`cosign`](https://github.com/sigstore/cosign) and
+[`gh attestation`](https://cli.github.com/manual/gh_attestation) understand the bundle as-is.
 
 ## The release statement
 
@@ -132,9 +141,9 @@ Rules:
   artifact or a resource's `asset`, and neither list contains a duplicate.
   At least one artifact is required. `sha256` is required and is 64
   lowercase hex characters; `sha512` is optional and 128.
-- `project` is a name as defined above. `version` is semver 2.0.0; its
+- `project` is a name as defined above. `version` is [semver 2.0.0](https://semver.org/spec/v2.0.0.html); its
   prerelease part, if any, says whether the release is a prerelease and
-  which channel it is on. See Versions. `published_at` is RFC 3339 UTC.
+  which channel it is on. See Versions. `published_at` is [RFC 3339](https://www.rfc-editor.org/rfc/rfc3339) UTC.
 - `os`, `arch`, and `libc` use the values `linux`, `darwin`, `windows`,
   `freebsd`; `x86_64`, `aarch64`, `armv7`, `riscv64`, `i686`; `gnu`,
   `musl`. `format` is the archive or installer type: `tar.xz`, `tar.gz`,
@@ -152,9 +161,10 @@ Rules:
 - `requires` states what the host needs: `os_min` in the OS's own terms
   (`12` for macOS Monterey, `10.0.17763` for Windows) and `glibc_min` for a
   `gnu` Linux build.
-- `provenance` holds URLs of SLSA build provenance statements for that
-  artifact. The packslip proves the manifest; verified provenance proves
-  the build, at whatever SLSA build level its builder establishes.
+- `provenance` holds URLs of [SLSA build provenance](https://slsa.dev/spec/v1.0/provenance)
+  statements for that artifact. The packslip proves the manifest; verified
+  provenance proves the build, at whatever [SLSA build level](https://slsa.dev/spec/v1.0/levels)
+  its builder establishes.
 - `resources` lists what the release ships besides its executables, each
   entry a `kind` and one source. See Resources.
 - `notes_url` points at the release notes. `sbom` points at a software
@@ -212,10 +222,10 @@ Documented kinds:
   tool. Man pages and documentation carry no such dependency. A vendor that
   would rather not put that dependency on its users' machines ships static
   completions as well.
-- `skill`: an agent skill in the Agent Skills format: a directory holding
+- `skill`: an agent skill in the [Agent Skills](https://agentskills.io) format: a directory holding
   `SKILL.md` and whatever it references, named by `name`. With `exec`, the
   command prints a single `SKILL.md`.
-- `desktop`: a freedesktop desktop entry, for a Linux launcher. AppImage,
+- `desktop`: a freedesktop [desktop entry](https://specifications.freedesktop.org/desktop-entry-spec/latest/), for a Linux launcher. AppImage,
   deb, rpm, and the Windows installer formats carry their own.
 - `icon`: an icon file. A hicolor path (`share/icons/hicolor/512x512/...`)
   gives its size.
@@ -442,10 +452,12 @@ list of artifacts, with these digests, at a time the log recorded. It does
 not by itself prove anything about how the artifacts were built. That is
 what SLSA provenance is for: an artifact whose linked provenance a
 consumer verifies earns the SLSA build level its builder establishes
-(GitHub-hosted runners with `actions/attest-build-provenance` give Build
-L2, or L3 when the build runs in a reusable workflow). Consumers record
-what they verified as a SLSA Verification Summary or in their own terms;
-packslip defines no level scale of its own.
+(GitHub-hosted runners with
+[`actions/attest-build-provenance`](https://github.com/actions/attest-build-provenance) give
+Build L2, or L3 when the build runs in a reusable workflow). Consumers
+record what they verified as a
+[SLSA Verification Summary](https://slsa.dev/spec/v1.0/verification_summary) or in their own
+terms; packslip defines no level scale of its own.
 
 A resource from an `archive` or `asset` is covered by the same digests;
 one from `repo` by the commit; an `exec` entry by nothing beyond the
