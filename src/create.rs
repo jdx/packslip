@@ -294,7 +294,9 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
                 _ => None,
             })
         };
-        // A file with no archive or installer extension is the executable itself.
+        // A file with no archive or installer extension is the executable
+        // itself, when the name says which host it is for or the vendor
+        // said it runs anywhere.
         let format = input
             .format
             .clone()
@@ -303,7 +305,7 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
                 let has_extension = name
                     .rsplit_once('.')
                     .is_some_and(|(_, ext)| !ext.is_empty());
-                (!has_extension && os.is_some()).then(|| "raw".to_string())
+                (!has_extension && (os.is_some() || input.portable)).then(|| "raw".to_string())
             });
         let bare = format
             .as_deref()
@@ -323,18 +325,27 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
             }
             _ => None,
         };
+        let verified = listed.is_some();
         let bin = listed
             .unwrap_or_else(|| input.bin.clone())
             .into_iter()
             .map(|b| {
                 // `--bin tool` names the program; for a bare executable the
                 // program is the artifact itself, under that name.
-                let b = match &bare {
-                    Some(file) if !b.path.contains('/') => Bin::named(file, &b.name),
-                    _ => b,
+                let (b, path_is_real) = match &bare {
+                    Some(file) if !b.path.contains('/') => (Bin::named(file, &b.name), true),
+                    _ => (b, verified),
                 };
                 if windows {
-                    Bin::named(windows_exe(&b.path), windows_exe(&b.name))
+                    // The PATH name takes `.exe`. The path takes it only when
+                    // nothing confirmed the file: a path read from the archive
+                    // or the artifact's own name is already exact.
+                    let path = if path_is_real {
+                        b.path
+                    } else {
+                        windows_exe(&b.path)
+                    };
+                    Bin::named(path, windows_exe(&b.name))
                 } else {
                     b
                 }
@@ -1003,6 +1014,58 @@ mod tests {
             (&None, &None, &None)
         );
         assert_eq!(arts[1].format, None);
+
+        // A portable file with no extension is still a bare executable, and
+        // a bare Windows file without .exe keeps its exact name as the path.
+        let script = dir.path().join("tool-universal");
+        let bare_win = dir.path().join("tool-windows-x64");
+        std::fs::write(&script, b"#!/bin/sh").unwrap();
+        std::fs::write(&bare_win, b"pe").unwrap();
+        let portable = create(&request(
+            vec![
+                ArtifactInput {
+                    portable: true,
+                    bin: vec![Bin::new("tool")],
+                    ..ArtifactInput::new(&script)
+                },
+                input(&bare_win, None, &["tool"], &[]),
+            ],
+            None,
+            None,
+        ))
+        .unwrap();
+        let arts = &portable.statement.predicate.artifacts;
+        assert_eq!(arts[0].os, None);
+        assert_eq!(arts[0].format.as_deref(), Some("raw"));
+        assert_eq!(arts[0].bin, [Bin::named("tool-universal", "tool")]);
+        assert_eq!(arts[1].format.as_deref(), Some("raw"));
+        assert_eq!(arts[1].bin, [Bin::named("tool-windows-x64", "tool.exe")]);
+
+        // A path read from a Windows archive is kept exactly; only the PATH
+        // name takes .exe.
+        let win_zip = dir.path().join("tool-windows-x64.zip");
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        for entry in ["bin/tool", "bin/helper.exe"] {
+            use std::io::Write as _;
+            writer
+                .start_file(entry, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(b"x").unwrap();
+        }
+        std::fs::write(&win_zip, writer.finish().unwrap().into_inner()).unwrap();
+        let listed = create(&request(
+            vec![input(&win_zip, None, &["tool", "helper"], &[])],
+            None,
+            None,
+        ))
+        .unwrap();
+        assert_eq!(
+            listed.statement.predicate.artifacts[0].bin,
+            [
+                Bin::named("bin/tool", "tool.exe"),
+                Bin::named("bin/helper.exe", "helper.exe")
+            ]
+        );
         assert_eq!(
             created.statement.subject[0]
                 .digest
