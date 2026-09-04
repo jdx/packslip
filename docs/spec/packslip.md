@@ -404,6 +404,14 @@ another name leaves that skill in place, and a zsh completion for one
 platform says nothing about the bash one. The reference implementation
 provides this as `select_resources`.
 
+Within the same identity, specificity, and source type, entries are tried
+in their order in `resources`. This final tie-breaker is an ordered list
+of alternatives: the first usable entry wins, and a consumer stops fetching
+or running lower-priority entries once that need is satisfied. For example,
+two equally scoped `repo` entries for one skill try the first directory,
+then the second only if the first is unavailable. A verification failure
+still refuses the release; it is not a reason to try an alternative.
+
 Documented kinds:
 
 - `completion`: a shell completion script. With a static source, `shell`
@@ -451,7 +459,9 @@ Documented kinds:
 
 For any one need, a consumer takes the first source it can use in the
 order above: an `archive` or `asset` entry, then `repo`, then one derived
-from a `cli-spec`, and only then `exec`. It ignores kinds and sources it
+from a `cli-spec`, and only then `exec`. Static `cli-spec` sources use the
+same `archive`, `asset`, `repo` ordering, with document order breaking ties
+within each source type. It ignores kinds and sources it
 does not know, so a vendor may ship a `font` or a kind of its own before
 the specification names it.
 
