@@ -458,11 +458,33 @@ registry. Beside `os_min` and `glibc_min`:
   `extensions`. A required command may not be one the release itself
   provides.
 
-A consumer checks `requires` before installing and reports what is
-missing in its own terms: a distribution package for a soname, a tool it
-can install for a command. It fails on nothing it cannot check: a version
-it cannot read is a warning, not a refusal. Between two artifacts that
-fit the host, it prefers the one whose requirements the host meets.
+A consumer checks `requires` before installing, and what it does with a
+requirement the host does not meet depends on whether the executables can
+run without it:
+
+- A library in `libs` the loader will not find, a `glibc_min` above the
+  host's glibc, or an `os_min` above the host's OS version means the
+  executables will not start. The consumer refuses the install and says
+  what is missing in its own terms: a distribution package for a soname,
+  an OS upgrade. A user may override the refusal for that tool.
+- A command in `bin` that is missing or below its `min` means only the
+  paths that call it fail, and the user may be about to install it. The
+  consumer installs, warns, and names the command and the version it
+  needs, as a tool it can install where it can.
+
+It fails on nothing it cannot check: a version it cannot read, a loader
+it cannot ask, is a warning, not a refusal. Between two artifacts that fit
+the host, it prefers the one whose requirements the host meets.
+
+How to check, on the common hosts: a library by the loader's own search,
+which is the dynamic linker's cache and search path on Linux
+(`ldconfig -p`, `LD_LIBRARY_PATH`), the system library and framework
+directories on macOS, and PATH with the system directory on Windows; a
+command by looking its name up on PATH, with `.exe` on Windows, and
+running it with `--version` to read a version, of which `min` must be a
+prefix by dot-separated components. `glibc_min` compares the same way
+against the host's glibc, and `os_min` against the version the OS
+reports.
 
 That is the boundary. `requires` names what the host must have, by names
 the OS itself resolves. It does not name other projects, versions of
@@ -847,9 +869,11 @@ which the reference implementation provides as `select_artifact`.
    the vendor alone for that project.
 6. Select one artifact as Selecting an artifact says. Refuse to guess
    between two artifacts that tie.
-7. Check `requires` against the host before installing, and report a
-   missing library or command in your own terms. Fail on nothing you
-   cannot check. Between two artifacts that tie, prefer the one whose
+7. Check `requires` against the host before installing, as Host
+   requirements says: refuse when a library, glibc, or OS version means
+   the executables cannot start, warn when a command is missing or too
+   old, and report either in your own terms. Fail on nothing you cannot
+   check. Between two artifacts that tie, prefer the one whose
    requirements the host meets.
 8. For each thing the resources describe, as Resources defines one, keep
    the entries whose scope fits the selected artifact and the most
