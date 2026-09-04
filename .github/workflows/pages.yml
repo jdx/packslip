@@ -38,7 +38,7 @@ jobs:
       - name: Build site
         run: |
           hugo --gc --minify --baseURL "${{ steps.pages.outputs.base_url }}/"
-          if grep -R -F '%!' public; then
+          if grep -R -I -F '%!' public; then
             echo "Hugo rendered a formatting error"
             exit 1
           fi
