@@ -79,7 +79,7 @@
       <p>Most tools download a <code>SHASUMS256.txt</code> from the same place as the binary. If the release page is hijacked, the checksums are hijacked with it. The digest matches and the malware installs.</p>
     </div>
     <div>
-      <h3>Registries take the release out of the vendor's hands</h3>
+      <h3>Registries take the vendor out of the loop</h3>
       <p>Package managers keep a central pile of YAML describing how each vendor names its assets, where its checksums live, and which file is the binary. The vendor has no say in it, and every entry rots. A manifest the vendor signs keeps the vendor in charge of its own tool: an installer reads the release directly, and a package manager like <a href="https://pacvamp.com">pacvamp</a> can still repackage it with the vendor's provenance intact.</p>
     </div>
     <div>
@@ -119,7 +119,7 @@
 
 <section id="names">
   <span class="num">03 · Names</span>
-  <h2>The name is the location and the identity.</h2>
+  <h2>One name says where the release lives and who may sign it.</h2>
   <div class="cols">
     <div>
       <h3><code>github.com/jdx/mise</code></h3>
@@ -141,15 +141,15 @@
   <h2>The packslip proves the manifest. SLSA proves the build.</h2>
   <div class="cols">
     <div>
-      <h3>A verified packslip</h3>
+      <h3>A verified packslip proves what shipped</h3>
       <p>The named signer published exactly this list of artifacts, with these digests, platforms, and bundled resources, at a time the transparency log recorded. A hijacked release page cannot change it, and a release that was rolled back or quietly removed shows up as such.</p>
     </div>
     <div>
-      <h3>Linked provenance</h3>
+      <h3>Linked provenance proves how it was built</h3>
       <p>Each artifact can link to its SLSA build provenance. A consumer that verifies those statements gets whatever build level the builder provides. On GitHub-hosted runners that is Build L2, or L3 when the build runs in a reusable workflow, and the packslip action produces the provenance for you.</p>
     </div>
     <div>
-      <h3>No scale of its own</h3>
+      <h3>Consumers set their own bar</h3>
       <p>packslip defines no evidence levels. Consumers record what they verified, as a SLSA verification summary or in their own terms, and set their own floor: which signing scheme, which signer, and whether provenance is required. Once a release clears that bar, the next one may not fall below it.</p>
     </div>
   </div>
