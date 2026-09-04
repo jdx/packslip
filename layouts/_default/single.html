@@ -193,11 +193,13 @@
 
   <h2 id="repackager">Repackager attestation</h2>
   <p>A repository or mirror that redistributes a vendor's artifacts, and whose vendor publishes no packslip, may sign one itself with <code>"attested_by": "repackager"</code>. The <code>project</code> still names the vendor's project and the artifacts are still the vendor's files, but <code>identity</code> is the repackager's, and <code>evidence</code> says what it checked before signing:</p>
-{{ highlight `"attested_by": "repackager",
-"evidence": [
-  { "kind": "apt-release-gpg", "detail": "3FEF9748469ADBE15DA7CA80AC2D62742012EA22" },
-  { "kind": "pkgbuild-checksums" }
-]` "json" "" }}
+{{ highlight `{
+  "attested_by": "repackager",
+  "evidence": [
+    { "kind": "apt-release-gpg", "detail": "3FEF9748469ADBE15DA7CA80AC2D62742012EA22" },
+    { "kind": "pkgbuild-checksums" }
+  ]
+}` "json" "" }}
   <p>Documented kinds: <code>pkgbuild-checksums</code> (digests matched the packaging the repackager maintains), <code>checksum-file-over-tls</code> (the vendor's checksum file, unsigned), <code>apt-release-gpg</code> (an apt index signed with the given key), <code>vendor-signature</code> (a detached signature the vendor publishes), <code>github-attestation</code> (GitHub artifact attestations verified), <code>none</code>.</p>
   <p>A repackager document proves that the repackager published exactly these digests and checked the listed evidence. It does not prove anything the vendor did not sign. Consumers rank it below a vendor document, and a consumer that already holds a vendor document for a project refuses to replace it with a repackager one without a human's say-so.</p>
 
