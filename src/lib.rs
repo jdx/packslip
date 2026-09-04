@@ -16,6 +16,7 @@ pub mod archive;
 pub mod cli;
 pub mod create;
 pub mod dsse;
+pub mod linkage;
 pub mod manifest;
 pub mod minisign;
 pub mod model;

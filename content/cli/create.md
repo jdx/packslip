@@ -34,4 +34,6 @@ Digests every artifact, infers os/arch/libc/format from file names (override wit
 - **`--attested-by <ATTESTED_BY>`** — Who makes the claim: vendor (default) or repackager
 - **`--evidence <EVIDENCE>`** — What a repackager checked, as KIND or KIND=DETAIL (repeatable)
 - **`--no-sha512`** — Record only sha256, not sha512 as well
+- **`--require <REQUIRE>`** — A command the executables need on PATH, as bin:NAME or bin:NAME@MIN where MIN is the lowest version that works. Example: bin:java@17 (repeatable)
+- **`--no-libs`** — Do not open the artifacts to record the shared libraries their executables load from the host
 - **`-h --help`** — Print help

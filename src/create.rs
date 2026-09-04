@@ -5,8 +5,8 @@ use std::path::Path;
 
 use crate::model::{
     Artifact, Attestor, Bin, Digest, Envelope, Evidence, Extensions, Identity, PREDICATE_TYPE,
-    Predicate, RELEASES_PREDICATE_TYPE, ReleaseList, ReleaseListStatement, ReleaseRef, Requires,
-    Resource, STATEMENT_TYPE, Source, Statement, Subject,
+    Predicate, RELEASES_PREDICATE_TYPE, ReleaseList, ReleaseListStatement, ReleaseRef, RequiredBin,
+    Requires, Resource, STATEMENT_TYPE, Source, Statement, Subject,
 };
 
 /// What `create` needs.
@@ -34,6 +34,12 @@ pub struct Request<'a> {
     pub evidence: Vec<Evidence>,
     /// Also record sha512 digests.
     pub sha512: bool,
+    /// Commands the executables need on PATH, recorded on every artifact
+    /// that has executables.
+    pub requires_bin: Vec<RequiredBin>,
+    /// Open the artifacts and record the shared libraries their
+    /// executables load from the host as `requires.libs`.
+    pub read_executables: bool,
 }
 
 impl<'a> Request<'a> {
@@ -54,6 +60,8 @@ impl<'a> Request<'a> {
             attested_by: Attestor::Vendor,
             evidence: Vec::new(),
             sha512: true,
+            requires_bin: Vec::new(),
+            read_executables: true,
         }
     }
 }
@@ -128,6 +136,16 @@ pub enum Error {
     },
     #[error("{0}")]
     Invalid(#[from] crate::model::InvalidDocument),
+    #[error("{0}")]
+    Executables(#[from] crate::linkage::Error),
+    #[error(
+        "artifact {artifact:?} says its executables need libraries [{given}], but they load [{read}]; drop the list and let create read it"
+    )]
+    LibsMismatch {
+        artifact: String,
+        given: String,
+        read: String,
+    },
     #[error("{0}")]
     Archive(#[from] crate::archive::Error),
     #[error("{path}: not a packslip bundle: {why}")]
@@ -350,7 +368,7 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
             _ => None,
         };
         let verified = listed.is_some();
-        let bin = listed
+        let bin: Vec<Bin> = listed
             .unwrap_or_else(|| input.bin.clone())
             .into_iter()
             .map(|b| {
@@ -380,6 +398,41 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
                 .url_base
                 .map(|base| format!("{}/{name}", base.trim_end_matches('/')))
         });
+        let mut requires = input.requires.clone().unwrap_or_default();
+        if !bin.is_empty() {
+            for required in &request.requires_bin {
+                if !requires.bin.contains(required) {
+                    requires.bin.push(required.clone());
+                }
+            }
+            // What the executables load is read from them, so the document
+            // says what the bytes say. An artifact `create` cannot open, or
+            // an executable that is a script, records nothing. A list the
+            // manifest gives must agree with what is read.
+            if request.read_executables
+                && let Some(executables) =
+                    crate::linkage::read_executables(input.path, format.as_deref(), &bin)?
+                && let Some(read) = crate::linkage::host_libraries(&executables)
+            {
+                // The read list is sorted; a given one may be in any order.
+                let given_sorted = requires.libs.as_ref().map(|given| {
+                    let mut sorted = given.clone();
+                    sorted.sort();
+                    sorted.dedup();
+                    sorted
+                });
+                match (&requires.libs, given_sorted) {
+                    (Some(given), Some(sorted)) if sorted != read => {
+                        return Err(Error::LibsMismatch {
+                            artifact: name,
+                            given: given.join(", "),
+                            read: read.join(", "),
+                        });
+                    }
+                    _ => requires.libs = Some(read),
+                }
+            }
+        }
         let artifact = Artifact {
             url,
             name: name.clone(),
@@ -390,7 +443,7 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
             size: digests.size,
             format,
             bin,
-            requires: input.requires.clone(),
+            requires: (!requires.is_empty()).then_some(requires),
             provenance: input.provenance.clone(),
             extensions: input.extensions.clone(),
         };

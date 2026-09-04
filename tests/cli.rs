@@ -1087,3 +1087,323 @@ fn resources_and_assets() {
     assert_ne!(code, 0);
     assert!(err.contains("relative"), "{err}");
 }
+
+/// An archive member: `(path, Some(bytes), None)` for a file,
+/// `(path, None, Some(target))` for a symbolic link, or a hard link when
+/// the target starts with `hard:`.
+type TarMember<'a> = (&'a str, Option<&'a [u8]>, Option<&'a str>);
+
+fn tar_gz(path: &std::path::Path, members: &[TarMember<'_>]) {
+    let file = std::fs::File::create(path).unwrap();
+    let gz = flate2::write::GzEncoder::new(file, flate2::Compression::fast());
+    let mut tar = tar::Builder::new(gz);
+    for (name, bytes, link) in members {
+        let mut header = tar::Header::new_gnu();
+        match (bytes, link) {
+            (Some(bytes), _) => {
+                header.set_size(bytes.len() as u64);
+                header.set_mode(0o755);
+                header.set_cksum();
+                tar.append_data(&mut header, name, *bytes).unwrap();
+            }
+            (None, Some(target)) => {
+                let (kind, target) = match target.strip_prefix("hard:") {
+                    Some(target) => (tar::EntryType::Link, target),
+                    None => (tar::EntryType::Symlink, *target),
+                };
+                header.set_entry_type(kind);
+                header.set_size(0);
+                header.set_mode(0o777);
+                header.set_cksum();
+                tar.append_link(&mut header, name, target).unwrap();
+            }
+            (None, None) => unreachable!(),
+        }
+    }
+    tar.into_inner().unwrap().finish().unwrap();
+}
+
+fn zip_file(path: &std::path::Path, members: &[(&str, &[u8])]) {
+    use std::io::Write as _;
+    let file = std::fs::File::create(path).unwrap();
+    let mut zip = zip::ZipWriter::new(file);
+    for (name, bytes) in members {
+        zip.start_file(*name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(bytes).unwrap();
+    }
+    zip.finish().unwrap();
+}
+
+#[test]
+fn host_requirements_are_read_and_declared() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let (code, _, err) = packslip(d, &["keygen", "-o", "k.key"]);
+    assert_eq!(code, 0, "{err}");
+    let elf = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/needs-z"
+    ))
+    .unwrap();
+    // The executable sits behind a symlink; the libraries come from the target.
+    tar_gz(
+        &d.join("tool-linux-x64.tar.gz"),
+        &[
+            ("tool-1.0/bin/tool", None, Some("../libexec/tool-real")),
+            ("tool-1.0/libexec/tool-real", Some(&elf), None),
+        ],
+    );
+    // A library the artifact ships is not asked of the host.
+    tar_gz(
+        &d.join("tool-linux-arm64.tar.gz"),
+        &[
+            ("./tool-1.0/bin/tool", Some(&elf), None),
+            ("./tool-1.0/lib/libz.so.1", Some(b"not really"), None),
+        ],
+    );
+    // A hard link's target is a path from the archive root.
+    tar_gz(
+        &d.join("tool-freebsd-x64.tar.gz"),
+        &[
+            ("tool-1.0/libexec/tool-real", Some(&elf), None),
+            (
+                "tool-1.0/bin/tool",
+                None,
+                Some("hard:tool-1.0/libexec/tool-real"),
+            ),
+        ],
+    );
+    // A script records nothing.
+    tar_gz(
+        &d.join("tool-darwin-arm64.tar.gz"),
+        &[(
+            "tool-1.0/bin/tool",
+            Some(b"#!/bin/sh\nexec java -jar tool.jar\n"),
+            None,
+        )],
+    );
+    zip_file(
+        &d.join("tool-windows-x64.zip"),
+        &[("tool-1.0/bin/tool.exe", &elf)],
+    );
+    std::fs::write(d.join("tool-linux-riscv64"), &elf).unwrap();
+    let base = [
+        "create",
+        "--project",
+        "tool.example.com",
+        "--version",
+        "1.0.0",
+        "--key",
+        "k.key",
+        "--no-log",
+        "--out",
+        "dist",
+        "--bin",
+        "tool",
+    ];
+    let artifacts = [
+        "tool-linux-x64.tar.gz",
+        "tool-linux-arm64.tar.gz",
+        "tool-darwin-arm64.tar.gz",
+        "tool-windows-x64.zip",
+        "tool-linux-riscv64",
+        "tool-freebsd-x64.tar.gz",
+    ];
+    let create = |extra: &[&str]| {
+        let mut args = base.to_vec();
+        args.extend_from_slice(extra);
+        args.extend_from_slice(&artifacts);
+        packslip(d, &args)
+    };
+
+    let (code, out, err) = create(&["--require", "bin:java@17", "--require", "bin:git"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.contains("requires tool-linux-x64.tar.gz: libs libz.so.1; bin java>=17 git"),
+        "{out}"
+    );
+    let (code, out, err) = packslip(d, &["show", "dist/packslip.sigstore.json"]);
+    assert_eq!(code, 0, "{err}");
+    let doc: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let arts = &doc["predicate"]["artifacts"];
+    assert_eq!(
+        arts[0]["requires"]["libs"],
+        serde_json::json!(["libz.so.1"])
+    );
+    assert_eq!(
+        arts[0]["requires"]["bin"][0],
+        serde_json::json!({"name": "java", "min": "17"})
+    );
+    assert_eq!(
+        arts[0]["requires"]["bin"][1],
+        serde_json::json!({"name": "git"})
+    );
+    assert_eq!(
+        arts[1]["requires"]["libs"],
+        serde_json::json!([]),
+        "shipped libz is not required"
+    );
+    assert!(
+        arts[2]["requires"]["libs"].is_null(),
+        "a script records no libs: {}",
+        arts[2]
+    );
+    assert_eq!(arts[2]["requires"]["bin"][0]["name"], "java");
+    assert_eq!(arts[3]["bin"][0], "tool-1.0/bin/tool.exe");
+    assert_eq!(
+        arts[3]["requires"]["libs"],
+        serde_json::json!(["libz.so.1"])
+    );
+    assert_eq!(arts[4]["format"], "raw");
+    assert_eq!(
+        arts[4]["requires"]["libs"],
+        serde_json::json!(["libz.so.1"])
+    );
+    assert_eq!(arts[5]["os"], "freebsd");
+    assert_eq!(
+        arts[5]["requires"]["libs"],
+        serde_json::json!(["libz.so.1"])
+    );
+
+    let (code, out, err) = packslip(
+        d,
+        &[
+            "verify",
+            "dist/packslip.sigstore.json",
+            "--pubkey",
+            "k.pub",
+            "--allow-unlogged",
+            "--json",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    let verified: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(
+        verified["requires"][0],
+        "tool-linux-x64.tar.gz: libs libz.so.1; bin java>=17 git"
+    );
+    assert_eq!(
+        verified["requires"][1],
+        "tool-linux-arm64.tar.gz: libs none; bin java>=17 git"
+    );
+    assert_eq!(
+        verified["requires"][2],
+        "tool-darwin-arm64.tar.gz: bin java>=17 git"
+    );
+    let (code, out, err) = packslip(
+        d,
+        &[
+            "verify",
+            "dist/packslip.sigstore.json",
+            "--pubkey",
+            "k.pub",
+            "--allow-unlogged",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.contains("\n  requires tool-linux-x64.tar.gz: libs libz.so.1; bin java>=17 git\n"),
+        "{out}"
+    );
+
+    // Without --require and with --no-libs, nothing is recorded.
+    let (code, _, err) = create(&["--no-libs"]);
+    assert_eq!(code, 0, "{err}");
+    let (_, out, _) = packslip(d, &["show", "dist/packslip.sigstore.json"]);
+    let doc: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert!(
+        doc["predicate"]["artifacts"][0]["requires"].is_null(),
+        "{out}"
+    );
+
+    // An archive that opens but lacks the executable is a mistake.
+    let mut args = base.to_vec();
+    let last = args.len() - 1;
+    args[last] = "tool-1.0/bin/other";
+    args.push("tool-linux-x64.tar.gz");
+    let (code, _, err) = packslip(d, &args);
+    assert_ne!(code, 0);
+    assert!(
+        err.contains("no file named \"tool-1.0/bin/other\""),
+        "{err}"
+    );
+
+    // A manifest may state libs, but not ones the executables do not load.
+    std::fs::write(
+        d.join("wrong.toml"),
+        "bin = [\"tool\"]\n[[artifact]]\npath = \"tool-linux-x64.tar.gz\"\nrequires = { libs = [\"libfoo.so.1\"] }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        d.join("right.toml"),
+        "bin = [\"tool\"]\n[[artifact]]\npath = \"tool-linux-x64.tar.gz\"\nrequires = { libs = [\"libz.so.1\"], bin = [{ name = \"java\", min = \"17\" }] }\n",
+    )
+    .unwrap();
+    let manifest = |file: &str| {
+        packslip(
+            d,
+            &[
+                "create",
+                "--project",
+                "tool.example.com",
+                "--version",
+                "1.0.0",
+                "--key",
+                "k.key",
+                "--no-log",
+                "--out",
+                "dist",
+                "--manifest",
+                file,
+            ],
+        )
+    };
+    let (code, _, err) = manifest("wrong.toml");
+    assert_ne!(code, 0);
+    assert!(
+        err.contains("[libfoo.so.1], but they load [libz.so.1]"),
+        "{err}"
+    );
+    let (code, out, err) = manifest("right.toml");
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.contains("requires tool-linux-x64.tar.gz: libs libz.so.1; bin java>=17"),
+        "{out}"
+    );
+
+    // Malformed and self-referential requirements are refused.
+    for (spec, expected) in [
+        ("java", "bin:NAME"),
+        ("bin:", "empty command name"),
+        ("bin:java@", "empty minimum"),
+        ("bin:java@latest", "starts with a digit"),
+        ("bin:tool", "release itself provides"),
+        ("bin:java.exe", "bare name"),
+    ] {
+        let (code, _, err) = create(&["--require", spec]);
+        assert_ne!(code, 0, "{spec}");
+        assert!(err.contains(expected), "{spec}: {err}");
+    }
+    let (code, _, err) = create(&["--require", "bin:java", "--require", "bin:java@11"]);
+    assert_ne!(code, 0);
+    assert!(err.contains("twice"), "{err}");
+    let (code, _, err) = packslip(
+        d,
+        &[
+            "create",
+            "--project",
+            "tool.example.com",
+            "--version",
+            "1.0.0",
+            "--key",
+            "k.key",
+            "--no-log",
+            "--require",
+            "bin:java",
+            "tool-linux-riscv64",
+        ],
+    );
+    assert_ne!(code, 0);
+    assert!(err.contains("--bin"), "{err}");
+}

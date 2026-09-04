@@ -48,6 +48,60 @@ pub fn can_list(format: &str) -> bool {
     )
 }
 
+/// The compression a format's bytes are under: `gz`, `xz`, `zst`, `bz2`,
+/// or empty for none. `None` for a format that is not a tar or a bare
+/// executable.
+pub fn compression_of(format: &str) -> Option<&'static str> {
+    Some(match format {
+        "tar" | "raw" => "",
+        "tar.gz" | "tgz" | "gz" => "gz",
+        "tar.xz" | "xz" => "xz",
+        "tar.zst" | "zst" => "zst",
+        "tar.bz2" | "bz2" => "bz2",
+        _ => return None,
+    })
+}
+
+/// The decompressed bytes of a file, as a reader, for the compressions
+/// [`compression_of`] names.
+pub fn decoder(path: &Path, format: &str) -> Result<Box<dyn Read>, Error> {
+    let io = |source: std::io::Error| Error::Io {
+        path: path.display().to_string(),
+        source,
+    };
+    let undecodable = |why: String| Error::Undecodable {
+        path: path.display().to_string(),
+        format: format.to_string(),
+        why,
+    };
+    let Some(compression) = compression_of(format) else {
+        return Err(Error::Unsupported {
+            path: path.display().to_string(),
+            format: format.to_string(),
+        });
+    };
+    let file = std::fs::File::open(path).map_err(io)?;
+    let reader = BufReader::new(file);
+    Ok(match compression {
+        "" => Box::new(reader),
+        "gz" => Box::new(flate2::read::MultiGzDecoder::new(reader)),
+        "bz2" => Box::new(bzip2::read::MultiBzDecoder::new(reader)),
+        "zst" => Box::new(
+            ruzstd::decoding::StreamingDecoder::new(reader)
+                .map_err(|e| undecodable(e.to_string()))?,
+        ),
+        "xz" => {
+            // lzma-rs decodes into memory; release archives fit.
+            let mut reader = reader;
+            let mut bytes = Vec::new();
+            lzma_rs::xz_decompress(&mut reader, &mut bytes)
+                .map_err(|e| undecodable(e.to_string()))?;
+            Box::new(std::io::Cursor::new(bytes))
+        }
+        _ => unreachable!("compression_of names only these"),
+    })
+}
+
 /// The regular files inside an archive, as paths from its root with any
 /// leading `./` removed. Directories are not listed.
 pub fn entries(path: &Path, format: &str) -> Result<Vec<String>, Error> {
@@ -60,11 +114,11 @@ pub fn entries(path: &Path, format: &str) -> Result<Vec<String>, Error> {
         format: format.to_string(),
         why,
     };
-    let file = std::fs::File::open(path).map_err(io)?;
-    let reader = BufReader::new(file);
     let names = match format {
         "zip" => {
-            let mut zip = zip::ZipArchive::new(reader).map_err(|e| undecodable(e.to_string()))?;
+            let file = std::fs::File::open(path).map_err(io)?;
+            let mut zip = zip::ZipArchive::new(BufReader::new(file))
+                .map_err(|e| undecodable(e.to_string()))?;
             let mut names = Vec::new();
             for i in 0..zip.len() {
                 let entry = zip
@@ -76,22 +130,10 @@ pub fn entries(path: &Path, format: &str) -> Result<Vec<String>, Error> {
             }
             names
         }
-        "tar" => tar_entries(reader)?,
-        "tar.gz" | "tgz" => tar_entries(flate2::read::GzDecoder::new(reader))?,
-        "tar.bz2" => tar_entries(bzip2::read::MultiBzDecoder::new(reader))?,
-        "tar.zst" => {
-            let decoder = ruzstd::decoding::StreamingDecoder::new(reader)
-                .map_err(|e| undecodable(e.to_string()))?;
-            tar_entries(decoder)?
-        }
-        "tar.xz" => {
-            // lzma-rs decodes into memory; release archives fit.
-            let mut reader = reader;
-            let mut bytes = Vec::new();
-            lzma_rs::xz_decompress(&mut reader, &mut bytes)
-                .map_err(|e| undecodable(e.to_string()))?;
-            tar_entries(std::io::Cursor::new(bytes))?
-        }
+        f if can_list(f) => tar_entries(decoder(path, f)?).map_err(|e| match e {
+            Error::Undecodable { why, .. } => undecodable(why),
+            other => other,
+        })?,
         other => {
             return Err(Error::Unsupported {
                 path: path.display().to_string(),
@@ -101,15 +143,18 @@ pub fn entries(path: &Path, format: &str) -> Result<Vec<String>, Error> {
     };
     Ok(names
         .into_iter()
-        .map(|name| {
-            let mut name = name.as_str();
-            while let Some(rest) = name.strip_prefix("./") {
-                name = rest;
-            }
-            name.to_string()
-        })
+        .map(|name| normalize(&name))
         .filter(|name| !name.is_empty() && !name.ends_with('/'))
         .collect())
+}
+
+/// A path as it is compared: no leading `./`.
+pub fn normalize(path: &str) -> String {
+    let mut name = path;
+    while let Some(rest) = name.strip_prefix("./") {
+        name = rest;
+    }
+    name.to_string()
 }
 
 fn tar_entries<R: Read>(reader: R) -> Result<Vec<String>, Error> {

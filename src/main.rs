@@ -8,8 +8,8 @@ use packslip::create::{ArtifactInput, AssetInput, ListRequest, ListedRelease, Re
 use packslip::manifest::Manifest;
 use packslip::minisign::{PublicKey, SecretKey, key_id_hex};
 use packslip::model::{
-    Attestor, Bin, Evidence, Extensions, RELEASES_PREDICATE_TYPE, ReleaseListStatement, Resource,
-    Source, Statement,
+    Attestor, Bin, Evidence, Extensions, RELEASES_PREDICATE_TYPE, ReleaseListStatement,
+    RequiredBin, Resource, Source, Statement,
 };
 use packslip::sigstore::{self, Policy, Signer, Trust};
 use packslip::verify::Options;
@@ -361,6 +361,15 @@ struct Create {
     /// Record only sha256, not sha512 as well
     #[usage(long)]
     no_sha512: bool,
+    /// A command the executables need on PATH, as bin:NAME or bin:NAME@MIN
+    /// where MIN is the lowest version that works. Example: bin:java@17
+    /// (repeatable)
+    #[usage(long)]
+    require: Vec<String>,
+    /// Do not open the artifacts to record the shared libraries their
+    /// executables load from the host
+    #[usage(long)]
+    no_libs: bool,
 }
 
 /// `PATH` or `NAME=PATH`.
@@ -447,6 +456,27 @@ fn parse_resource(spec: &str, default_bin: Option<&str>) -> Result<ResourceSpec>
     Ok(ResourceSpec {
         resource,
         asset_path,
+    })
+}
+
+/// `bin:NAME` or `bin:NAME@MIN` for `--require`.
+fn parse_require(spec: &str) -> Result<RequiredBin> {
+    let Some(rest) = spec.strip_prefix("bin:") else {
+        bail!("--require wants bin:NAME or bin:NAME@MIN, got {spec:?}");
+    };
+    let (name, min) = match rest.split_once('@') {
+        Some((name, min)) => (name, Some(min)),
+        None => (rest, None),
+    };
+    if name.is_empty() {
+        bail!("--require {spec:?} has an empty command name");
+    }
+    if min == Some("") {
+        bail!("--require {spec:?} has an empty minimum version");
+    }
+    Ok(match min {
+        Some(min) => RequiredBin::at_least(name, min),
+        None => RequiredBin::new(name),
     })
 }
 
@@ -540,6 +570,22 @@ impl RunWith<BinInfo> for Create {
         }
         let mut default_bins: Vec<Bin> = manifest.bin.clone();
         default_bins.extend(self.bin.iter().map(|s| parse_bin(s)));
+        let mut requires_bin: Vec<RequiredBin> = Vec::new();
+        for spec in &self.require {
+            let required = parse_require(spec)?;
+            if requires_bin.iter().any(|r| r.name == required.name) {
+                bail!("--require names {:?} twice", required.name);
+            }
+            requires_bin.push(required);
+        }
+        let any_bin = !default_bins.is_empty()
+            || manifest
+                .artifacts
+                .iter()
+                .any(|a| !a.bins(&default_bins).is_empty());
+        if !requires_bin.is_empty() && !any_bin {
+            bail!("--require says what the executables need; name them with --bin");
+        }
         let parsed: Vec<ArtifactArg> = self.artifacts.iter().map(|s| parse_spec(s)).collect();
 
         // Provenance: `FILENAME=URL`, or a bare URL for the artifact at the
@@ -696,6 +742,8 @@ impl RunWith<BinInfo> for Create {
             attested_by,
             evidence: self.evidence.iter().map(|s| parse_evidence(s)).collect(),
             sha512: !self.no_sha512,
+            requires_bin,
+            read_executables: !self.no_libs,
             ..Request::new(&project, &version, signer.identity())
         })?;
         let identity = created.statement.predicate.identity.clone();
@@ -722,6 +770,11 @@ impl RunWith<BinInfo> for Create {
             },
             if self.no_log { ", unlogged" } else { "" }
         );
+        for artifact in &created.statement.predicate.artifacts {
+            if let Some(requires) = artifact.requires.as_ref().filter(|r| !r.is_empty()) {
+                println!("  requires {}: {}", artifact.name, requires.summary());
+            }
+        }
         Ok(())
     }
 }
@@ -1119,6 +1172,9 @@ impl RunWith<BinInfo> for Verify {
                             format!(", {} resource(s)", verified.resources.len())
                         }
                     );
+                    for line in &verified.requires {
+                        println!("  requires {line}");
+                    }
                 }
                 Ok(())
             }

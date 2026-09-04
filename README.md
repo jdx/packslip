@@ -90,6 +90,15 @@ completions, a man page, and docs with its own tooling. Desktop
 applications add `desktop`, `icon`, and `app` entries; there is no CLI or
 GUI type, since the entries say which a release is.
 
+What the host must already have is `requires`, in names the operating
+system resolves rather than package names. `packslip create` opens each
+archive and records the shared libraries its executables load
+(`libssl.so.3`, `vcruntime140.dll`) as `libs`, leaving out the C runtime
+and anything the archive ships itself. A command the executables run and
+cannot work without is declared: `--require bin:java@17`. Neither says
+where to get anything; that is the consumer's call, and a distribution
+resolves a soname or a command name to a package on its own.
+
 Anything the spec has no field for goes under `extensions`, keyed by who
 defines it: `--extension 'example.com={"build_id":"20260901.3"}'` for the
 vendor's own data, or a consumer's name such as `mise` for hints that

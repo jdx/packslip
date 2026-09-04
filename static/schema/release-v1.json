@@ -269,13 +269,50 @@
       ],
       "type": "object"
     },
-    "Requires": {
-      "description": "Host requirements a consumer can check before installing.",
+    "RequiredBin": {
+      "description": "A command an executable needs on PATH.",
       "properties": {
+        "min": {
+          "description": "The lowest version that works, matched as a prefix on\ndot-separated components like a requested version: `17` means\n17.0.0 and later.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "The name as the executable invokes it, bare: `java`, `python3`,\n`git`. No directory and no `.exe`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "Requires": {
+      "description": "What the host must already provide, by names the operating system\ndefines, so a consumer can check before installing. Nothing here names\nanother project or where to get it; see the specification's Host\nrequirements section.",
+      "properties": {
+        "bin": {
+          "description": "Commands the executables run and cannot work without, by the bare\nname on PATH, with an optional minimum version. Declared by the\nvendor.",
+          "items": {
+            "$ref": "#/$defs/RequiredBin"
+          },
+          "type": "array"
+        },
         "glibc_min": {
           "description": "Minimum glibc for a `gnu` Linux build, such as `2.31`.",
           "type": [
             "string",
+            "null"
+          ]
+        },
+        "libs": {
+          "description": "Shared libraries the executables load from the host, by the name\nthe loader resolves: a soname (`libssl.so.3`), a DLL name\n(`vcruntime140.dll`), or a dylib name (`libssl.3.dylib`). Excludes\nthe C runtime baseline that `libc` and `glibc_min` cover and any\nlibrary the artifact ships itself. `packslip create` reads it from\nthe executables; an empty list means they were read and need\nnothing, an absent one that nothing was checked.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
             "null"
           ]
         },

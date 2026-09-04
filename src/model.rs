@@ -522,7 +522,10 @@ impl From<Bin> for BinRepr {
     }
 }
 
-/// Host requirements a consumer can check before installing.
+/// What the host must already provide, by names the operating system
+/// defines, so a consumer can check before installing. Nothing here names
+/// another project or where to get it; see the specification's Host
+/// requirements section.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Requires {
     /// Minimum OS version, in the OS's own terms: `12` for macOS Monterey,
@@ -532,6 +535,113 @@ pub struct Requires {
     /// Minimum glibc for a `gnu` Linux build, such as `2.31`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub glibc_min: Option<String>,
+    /// Shared libraries the executables load from the host, by the name
+    /// the loader resolves: a soname (`libssl.so.3`), a DLL name
+    /// (`vcruntime140.dll`), or a dylib name (`libssl.3.dylib`). Excludes
+    /// the C runtime baseline that `libc` and `glibc_min` cover and any
+    /// library the artifact ships itself. `packslip create` reads it from
+    /// the executables; an empty list means they were read and need
+    /// nothing, an absent one that nothing was checked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub libs: Option<Vec<String>>,
+    /// Commands the executables run and cannot work without, by the bare
+    /// name on PATH, with an optional minimum version. Declared by the
+    /// vendor.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bin: Vec<RequiredBin>,
+}
+
+impl Requires {
+    pub fn is_empty(&self) -> bool {
+        self.os_min.is_none()
+            && self.glibc_min.is_none()
+            && self.libs.is_none()
+            && self.bin.is_empty()
+    }
+
+    /// One line for a report: `os>=12; glibc>=2.31; libs libz.so.1; bin
+    /// java>=17`, with `libs none` for executables that were read and
+    /// need nothing.
+    pub fn summary(&self) -> String {
+        let mut parts = Vec::new();
+        if let Some(os) = &self.os_min {
+            parts.push(format!("os>={os}"));
+        }
+        if let Some(glibc) = &self.glibc_min {
+            parts.push(format!("glibc>={glibc}"));
+        }
+        match &self.libs {
+            Some(libs) if libs.is_empty() => parts.push("libs none".to_string()),
+            Some(libs) => parts.push(format!("libs {}", libs.join(" "))),
+            None => {}
+        }
+        if !self.bin.is_empty() {
+            let bins: Vec<String> = self.bin.iter().map(|b| b.to_string()).collect();
+            parts.push(format!("bin {}", bins.join(" ")));
+        }
+        parts.join("; ")
+    }
+}
+
+/// A command an executable needs on PATH.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RequiredBin {
+    /// The name as the executable invokes it, bare: `java`, `python3`,
+    /// `git`. No directory and no `.exe`.
+    pub name: String,
+    /// The lowest version that works, matched as a prefix on
+    /// dot-separated components like a requested version: `17` means
+    /// 17.0.0 and later.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<String>,
+}
+
+impl RequiredBin {
+    pub fn new(name: impl Into<String>) -> RequiredBin {
+        RequiredBin {
+            name: name.into(),
+            min: None,
+        }
+    }
+
+    pub fn at_least(name: impl Into<String>, min: impl Into<String>) -> RequiredBin {
+        RequiredBin {
+            name: name.into(),
+            min: Some(min.into()),
+        }
+    }
+}
+
+impl std::fmt::Display for RequiredBin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.min {
+            Some(min) => write!(f, "{}>={min}", self.name),
+            None => f.write_str(&self.name),
+        }
+    }
+}
+
+/// A shared library name as a loader resolves it: one path segment, no
+/// whitespace.
+fn valid_lib_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains(['/', '\\'])
+        && !name
+            .bytes()
+            .any(|b| b.is_ascii_whitespace() || b.is_ascii_control())
+}
+
+/// A command name as typed at a shell: one segment, no `.exe`.
+fn valid_required_bin_name(name: &str) -> bool {
+    valid_lib_name(name) && !name.to_ascii_lowercase().ends_with(".exe")
+}
+
+/// A minimum version: dot-separated components starting with a digit.
+fn valid_min_version(min: &str) -> bool {
+    min.as_bytes().first().is_some_and(u8::is_ascii_digit)
+        && min
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'+'))
 }
 
 /// Something the release ships besides its executables, and where to get
@@ -834,6 +944,22 @@ pub enum InvalidDocument {
     #[error("artifact {0:?} has an executable name containing a slash: {1:?}")]
     BinName(String, String),
     #[error(
+        "artifact {0:?} requires library {1:?}; a library is named as its loader resolves it, such as libssl.so.3"
+    )]
+    RequiredLib(String, String),
+    #[error("artifact {0:?} requires library {1:?} twice")]
+    DuplicateRequiredLib(String, String),
+    #[error("artifact {0:?} requires command {1:?}; a command is a bare name such as java")]
+    RequiredBinName(String, String),
+    #[error(
+        "artifact {0:?} requires command {1:?} with minimum {2:?}; a minimum starts with a digit, as in 17 or 3.12"
+    )]
+    RequiredBinMin(String, String, String),
+    #[error("artifact {0:?} requires command {1:?} twice")]
+    DuplicateRequiredBin(String, String),
+    #[error("artifact {0:?} requires command {1:?}, which the release itself provides")]
+    RequiredBinIsOwn(String, String),
+    #[error(
         "artifact {artifact:?} is a bare executable, so its bin must be {expected:?}, not {path:?}"
     )]
     BareBin {
@@ -1057,6 +1183,51 @@ impl Statement {
             .map(|b| b.name.strip_suffix(".exe").unwrap_or(&b.name))
             .collect();
         let is_bin = |name: &str| bin_names.contains(name.strip_suffix(".exe").unwrap_or(name));
+        for artifact in &p.artifacts {
+            let Some(requires) = &artifact.requires else {
+                continue;
+            };
+            let name = || artifact.name.clone();
+            let mut libs = std::collections::BTreeSet::new();
+            for lib in requires.libs.iter().flatten() {
+                if !valid_lib_name(lib) {
+                    return Err(InvalidDocument::RequiredLib(name(), lib.clone()));
+                }
+                if !libs.insert(lib.as_str()) {
+                    return Err(InvalidDocument::DuplicateRequiredLib(name(), lib.clone()));
+                }
+            }
+            let mut commands = std::collections::BTreeSet::new();
+            for required in &requires.bin {
+                if !valid_required_bin_name(&required.name) {
+                    return Err(InvalidDocument::RequiredBinName(
+                        name(),
+                        required.name.clone(),
+                    ));
+                }
+                if let Some(min) = &required.min
+                    && !valid_min_version(min)
+                {
+                    return Err(InvalidDocument::RequiredBinMin(
+                        name(),
+                        required.name.clone(),
+                        min.clone(),
+                    ));
+                }
+                if !commands.insert(required.name.as_str()) {
+                    return Err(InvalidDocument::DuplicateRequiredBin(
+                        name(),
+                        required.name.clone(),
+                    ));
+                }
+                if is_bin(&required.name) {
+                    return Err(InvalidDocument::RequiredBinIsOwn(
+                        name(),
+                        required.name.clone(),
+                    ));
+                }
+            }
+        }
         let mut assets = std::collections::BTreeSet::new();
         for resource in &p.resources {
             let label = resource.label();
@@ -1469,6 +1640,78 @@ mod tests {
         assert!(matches!(s.validate(), Err(InvalidDocument::BinName(_, _))));
         s.predicate.artifacts[0].bin = vec![Bin::named("", "a")];
         assert!(matches!(s.validate(), Err(InvalidDocument::BinPath(_))));
+    }
+
+    #[test]
+    fn host_requirements_validate() {
+        let requires = |libs: Option<&[&str]>, bin: &[RequiredBin]| Requires {
+            libs: libs.map(|l| l.iter().map(|s| s.to_string()).collect()),
+            bin: bin.to_vec(),
+            ..Requires::default()
+        };
+        let with = |r: Requires| {
+            let mut s = sample();
+            s.predicate.artifacts[0].requires = Some(r);
+            s
+        };
+        with(requires(
+            Some(&["libssl.so.3", "libz.so.1"]),
+            &[RequiredBin::at_least("java", "17"), RequiredBin::new("git")],
+        ))
+        .validate()
+        .unwrap();
+        with(requires(Some(&[]), &[])).validate().unwrap();
+        assert!(matches!(
+            with(requires(Some(&["lib/libz.so.1"]), &[])).validate(),
+            Err(InvalidDocument::RequiredLib(_, _))
+        ));
+        assert!(matches!(
+            with(requires(Some(&["libz.so.1", "libz.so.1"]), &[])).validate(),
+            Err(InvalidDocument::DuplicateRequiredLib(_, _))
+        ));
+        assert!(matches!(
+            with(requires(None, &[RequiredBin::new("bin/java")])).validate(),
+            Err(InvalidDocument::RequiredBinName(_, _))
+        ));
+        assert!(matches!(
+            with(requires(None, &[RequiredBin::new("java.exe")])).validate(),
+            Err(InvalidDocument::RequiredBinName(_, _))
+        ));
+        assert!(matches!(
+            with(requires(None, &[RequiredBin::at_least("java", "v17")])).validate(),
+            Err(InvalidDocument::RequiredBinMin(_, _, _))
+        ));
+        assert!(matches!(
+            with(requires(
+                None,
+                &[
+                    RequiredBin::new("java"),
+                    RequiredBin::at_least("java", "17")
+                ]
+            ))
+            .validate(),
+            Err(InvalidDocument::DuplicateRequiredBin(_, _))
+        ));
+        assert!(matches!(
+            with(requires(None, &[RequiredBin::new("mise")])).validate(),
+            Err(InvalidDocument::RequiredBinIsOwn(_, _))
+        ));
+        let r = Requires {
+            os_min: Some("12".into()),
+            glibc_min: Some("2.31".into()),
+            ..requires(Some(&["libz.so.1"]), &[RequiredBin::at_least("java", "17")])
+        };
+        assert_eq!(
+            r.summary(),
+            "os>=12; glibc>=2.31; libs libz.so.1; bin java>=17"
+        );
+        assert_eq!(requires(Some(&[]), &[]).summary(), "libs none");
+        assert!(Requires::default().is_empty());
+        assert_eq!(
+            serde_json::to_string(&requires(Some(&["libz.so.1"]), &[RequiredBin::new("git")]))
+                .unwrap(),
+            r#"{"libs":["libz.so.1"],"bin":[{"name":"git"}]}"#
+        );
     }
 
     #[test]
