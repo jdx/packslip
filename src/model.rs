@@ -764,9 +764,13 @@ pub struct Resource {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
     /// A command whose stdout is the file: an argv whose first element is
-    /// a `bin` name. A consumer may decline to run it.
+    /// a `bin` name. See the specification's Running an exec entry.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exec: Vec<String>,
+    /// Environment variables for the `exec` command, with `{shell}`
+    /// substituted in values as in the argv. Only with `exec`.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub env: std::collections::BTreeMap<String, String>,
     /// Vendor- or consumer-defined data about this resource. See
     /// [`Extensions`].
     #[serde(default, skip_serializing_if = "Extensions::is_empty")]
@@ -1111,6 +1115,12 @@ pub enum InvalidDocument {
     OrphanAsset(String, String),
     #[error("resource {0:?} has a url but its source is not an asset")]
     ResourceUrl(String),
+    #[error("resource {0:?} has env but its source is not exec")]
+    ResourceEnv(String),
+    #[error(
+        "resource {0:?} has an env variable named {1:?}; a name is non-empty and holds no = or NUL"
+    )]
+    EnvName(String, String),
     #[error("resource {0:?} comes from the repository, which needs source.commit")]
     RepoNeedsCommit(String),
     #[error("resource {0:?} runs {1:?}, which is not a bin name of any artifact")]
@@ -1417,6 +1427,16 @@ impl Statement {
                     }
                 }
             }
+            if !resource.env.is_empty() && source != ResourceSource::Exec {
+                return Err(InvalidDocument::ResourceEnv(label));
+            }
+            if let Some(bad) = resource
+                .env
+                .keys()
+                .find(|k| k.is_empty() || k.contains(['=', '\0']))
+            {
+                return Err(InvalidDocument::EnvName(label, bad.clone()));
+            }
             if resource.url.is_some() && source != ResourceSource::Asset {
                 return Err(InvalidDocument::ResourceUrl(label));
             }
@@ -1445,9 +1465,13 @@ impl Statement {
                     {
                         return Err(InvalidDocument::Shell(label, bad.clone()));
                     }
+                    let mentions_shell = resource
+                        .exec
+                        .iter()
+                        .chain(resource.env.values())
+                        .any(|s| s.contains("{shell}"));
                     if !resource.shells.is_empty()
-                        && (source != ResourceSource::Exec
-                            || !resource.exec.iter().any(|arg| arg.contains("{shell}")))
+                        && (source != ResourceSource::Exec || !mentions_shell)
                     {
                         return Err(InvalidDocument::CompletionShells(label));
                     }
@@ -2029,6 +2053,18 @@ mod tests {
             Err(InvalidDocument::OrphanSubject(_))
         ));
 
+        // clap's dynamic completions and click name the shell in the environment.
+        with(Resource {
+            shells: vec!["bash".into(), "zsh".into()],
+            exec: vec!["mise".into()],
+            env: [("COMPLETE".to_string(), "{shell}".to_string())]
+                .into_iter()
+                .collect(),
+            ..Resource::new("completion")
+        })
+        .validate()
+        .unwrap();
+
         // A Windows bin name still matches an exec or cli-spec by its bare name.
         let mut windows = with(Resource {
             format: Some("usage".into()),
@@ -2105,6 +2141,21 @@ mod tests {
                     ..archive("completion", "_mise")
                 },
                 |e| matches!(e, InvalidDocument::CompletionShells(_)),
+            ),
+            (
+                Resource {
+                    env: [("X".to_string(), "y".to_string())].into_iter().collect(),
+                    ..archive("man", "m.1")
+                },
+                |e| matches!(e, InvalidDocument::ResourceEnv(_)),
+            ),
+            (
+                Resource {
+                    env: [("A=B".to_string(), "y".to_string())].into_iter().collect(),
+                    exec: vec!["mise".into(), "man".into()],
+                    ..Resource::new("man")
+                },
+                |e| matches!(e, InvalidDocument::EnvName(_, _)),
             ),
             (
                 Resource {

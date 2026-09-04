@@ -389,6 +389,8 @@ struct ResourceSpec {
 
 /// `KIND[/QUALIFIER...]=SOURCE:VALUE`. `completion/zsh=archive:PATH`,
 /// `completion/bash,zsh,fish=exec:tool completion {shell}`,
+/// `completion/bash,zsh=exec:COMPLETE={shell} tool` (leading `NAME=value`
+/// words become `env`, as at a shell prompt),
 /// `skill/NAME=repo:PATH`, `cli-spec/usage[/BIN]=exec:tool usage`,
 /// `man=archive:PATH`, `app=archive:Tool.app`. With one `--bin`, a
 /// `cli-spec` may omit the executable's name.
@@ -457,7 +459,19 @@ fn parse_resource(spec: &str, default_bin: Option<&str>) -> Result<ResourceSpec>
         Some(("archive", path)) => resource.archive = Some(path.to_string()),
         Some(("repo", path)) => resource.repo = Some(path.to_string()),
         Some(("exec", argv)) => {
-            resource.exec = argv.split_whitespace().map(str::to_string).collect();
+            let mut words = argv.split_whitespace().peekable();
+            while let Some((name, value)) = words.peek().and_then(|w| w.split_once('=')) {
+                if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                {
+                    break;
+                }
+                resource.env.insert(name.to_string(), value.to_string());
+                words.next();
+            }
+            resource.exec = words.map(str::to_string).collect();
+            if resource.exec.is_empty() {
+                bail!("--resource {spec:?}: exec wants a command after any NAME=value words");
+            }
         }
         Some(("asset", path)) => {
             let path = PathBuf::from(path);
@@ -1283,6 +1297,15 @@ mod tests {
         .unwrap();
         assert_eq!(r.resource.shells, ["bash", "zsh", "fish"]);
         assert_eq!(r.resource.exec, ["tool", "completion", "{shell}"]);
+        let r = parse_resource(
+            "completion/bash,zsh=exec:COMPLETE={shell} _TOOL_X=1 tool",
+            None,
+        )
+        .unwrap();
+        assert_eq!(r.resource.exec, ["tool"]);
+        assert_eq!(r.resource.env["COMPLETE"], "{shell}");
+        assert_eq!(r.resource.env["_TOOL_X"], "1");
+        assert!(parse_resource("man=exec:ONLY=env", None).is_err());
         let r = parse_resource(
             "completion/bash, zsh,,fish =exec:tool completion {shell}",
             None,

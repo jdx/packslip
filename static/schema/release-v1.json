@@ -358,8 +358,15 @@
             "null"
           ]
         },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Environment variables for the `exec` command, with `{shell}`\nsubstituted in values as in the argv. Only with `exec`.",
+          "type": "object"
+        },
         "exec": {
-          "description": "A command whose stdout is the file: an argv whose first element is\na `bin` name. A consumer may decline to run it.",
+          "description": "A command whose stdout is the file: an argv whose first element is\na `bin` name. See the specification's Running an exec entry.",
           "items": {
             "type": "string"
           },

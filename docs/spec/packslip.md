@@ -270,7 +270,8 @@ Windows installer.
 | `resources[].asset` | string | one source | Name of a separate release file, listed in `subject` with its digest. |
 | `resources[].url` | string | optional | Download URL of the asset. Only with `asset`. |
 | `resources[].repo` | string | one source | Path in the source repository at `source.commit`, which is then required. |
-| `resources[].exec[]` | array of string | one source | An argv whose first element is a `bin` name and whose stdout is the file. Consumers may decline to run it. |
+| `resources[].exec[]` | array of string | one source | An argv whose first element is a `bin` name and whose stdout is the file. See Running an exec entry. |
+| `resources[].env` | object of string | optional | Environment variables for the command, with `{shell}` substituted in values as in the argv. Only with `exec`. |
 | `resources[].shell` | string | completion | The shell a static completion is for. |
 | `resources[].shells[]` | array of string | completion | Every shell an `exec` completion generates, substituted for `{shell}` in the argv. |
 | `resources[].format` | string | cli-spec, sbom | The spec format (`usage`) or the SBOM format (`cyclonedx`, `spdx`). |
@@ -302,11 +303,12 @@ prefers them in this order:
 - `repo`: a path in the source repository at `source.commit`, which pins
   its content. `source.commit` is required.
 - `exec`: an argv whose first element is a `bin` name and whose stdout is
-  the file, run once the executable is installed. Nothing verifies it
-  beyond the executable itself, and it runs a freshly downloaded binary at
-  install time rather than at first use. A consumer may decline to run
-  anything; one that declines treats the entry as absent rather than
-  failing. A vendor lists a static source first and an `exec` entry last.
+  the file, with `env` for anything the command reads from its
+  environment. Nothing verifies the output beyond the executable itself,
+  so it ranks last among sources, but for a completion it is the usual
+  case: cobra, clap, oclif, and usage generate completions from the
+  binary and ship no file. What matters is when it runs, and Running an
+  exec entry says so. A vendor with a static file lists it first.
 
 Layouts differ by platform more often than by file, so an entry may carry
 `os`, `arch`, or `libc` to say which artifacts it describes; an entry
@@ -332,8 +334,12 @@ Documented kinds:
 - `completion`: a shell completion script. With a static source, `shell`
   names the shell: `bash`, `zsh`, `fish`, `powershell`, `nushell`,
   `elvish`. With `exec`, `shells` lists every shell the command generates
-  and the argv carries a `{shell}` placeholder. `bin` names the executable
-  the script completes; a release with one executable may leave it out.
+  and `{shell}` stands for each in the argv or in an `env` value:
+  `["tool", "completion", "{shell}"]` for cobra and clap, `["tool"]` with
+  `"env": { "COMPLETE": "{shell}" }` for clap's dynamic completions,
+  `"env": { "_TOOL_COMPLETE": "{shell}_source" }` for click. `bin` names
+  the executable the script completes; a release with one executable may
+  leave it out.
 - `man`: a man page. The section is the file's suffix, as in `mise.1`.
   `bin` names the executable it documents, as for a completion.
 - `cli-spec`: a machine-readable description of the executable named by
@@ -380,6 +386,32 @@ An artifact with `bin` is something a command-line package manager
 installs. A release whose resources include `desktop` or `app` is something
 a desktop launcher installs. Many applications are both, and the entries say
 so without a category that would misfile them.
+
+#### Running an exec entry
+
+An `exec` entry runs the release's own executable, so the question is not
+whether a consumer trusts its output but when the executable first runs.
+A completion is asked for by a shell, the first time a user completes the
+command, and by then the user has chosen to run that command: generating
+the script at that moment is no more trust than the user has already
+extended. So a consumer runs an `exec` completion on demand, when a shell
+first asks, without any permission beyond the install itself, and caches
+the output for that release and shell so the command runs once rather
+than at every completion. An `exec` entry that a consumer would run at
+install time, before the user has run anything, and whose output it
+writes to disk, such as a skill, runs only when the user has said that
+vendor code may run at install; a consumer that has not treats the entry
+as absent rather than failing. A consumer may also generate completions
+at install under that same permission, to have them ready.
+
+Either way it runs the command with the release's executables on PATH, in
+a directory of its own that is not the user's project, with no standard
+input, with standard error discarded, and under a timeout of its choosing;
+a few seconds suits a completion. `{shell}` in the argv and in `env`
+values is replaced by the shell being asked for, and `env` is added to an
+environment that is otherwise the consumer's. A non-zero exit, a timeout,
+or empty output means the entry is absent this time and may be tried
+again later.
 
 ### Host requirements
 
@@ -811,8 +843,10 @@ which the reference implementation provides as `select_artifact`.
 8. For each thing the resources describe, as Resources defines one, keep
    the entries whose scope fits the selected artifact and the most
    specific of those, then take the most verifiable source offered in the
-   order Resources gives; run an `exec` entry only if you have chosen to
-   run vendor code at install time; ignore kinds you do not know. A
+   order Resources gives; run an `exec` completion on demand, when a shell
+   first asks, and cache it; run any other `exec` entry only if the user
+   has chosen to run vendor code at install time; ignore kinds you do not
+   know. A
    resource you cannot fetch is reported, not fatal; one whose digest is
    not the one the document signed fails the install.
 
@@ -875,6 +909,8 @@ Action.
   - Resources: `--resource KIND[/QUALIFIER]=SOURCE:VALUE`, as in
     `completion/zsh=archive:share/zsh/site-functions/_tool`,
     `completion/bash,zsh,fish=exec:tool completion {shell}`,
+    `completion/bash,zsh,fish=exec:COMPLETE={shell} tool` (leading
+    `NAME=value` words become `env`),
     `man=archive:man/man1/tool.1`, `cli-spec/usage=exec:tool usage`,
     `skill/NAME=repo:skills/tool`, `skill/NAME=asset:dist/tool-skill.tar.gz`,
     `sbom/cyclonedx=asset:dist/tool.cdx.json`, `desktop=archive:...`,
