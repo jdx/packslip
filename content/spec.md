@@ -576,6 +576,17 @@ only versions the host lists, which is how a registry that scans releases
 before admitting them, or an organization that curates versions, applies
 its judgement without a per-tool recipe.
 
+Such a list is a stamp on the releases it names. A consumer that trusts
+one or more stamping hosts treats a version none of them lists as not
+released: it is not offered and not installed, however valid the vendor's
+own document is. Any one trusted host's stamp suffices. A user who
+trusts a vendor outright says so for that project alone, and the
+consumer then takes the vendor's document under the vendor's pin with no
+stamp at all. A stamping host signs with whichever scheme fits it: a
+service that stamps continuously holds a key, a registry that stamps
+from a repository signs keylessly, and the consumer pins the host either
+way.
+
 ## Versions
 
 `version` is a semver 2.0.0 version: `MAJOR.MINOR.PATCH`, an optional
@@ -710,7 +721,9 @@ which the reference implementation provides as `select_artifact`.
    list that has expired or whose `sequence` is below the last one
    accepted; never select a yanked entry; skip prereleases unless asked
    for them; rank by semver precedence; refuse a packslip whose version is
-   not the one its tag or list entry named.
+   not the one its tag or list entry named. When you trust stamping
+   hosts, select only versions one of them lists, unless the user chose
+   the vendor alone for that project.
 6. Select one artifact as Selecting an artifact says. Refuse to guess
    between two artifacts that tie.
 7. Take each resource from the most verifiable source offered, in the
