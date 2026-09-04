@@ -533,24 +533,41 @@ pub struct Bin {
 }
 
 impl Bin {
+    /// An executable at `path`, put on PATH under its own file name in
+    /// canonical form: `bin/tool.exe` is `tool`.
     pub fn new(path: impl Into<String>) -> Bin {
         let path = path.into();
         Bin {
-            name: file_name(&path).to_string(),
+            name: command_name(file_name(&path)).to_string(),
             path,
         }
     }
 
+    /// An executable at `path` put on PATH under `name`, in canonical
+    /// form.
     pub fn named(path: impl Into<String>, name: impl Into<String>) -> Bin {
+        let name = name.into();
         Bin {
             path: path.into(),
-            name: name.into(),
+            name: command_name(&name).to_string(),
         }
     }
 }
 
 fn file_name(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
+}
+
+/// A command's name in the form the specification writes it: as typed at
+/// a shell, without `.exe`. `bin[].name`, `requires.bin[].name`, and a
+/// resource's `bin` all use it, so a consumer compares them without
+/// adding or stripping anything; on Windows the file at `bin[].path`
+/// goes on PATH under `name.exe`.
+pub fn command_name(name: &str) -> &str {
+    match name.get(name.len().saturating_sub(4)..) {
+        Some(tail) if tail.eq_ignore_ascii_case(".exe") => &name[..name.len() - 4],
+        _ => name,
+    }
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
@@ -564,14 +581,15 @@ impl From<BinRepr> for Bin {
     fn from(repr: BinRepr) -> Bin {
         match repr {
             BinRepr::Path(path) => Bin::new(path),
-            BinRepr::Named { path, name } => Bin { path, name },
+            // A document from before names were canonical reads the same.
+            BinRepr::Named { path, name } => Bin::named(path, name),
         }
     }
 }
 
 impl From<Bin> for BinRepr {
     fn from(bin: Bin) -> BinRepr {
-        if bin.name == file_name(&bin.path) {
+        if bin.name == command_name(file_name(&bin.path)) {
             BinRepr::Path(bin.path)
         } else {
             BinRepr::Named {
@@ -863,11 +881,7 @@ impl Resource {
         // entry naming the Windows form is for the same executable.
         let bin = match self.kind.as_str() {
             "cli-spec" | "skill" | "sbom" => None,
-            _ => self
-                .bin
-                .as_deref()
-                .or(sole_bin)
-                .map(|b| b.strip_suffix(".exe").unwrap_or(b)),
+            _ => self.bin.as_deref().or(sole_bin).map(command_name),
         };
         let id = |parts: Vec<&str>| ResourceIdentity {
             kind: self.kind.clone(),
@@ -1092,6 +1106,10 @@ pub enum InvalidDocument {
     #[error("artifact {0:?} has an executable name containing a slash: {1:?}")]
     BinName(String, String),
     #[error(
+        "artifact {0:?} has an executable name ending in .exe: {1:?}; a name is the command as typed, and the path carries the extension"
+    )]
+    BinNameExe(String, String),
+    #[error(
         "artifact {0:?} requires library {1:?}; a library is named as its loader resolves it, such as libssl.so.3"
     )]
     RequiredLib(String, String),
@@ -1304,6 +1322,12 @@ impl Statement {
                         bin.name.clone(),
                     ));
                 }
+                if command_name(&bin.name) != bin.name {
+                    return Err(InvalidDocument::BinNameExe(
+                        artifact.name.clone(),
+                        bin.name.clone(),
+                    ));
+                }
                 if let Some(expected) = bare
                     && bin.path != expected
                 {
@@ -1334,9 +1358,9 @@ impl Statement {
             .artifacts
             .iter()
             .flat_map(|a| a.bin.iter())
-            .map(|b| b.name.strip_suffix(".exe").unwrap_or(&b.name))
+            .map(|b| command_name(&b.name))
             .collect();
-        let is_bin = |name: &str| bin_names.contains(name.strip_suffix(".exe").unwrap_or(name));
+        let is_bin = |name: &str| bin_names.contains(command_name(name));
         for artifact in &p.artifacts {
             let Some(requires) = &artifact.requires else {
                 continue;
@@ -1513,7 +1537,7 @@ impl Statement {
             .artifacts
             .iter()
             .flat_map(|a| a.bin.iter())
-            .map(|b| b.name.strip_suffix(".exe").unwrap_or(&b.name))
+            .map(|b| command_name(&b.name))
             .collect();
         match names.iter().collect::<Vec<_>>().as_slice() {
             [one] => Some(one),
@@ -1813,6 +1837,33 @@ mod tests {
         .unwrap();
         assert_eq!(named[0], Bin::named("oxlint-x86_64", "oxlint-x86_64"));
         assert_eq!(named[1], Bin::named("bin/oxlint-x86_64", "oxlint"));
+        // Names are the command as typed: never with .exe, whatever the
+        // path or an older document says.
+        assert_eq!(Bin::new("bin/tool.exe").name, "tool");
+        assert_eq!(Bin::new("Tool.EXE").name, "Tool");
+        assert_eq!(Bin::named("tool-windows-x64.exe", "tool.exe").name, "tool");
+        assert_eq!(command_name("tool"), "tool");
+        assert_eq!(command_name(".exe"), "");
+        let exe: Vec<Bin> = serde_json::from_str(
+            r#"["bin/tool.exe", {"path": "tool-x64.exe", "name": "tool.exe"}]"#,
+        )
+        .unwrap();
+        assert_eq!(exe[0], Bin::named("bin/tool.exe", "tool"));
+        assert_eq!(exe[1], Bin::named("tool-x64.exe", "tool"));
+        assert_eq!(
+            serde_json::to_string(&exe).unwrap(),
+            r#"["bin/tool.exe",{"path":"tool-x64.exe","name":"tool"}]"#,
+            "a path whose file name is the command serialises bare"
+        );
+        let mut s = sample();
+        s.predicate.artifacts[0].bin = vec![Bin {
+            path: "tool.exe".into(),
+            name: "tool.exe".into(),
+        }];
+        assert!(matches!(
+            s.validate(),
+            Err(InvalidDocument::BinNameExe(_, _))
+        ));
         assert_eq!(
             serde_json::to_string(&named).unwrap(),
             r#"["oxlint-x86_64",{"path":"bin/oxlint-x86_64","name":"oxlint"}]"#
