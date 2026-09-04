@@ -191,13 +191,6 @@
           "$ref": "#/$defs/Attestor",
           "description": "Who is making the claim: the vendor itself, or a repackager that\nchecked the vendor's evidence and signed a document about it."
         },
-        "channel": {
-          "description": "`stable`, `beta`, `nightly`, or whatever the vendor calls it.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "evidence": {
           "description": "What a repackager checked before signing.",
           "items": {
@@ -213,10 +206,6 @@
             "string",
             "null"
           ]
-        },
-        "prerelease": {
-          "description": "A release not meant for general use.",
-          "type": "boolean"
         },
         "project": {
           "description": "The project's name: a host path such as `github.com/jdx/mise` or\n`mise.jdx.dev`. The host is where a\nconsumer discovers releases and, for forge hosts, what identity is\nexpected to have signed them. A tool in a monorepo adds a subpath:\n`github.com/oxc-project/oxc/oxlint`.",
@@ -250,11 +239,8 @@
           ]
         },
         "version": {
+          "description": "Semver 2.0.0 (calver such as `2026.9.1` qualifies). Its prerelease\npart, if any, marks a prerelease, and the first identifier of that\npart names the channel: see [`channel`].",
           "type": "string"
-        },
-        "version_order": {
-          "$ref": "#/$defs/VersionOrder",
-          "description": "How consumers order this project's versions."
         }
       },
       "required": [
@@ -419,21 +405,6 @@
         "digest"
       ],
       "type": "object"
-    },
-    "VersionOrder": {
-      "description": "How a project's versions are ordered, in mise's vocabulary. The vendor\ndeclares it; consumers never infer it from the strings.",
-      "oneOf": [
-        {
-          "const": "source",
-          "description": "The order the release list gives, newest first: GitHub's releases\nendpoint, or the vendor's signed list. For date versions,\ntwo-component versions, mixed histories, and anything uncertain.",
-          "type": "string"
-        },
-        {
-          "const": "semver",
-          "description": "Versions are strict `MAJOR.MINOR.PATCH` (calver such as `2026.9.1`\nincluded) and sort as semver, so the highest is the latest and\nrange constraints have meaning.",
-          "type": "string"
-        }
-      ]
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",

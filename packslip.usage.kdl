@@ -52,13 +52,6 @@ Digests every artifact, infers os/arch/libc/format from file names (override wit
     flag --published-at help="RFC 3339 publish time; defaults to now" {
         arg <PUBLISHED_AT>
     }
-    flag --prerelease help="Mark the release as not for general use"
-    flag --channel help="The release channel: stable, beta, nightly" {
-        arg <CHANNEL>
-    }
-    flag --version-order help="How consumers order this project's versions: source (the release list's order, the default) or semver (strict MAJOR.MINOR.PATCH, calver included)" {
-        arg <VERSION_ORDER>
-    }
     flag --notes-url help="URL of the release notes" {
         arg <NOTES_URL>
     }
@@ -107,9 +100,6 @@ For a project on its own domain: lists released packslips with their digests so 
     }
     flag --sequence help="Increases with every list published" required=#true {
         arg <SEQUENCE>
-    }
-    flag --version-order help="How consumers order the listed versions: source (this list's order, the default) or semver" {
-        arg <VERSION_ORDER>
     }
     flag --valid-for help="How long the list stays current: 30d, 12h, 2w" default="30d" {
         arg <VALID_FOR>

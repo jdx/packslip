@@ -93,7 +93,6 @@ and `gh attestation` understand the bundle as-is.
     "project": "github.com/jdx/mise",
     "version": "2026.9.1",
     "published_at": "2026-09-01T12:00:00Z",
-    "channel": "stable",
     "source": { "repo": "https://github.com/jdx/mise", "commit": "...", "tag": "v2026.9.1" },
     "artifacts": [
       {
@@ -133,12 +132,9 @@ Rules:
   artifact or a resource's `asset`, and neither list contains a duplicate.
   At least one artifact is required. `sha256` is required and is 64
   lowercase hex characters; `sha512` is optional and 128.
-- `project` is a name as defined above. `version` is the vendor's version
-  string, compared as opaque text. `published_at` is RFC 3339 UTC.
-- `prerelease` (default false) marks a release not meant for general use;
-  consumers skip it unless asked for prereleases. `channel` is the vendor's
-  own word for the release track (`stable`, `beta`, `nightly`).
-  `version_order` is `source` (default) or `semver`; see Ordering versions.
+- `project` is a name as defined above. `version` is semver 2.0.0; its
+  prerelease part, if any, says whether the release is a prerelease and
+  which channel it is on. See Versions. `published_at` is RFC 3339 UTC.
 - `os`, `arch`, and `libc` use the values `linux`, `darwin`, `windows`,
   `freebsd`; `x86_64`, `aarch64`, `armv7`, `riscv64`, `i686`; `gnu`,
   `musl`. `format` is the archive or installer type: `tar.xz`, `tar.gz`,
@@ -296,12 +292,15 @@ pre-authentication encoding of the payload.
 Publish the bundle next to the artifacts: as a release asset, or under the
 version directory of a download site.
 
-Every project has a release list, and it is what consumers order by:
+Every project has a release list, and it is where consumers find what
+was released and what was withdrawn:
 
 - For `github.com/<owner>/<repo>[/<tool>]` the list is the repository's
-  releases endpoint. Its order is the vendor's order. A release counts
-  when it is not a draft and carries a packslip whose `project` matches;
-  to yank one, remove its packslip asset or the release.
+  releases endpoint. A release counts when it is not a draft and carries
+  a packslip whose `project` matches. The endpoint's order and its
+  prerelease flag are not consulted; the version says both. To yank a
+  release, delete it, or delete its packslip asset where the repository
+  still permits that.
 - Any other project publishes a signed list at
 
 ```
@@ -330,7 +329,6 @@ guessing at URLs. It is a bundle of the same shape as a packslip, with the
     "expires_at": "2026-10-01T12:00:00Z",
     "sequence": 42,
     "identity": { "scheme": "sigstore-key", "key_id": "5A0A0B8B9C6D7E1F" },
-    "version_order": "semver",
     "releases": [
       { "version": "2026.9.1", "published_at": "2026-09-01T12:00:00Z",
         "packslip": "https://dl.example.com/2026.9.1/packslip.sigstore.json",
@@ -349,11 +347,11 @@ the list pins the exact documents it points at. `expires_at` and
 list that has expired, or whose sequence is lower than one it has already
 accepted, so a mirror cannot freeze or roll back the vendor's view.
 
-Each entry may carry `prerelease` and `channel` (copied from the
-packslip), `status: "yanked"` with a `status_reason` when the vendor
-withdrew the release, and `security: true` when it fixes a vulnerability.
-A consumer never selects a yanked release, warns when it holds one, and
-may shorten its minimum release age for a security release.
+Each entry may carry `status: "yanked"` with a `status_reason` when the
+vendor withdrew the release, and `security: true` when it fixes a
+vulnerability. A consumer never selects a yanked release, warns when it
+holds one, and may shorten its minimum release age for a security release.
+Nothing else about a release lives on the list: its version says the rest.
 
 `packslip releases` produces the list from local copies of the released
 bundles; the JSON schema is at
@@ -362,29 +360,50 @@ bundles; the JSON schema is at
 The list separates the name from where the bytes live: the identity is
 anchored to the domain, and the artifacts can be anywhere.
 
-## Ordering versions
+## Versions
 
-`version` is the vendor's string, and a consumer never infers an ordering
-scheme from it. Projects switch schemes over their history, two-component
-versions parse and sort wrong, and date versions look like semver. Instead
-the vendor declares how its versions order with `version_order`, on each
-release and on the list, using the two values mise's registry uses:
+`version` is a semver 2.0.0 version: `MAJOR.MINOR.PATCH`, an optional
+prerelease part after `-`, optional build metadata after `+`. Calver such
+as `2026.9.1` qualifies. `packslip create` refuses anything else, and so
+does a consumer. The tag can be spelled however the vendor likes
+(`v2026.9.1`, `oxlint_v1.0.0`); `source.tag` carries it.
 
-- `source` (default): the release list's order, newest first, is the
-  ranking. On GitHub that is the releases endpoint's order; on a vendor's
-  own list it is the array order. "Latest" is the first eligible entry.
-- `semver`: versions are strict `MAJOR.MINOR.PATCH` (calver such as
-  `2026.9.1` qualifies) and sort as semver. "Latest" is the highest eligible
-  version, so a backport such as 20.19.1 published after 22.0.0 never
-  masquerades as the newest release, and range constraints (`^1.2`) have
-  meaning.
+One required scheme is what lets everything about a release follow from
+its signed version string, with no flag anywhere that could disagree with
+it:
+
+- Order is semver precedence. "Latest" is the highest eligible version, so
+  a backport such as 20.19.1 published after 22.0.0 never masquerades as
+  the newest release, and range constraints (`^1.2`) have meaning. Build
+  metadata takes no part, as semver says. The order of the release list,
+  GitHub's or the vendor's, is not consulted.
+- A prerelease is a version with a prerelease part: `1.2.0-rc.1` is one,
+  `1.2.0` is not. Consumers skip prereleases unless asked for them.
+  Promoting a release candidate means cutting the final version, not
+  editing a flag.
+- A channel is the first identifier of the prerelease part, when that is
+  not a number: `1.3.0-nightly.20260904` is on `nightly`, `1.2.0-beta.2` on
+  `beta`, `1.2.0-rc.1` on `rc`. A release with no prerelease part is on no
+  channel, and so is `1.2.0-1`. A consumer asked for a channel selects
+  only releases on it, ranked by precedence. The names are the vendor's;
+  packslip defines none.
 
 Eligible means not yanked, not a prerelease unless prereleases were asked
-for, and in the requested channel when one was given. A requested version
-matches as a prefix on dot-separated components under either order, so
-`20` and `3.12` mean what people expect; range constraints are refused
-under `source` rather than guessed. Rollback protection comes from the
-release list's `sequence`, not from anything a single release says.
+for, and on the requested channel when one was given. A requested version
+matches as a prefix on dot-separated components, so `20` and `3.12` mean
+what people expect and `1.2.0-beta` means the betas of 1.2.0. Rollback
+protection comes from the release list's `sequence`, not from anything a
+single release says.
+
+A packslip carries none of this as a field, on purpose. It is signed once,
+and on a GitHub repository with immutable releases it can never be
+replaced, while GitHub's own prerelease flag stays editable after
+publishing. A flag in the document would end up either frozen or
+contradicted. So the packslip says what shipped, the version says how to
+treat it, and the one thing that stays mutable, withdrawing a release, is
+the release list's job. An earlier draft let a vendor declare list order
+instead of semver; it went, because the prerelease and channel fields it
+then needed had no honest home.
 
 ## Consumer rules
 
@@ -409,7 +428,7 @@ release list's `sequence`, not from anything a single release says.
    signed list) and refuse a project that has neither. Refuse a signed
    list that has expired or whose `sequence` is below the last one
    accepted; never select a yanked entry; skip prereleases unless asked
-   for them; order as `version_order` says.
+   for them; rank by semver precedence.
 6. Select one artifact by os, arch, libc, format, and, when needed,
    variant. Refuse to guess between two artifacts that match.
 7. Take each resource from the most verifiable source offered, in the
@@ -456,8 +475,8 @@ Action.
   - Executables: `--bin NAME=PATH` when the name on PATH differs from the
     file.
   - URLs: `--url FILENAME=URL` sets one artifact's or asset's URL.
-  - Metadata: `--prerelease`, `--channel`, `--notes-url`, `--no-sha512`,
-    and `--attested-by repackager` with `--evidence KIND[=DETAIL]`.
+  - Metadata: `--notes-url`, `--no-sha512`, and `--attested-by repackager`
+    with `--evidence KIND[=DETAIL]`.
   - Resources: `--resource KIND[/QUALIFIER]=SOURCE:VALUE`, as in
     `completion/zsh=archive:share/zsh/site-functions/_tool`,
     `completion/bash,zsh,fish=exec:tool completion {shell}`,

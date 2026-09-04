@@ -54,14 +54,6 @@ inputs:
       matched is treated as the asset, not an artifact).
     required: false
     default: ""
-  prerelease:
-    description: Mark the release as not for general use; defaults to the GitHub release's flag
-    required: false
-    default: ""
-  channel:
-    description: The release channel (stable, beta, nightly)
-    required: false
-    default: ""
   notes-url:
     description: URL of the release notes; defaults to the release page
     required: false
@@ -179,13 +171,10 @@ runs:
         IN_BIN: ${{ inputs.bin }}
         IN_VARIANTS: ${{ inputs.variants }}
         IN_RESOURCES: ${{ inputs.resources }}
-        IN_PRERELEASE: ${{ inputs.prerelease }}
-        IN_CHANNEL: ${{ inputs.channel }}
         IN_NOTES_URL: ${{ inputs.notes-url }}
         IN_SBOM: ${{ inputs.sbom }}
         IN_ATTEST: ${{ inputs.attest }}
         IN_OUT: ${{ inputs.out }}
-        EVENT_PRERELEASE: ${{ github.event.release.prerelease }}
         REPO: ${{ github.repository }}
         REF_NAME: ${{ github.ref_name }}
         REF_TYPE: ${{ github.ref_type }}
@@ -203,7 +192,6 @@ runs:
         project="${IN_PROJECT:-github.com/${REPO}}"
         url_base="${IN_URL_BASE:-${SERVER}/${REPO}/releases/download/${tag}}"
         notes_url="${IN_NOTES_URL:-${SERVER}/${REPO}/releases/tag/${tag}}"
-        prerelease="${IN_PRERELEASE:-${EVENT_PRERELEASE:-false}}"
         args=(
           create
           --project "$project"
@@ -215,8 +203,6 @@ runs:
           --tag "$tag"
           --commit "$SHA"
         )
-        [ "$prerelease" = true ] && args+=(--prerelease)
-        [ -n "$IN_CHANNEL" ] && args+=(--channel "$IN_CHANNEL")
         for b in $IN_BIN; do args+=(--bin "$b"); done
         while IFS= read -r line; do
           [ -n "$line" ] && args+=(--resource "$line")

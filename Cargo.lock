@@ -1226,6 +1226,7 @@ dependencies = [
  "getrandom 0.3.4",
  "jiff",
  "schemars",
+ "semver",
  "serde",
  "serde_json",
  "sha2",
