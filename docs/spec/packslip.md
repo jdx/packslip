@@ -8,9 +8,13 @@ Author: Jeff Dickey ([@jdx](https://github.com/jdx)).
 ## Goal
 
 A vendor publishes one signed, machine-readable document per release that
-says what the artifacts are and how to verify them. A consumer, whether that
-is [mise](https://mise.jdx.dev), [pacvamp](https://pacvamp.com), or a
-corporate mirror, verifies it against one pinned identity or key. In return
+says what the artifacts are and how to verify them. The artifacts are the
+files the release ships: usually an archive, installer, or bare executable
+per platform for a command-line or desktop application, but any file the
+vendor wants verified can be listed, from a source tarball to a data file.
+A consumer, whether that is [mise](https://mise.jdx.dev),
+[pacvamp](https://pacvamp.com), or a corporate mirror, verifies it against
+one pinned identity or key. In return
 it gets checksums, platform mapping, executables, provenance links, and
 whatever else ships with the release: completions, man pages, a CLI spec, a
 skill, a desktop entry.
