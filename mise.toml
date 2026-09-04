@@ -31,3 +31,8 @@ run = "hugo server"
 description = "Build the generated documentation"
 depends = ["render"]
 run = "hugo --gc --minify"
+
+[tasks."docs:check"]
+description = "Build docs, check internal links, and run offline documentation examples"
+depends = ["docs:build"]
+run = "python3 scripts/check-docs.py"

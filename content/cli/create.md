@@ -5,23 +5,27 @@
 
 Create and sign a packslip for a release
 
-Digests every artifact, infers os/arch/libc/format from file names (override with path:os/arch[/libc], path:any for an artifact that runs anywhere, add @variant to tell apart two builds for one platform), and writes packslip.sigstore.json into --out. What the command line cannot say per artifact, such as executables at different paths in different archives or a format the name gets wrong, goes in a --manifest. Inside a CI job the document is signed keylessly with the job's identity. With --key it is signed with an Ed25519 key from `packslip keygen`. Either way the signature is logged to Rekor.
+Hash local artifacts, infer platforms and formats from filenames, and write a signed bundle to --out. Use --manifest for per-artifact paths, formats, requirements, and scoped resources. No files are uploaded.
+
+Signing uses a supported CI OIDC identity by default. Use --key to sign with an Ed25519 key instead. Signatures are logged to Rekor unless a key-signed release explicitly uses --no-log.
+
+Examples and configuration: https://packslip.dev/docs/describing-releases/
 
 ## Arguments
 - **`[ARTIFACTS]…`** — Artifact files, optionally as path[:os/arch[/libc]|:any][@variant]. Added to those the manifest lists
 
 ## Flags
 - **`--project <PROJECT>`** — The project's name: a host path such as github.com/owner/repo, or github.com/owner/repo/tool for one tool of a monorepo. Required unless the manifest names it
-- **`--version <VERSION>`** — The release version, semver. Required unless the manifest names it
-- **`-m --manifest <MANIFEST>`** — A TOML manifest giving per-artifact executables, formats, requirements, platforms, and the release's resources; see https://packslip.dev/release/v1/#tooling
+- **`--version <VERSION>`** — Semver release version, such as 1.2.3. Required unless set in the manifest
+- **`-m --manifest <MANIFEST>`** — A TOML manifest giving per-artifact executables, formats, requirements, platforms, and the release's resources; see https://packslip.dev/docs/describing-releases/
 - **`-k --key <KEY>`** — Sign with this secret key instead of a CI identity
 - **`--sign <SIGN>`** — How to sign; defaults to key when --key is given, else oidc
 - **`--no-log`** — With --key: do not record the signature in Rekor. Consumers must then opt in with --allow-unlogged
-- **`-o --out <OUT>`** — Directory to write into
+- **`-o --out <OUT>`** — Directory for the signed bundle (does not copy artifacts)
 
   **Default:** `.`
 - **`--url-base <URL_BASE>`** — Download URL prefix for the artifacts
-- **`--url <URL>`** — Download URL for one artifact, as FILENAME=URL (repeatable)
+- **`--url <URL>`** — Download URL for one artifact or resource asset, as FILENAME=URL (repeatable)
 - **`--source-repo <SOURCE_REPO>`** — Source repository URL
 - **`--commit <COMMIT>`** — Source commit
 - **`--tag <TAG>`** — Source tag

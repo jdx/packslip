@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ .Title }} — packslip</title>
+<meta name="description" content="{{ .Description | default "The packslip release and release-list specification." }}">
+<meta property="og:title" content="{{ .Title }} — packslip">
+<meta property="og:description" content="{{ .Description }}">
+<meta property="og:url" content="{{ .Permalink }}">
+<meta property="og:type" content="article">
+{{ partial "social-image.html" . }}
+<meta name="twitter:title" content="{{ .Title }} — packslip">
+<meta name="twitter:description" content="{{ .Description }}">
+{{ partial "seo.html" . }}
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+{{ partial "header.html" . }}
+<main id="main" class="wrap doc">
+  <aside class="toc" aria-label="Documentation navigation">
+    <details class="doc-navigation" open>
+      <summary>Browse this documentation</summary>
+
+    {{ if eq .Section "docs" }}
+    <div class="toc-group">
+      <div class="toc-title">Guides</div>
+      <ul>
+        {{ $current := .RelPermalink }}
+        {{ with site.GetPage "/docs" }}
+        <li><a href="{{ .RelPermalink }}"{{ if eq $current .RelPermalink }} class="active" aria-current="page"{{ end }}>Documentation</a></li>
+        {{ range .RegularPages.ByWeight }}
+        <li><a href="{{ .RelPermalink }}"{{ if eq $current .RelPermalink }} class="active" aria-current="page"{{ end }}>{{ .Title }}</a></li>
+        {{ end }}
+        {{ end }}
+      </ul>
+    </div>
+    {{ end }}
+    <div class="toc-group">
+      <div class="toc-title">On this page</div>
+      {{ .TableOfContents }}
+    </div>
+
+    </details>
+  </aside>
+  <article class="prose">
+    {{ partial "notice.html" . }}
+    {{ if eq .RelPermalink "/release/v1/" }}
+    <p class="meta">Canonical source: <a href="https://github.com/jdx/packslip/blob/main/docs/spec/packslip.md">docs/spec/packslip.md</a>. Schemas: <a href="/schema/release-v1.json">release/v1</a> and <a href="/schema/releases-v1.json">releases/v1</a>. For examples, start with the <a href="/docs/">guides</a>.</p>
+    {{ end }}
+    {{ .Content }}
+  </article>
+</main>
+{{ partial "footer.html" . }}
+</body>
+</html>

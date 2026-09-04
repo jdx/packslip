@@ -34,7 +34,7 @@ jobs:
       - run: cargo test --all-features
       - run: mise run render
       - run: usage lint packslip.usage.kdl
-      - run: mise run docs:build
+      - run: mise run docs:check
       - name: Verify generated CLI documentation
         run: |
           set -euo pipefail

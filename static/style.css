@@ -44,8 +44,7 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 3px; }
-a:hover { text-decoration-thickness: 2px; }
+a { color: var(--accent); text-decoration: none; }
 
 code, pre, kbd {
   font-family: var(--mono);
@@ -473,7 +472,6 @@ footer a { color: var(--muted); }
 .toc a:hover { color: var(--accent); }
 .toc .toc-title { font-family: var(--mono); font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 0.6rem; }
 .toc .toc-group + .toc-group { margin-top: 1.5rem; }
-.toc .active { color: var(--accent); font-weight: 600; }
 
 .doc article, .step, .split > div, .cols > div { min-width: 0; }
 
@@ -495,3 +493,49 @@ footer a { color: var(--muted); }
 @media (max-width: 600px) {
   #levels td:nth-child(3), #levels th:nth-child(3) { display: none; }
 }
+
+/* Documentation navigation and readable long-form content. */
+.skip-link { position: absolute; left: 1rem; top: -5rem; z-index: 10; padding: .6rem 1rem; background: var(--card); }
+.skip-link:focus { top: .5rem; }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.doc .prose { max-width: 100%; }
+.doc .notice { margin-top: 0; margin-bottom: 1.5rem; }
+.toc { max-height: calc(100vh - 3rem); overflow-y: auto; }
+.toc ul ul { padding-left: .9rem; }
+.prose :is(h2, h3, h4) { scroll-margin-top: 1.5rem; }
+.prose p, .prose li { overflow-wrap: anywhere; }
+.overview { max-width: 78ch; padding-bottom: 4rem; }
+.overview h2 { margin-top: 2.5rem; line-height: 1.2; }
+.slip-caption { margin: 0; padding: 1rem; color: var(--muted); font-size: .9rem; border-top: 1px dashed var(--rule); }
+@media (max-width: 860px) { .toc { max-height: none; } }
+@media (max-width: 600px) { .top { flex-direction: column; align-items: flex-start; } .top nav { gap: 1rem; } }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+.doc-navigation > summary { cursor: pointer; color: var(--accent); font-weight: 600; margin-bottom: 1rem; }
+@media (min-width: 861px) { .doc-navigation > summary { display: none; } }
+@media (max-width: 860px) { .doc { padding-top: 1.5rem; } .doc-navigation { padding-bottom: .5rem; border-bottom: 1px solid var(--rule); } }
+
+.top nav a.active, .toc a.active {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Installation methods: mise is selected first, with all methods available. */
+.install-tabs { margin: 1.25rem 0 2rem; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; }
+.install-tab-list { display: flex; flex-wrap: wrap; gap: .35rem; padding: .6rem; border-bottom: 1px solid var(--rule); background: var(--paper-2); }
+.install-tab-list button { font: inherit; font-size: .9rem; color: var(--ink-2); background: transparent; border: 1px solid transparent; border-radius: 5px; padding: .45rem .8rem; cursor: pointer; }
+.install-tab-list button:hover { color: var(--accent); }
+.install-tab-list button[aria-selected="true"] { background: var(--card); border-color: var(--rule); color: var(--accent); font-weight: 600; }
+.install-tab-list button:focus-visible, .install-tab-panel:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.install-tab-panel { padding: 1.25rem; }
+.install-tab-panel > :last-child { margin-bottom: 0; }
+.install-tab-panel[hidden], .tab-fallback-title[hidden] { display: none; }
+
+.code-block { margin: 1rem 0 1.4rem; min-width: 0; }
+.code-toolbar { display: flex; justify-content: flex-end; align-items: center; gap: .75rem; margin-bottom: .35rem; }
+.copy-code { flex-shrink: 0; font: inherit; font-size: .8rem; padding: .2rem .65rem; border: 1px solid var(--rule); border-radius: 4px; color: var(--ink-2); background: var(--card); cursor: pointer; }
+.copy-code:hover { color: var(--accent); border-color: var(--accent); }
+.copy-code:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.copy-status { color: var(--muted); font-size: .8rem; }
+.prose .code-block pre, .code-block pre { margin: 0; }
+.slip .code-toolbar { padding: .5rem 1rem 0; }
