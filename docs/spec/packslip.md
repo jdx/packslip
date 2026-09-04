@@ -14,8 +14,6 @@ corporate mirror, verifies it against one pinned identity or key. In return
 it gets checksums, platform mapping, executables, provenance links, and
 whatever else ships with the release: completions, man pages, a CLI spec, a
 skill, a desktop entry. It needs no per-vendor logic and no registry entry.
-The name is neutral on purpose: a packing slip is the paper in the box
-listing exactly what shipped.
 
 packslip invents as little as it can. The document is an in-toto statement
 in a sigstore bundle, the same shape GitHub artifact attestations and npm
