@@ -79,7 +79,7 @@ commit_parsers = [
 ]
 protect_breaking_commits = false
 filter_commits = false
-# Only version tags; `v1` is the action's moving major tag.
+# Only full version tags; exclude the action's moving major tags.
 tag_pattern = '^v\d+\.\d+\.\d+$'
 topo_order = false
 sort_commits = "oldest"

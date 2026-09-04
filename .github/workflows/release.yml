@@ -1,8 +1,8 @@
 name: release
 
 # Runs when release-plz pushes a version tag after its release PR is
-# merged (see RELEASING.md). `v1` is the action's major tag, moved by
-# this workflow; it must not start a release of its own.
+# merged (see RELEASING.md). Moving major tags (v0, v1, ...) must not
+# start releases of their own.
 on:
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+"]
@@ -14,7 +14,32 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      major-tag: ${{ steps.version.outputs.major-tag }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check the shared action and CLI version
+        id: version
+        shell: python
+        run: |
+          import os
+          import re
+          import tomllib
+
+          with open("Cargo.toml", "rb") as manifest:
+              version = tomllib.load(manifest)["package"]["version"]
+          if not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version):
+              raise SystemExit(f"unsupported release version: {version}")
+          tag = os.environ["GITHUB_REF_NAME"]
+          if tag != f"v{version}":
+              raise SystemExit(f"release tag {tag} does not match Cargo.toml v{version}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"major-tag=v{version.split('.')[0]}\n")
+
   build:
+    needs: version
     strategy:
       fail-fast: false
       matrix:
@@ -78,7 +103,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: build
+    needs: [version, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -159,20 +184,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release edit "$GITHUB_REF_NAME" --draft=false
-      # `uses: jdx/packslip@v1` follows the latest release. A push made with
+      # The action follows releases of the same CLI major, only after the
+      # binaries are public. A push made with
       # the built-in token starts no workflow, so this cannot recurse.
-      - name: Move the v1 action tag
+      - name: Move the shared major action tag
         env:
+          MAJOR_TAG: ${{ needs.version.outputs.major-tag }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           for attempt in 1 2 3; do
-            git tag -f v1 "$GITHUB_SHA"
-            if git push -f origin v1; then
+            git tag -f "$MAJOR_TAG" "$GITHUB_SHA"
+            if git push -f origin "refs/tags/$MAJOR_TAG"; then
               break
             fi
-            git fetch origin "refs/tags/v1:refs/tags/v1" -f || true
+            git fetch origin "refs/tags/$MAJOR_TAG:refs/tags/$MAJOR_TAG" -f || true
             [ "$attempt" -lt 3 ] || exit 1
           done
