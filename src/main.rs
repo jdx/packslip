@@ -8,7 +8,7 @@ use packslip::create::{ArtifactInput, AssetInput, ListRequest, ListedRelease, Re
 use packslip::minisign::{PublicKey, SecretKey, key_id_hex};
 use packslip::model::{
     Attestor, Bin, Evidence, RELEASES_PREDICATE_TYPE, ReleaseListStatement, Resource, Source,
-    Statement, VersionOrder,
+    Statement,
 };
 use packslip::sigstore::{self, Policy, Signer, Trust};
 use packslip::verify::Options;
@@ -233,24 +233,6 @@ impl std::str::FromStr for AttestorArg {
     }
 }
 
-/// `source` or `semver`, as mise's registry spells them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct VersionOrderArg(VersionOrder);
-
-impl std::str::FromStr for VersionOrderArg {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "source" => Ok(VersionOrderArg(VersionOrder::Source)),
-            "semver" => Ok(VersionOrderArg(VersionOrder::Semver)),
-            other => Err(format!(
-                "--version-order must be source or semver, got {other:?}"
-            )),
-        }
-    }
-}
-
 /// Resolve who signs from the shared signing flags.
 fn signer(key: &Option<PathBuf>, sign: Option<SignWith>, no_log: bool) -> Result<Signer> {
     let sign_with = sign.unwrap_or(if key.is_some() {
@@ -333,17 +315,6 @@ struct Create {
     /// RFC 3339 publish time; defaults to now
     #[usage(long)]
     published_at: Option<String>,
-    /// Mark the release as not for general use
-    #[usage(long)]
-    prerelease: bool,
-    /// The release channel: stable, beta, nightly
-    #[usage(long)]
-    channel: Option<String>,
-    /// How consumers order this project's versions: source (the release
-    /// list's order, the default) or semver (strict MAJOR.MINOR.PATCH,
-    /// calver included)
-    #[usage(long)]
-    version_order: Option<VersionOrderArg>,
     /// URL of the release notes
     #[usage(long)]
     notes_url: Option<String>,
@@ -557,9 +528,6 @@ impl RunWith<BinInfo> for Create {
         });
         let created = packslip::create::create(&Request {
             published_at: self.published_at.as_deref(),
-            prerelease: self.prerelease,
-            channel: self.channel.as_deref(),
-            version_order: self.version_order.map(|v| v.0).unwrap_or_default(),
             source,
             artifacts,
             resources,
@@ -676,10 +644,6 @@ struct Releases {
     /// Increases with every list published
     #[usage(long)]
     sequence: u64,
-    /// How consumers order the listed versions: source (this list's order,
-    /// the default) or semver
-    #[usage(long)]
-    version_order: Option<VersionOrderArg>,
     /// How long the list stays current: 30d, 12h, 2w
     #[usage(long, default = "30d")]
     valid_for: String,
@@ -748,7 +712,6 @@ impl RunWith<BinInfo> for Releases {
             generated_at: self.generated_at.as_deref(),
             valid_for: parse_duration(&self.valid_for)?,
             sequence: self.sequence,
-            version_order: self.version_order.map(|v| v.0).unwrap_or_default(),
             releases,
             identity: signer.identity(),
         })?;
@@ -943,10 +906,10 @@ impl RunWith<BinInfo> for Verify {
                         "ok: {} {}{} published {} signed by {} ({}){}{} ({} of {} artifact(s) checked{}{})",
                         verified.project,
                         verified.version,
-                        if verified.prerelease {
-                            " (prerelease)"
-                        } else {
-                            ""
+                        match (&verified.channel, verified.prerelease) {
+                            (Some(channel), _) => format!(" ({channel} prerelease)"),
+                            (None, true) => " (prerelease)".to_string(),
+                            (None, false) => String::new(),
                         },
                         verified.published_at,
                         verified.key_id,

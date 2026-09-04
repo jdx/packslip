@@ -51,18 +51,12 @@ pub struct Predicate {
     /// expected to have signed them. A tool in a monorepo adds a subpath:
     /// `github.com/oxc-project/oxc/oxlint`.
     pub project: String,
+    /// Semver 2.0.0 (calver such as `2026.9.1` qualifies). Its prerelease
+    /// part, if any, marks a prerelease, and the first identifier of that
+    /// part names the channel: see [`channel`].
     pub version: String,
     /// RFC 3339 UTC.
     pub published_at: String,
-    /// A release not meant for general use.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub prerelease: bool,
-    /// `stable`, `beta`, `nightly`, or whatever the vendor calls it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub channel: Option<String>,
-    /// How consumers order this project's versions.
-    #[serde(default, skip_serializing_if = "VersionOrder::is_source")]
-    pub version_order: VersionOrder,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<Source>,
     pub artifacts: Vec<Artifact>,
@@ -112,35 +106,22 @@ impl std::fmt::Display for Attestor {
     }
 }
 
-/// How a project's versions are ordered, in mise's vocabulary. The vendor
-/// declares it; consumers never infer it from the strings.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case")]
-pub enum VersionOrder {
-    /// The order the release list gives, newest first: GitHub's releases
-    /// endpoint, or the vendor's signed list. For date versions,
-    /// two-component versions, mixed histories, and anything uncertain.
-    #[default]
-    Source,
-    /// Versions are strict `MAJOR.MINOR.PATCH` (calver such as `2026.9.1`
-    /// included) and sort as semver, so the highest is the latest and
-    /// range constraints have meaning.
-    Semver,
+/// Parse a version as packslip requires: semver 2.0.0, so that precedence
+/// ranks releases and the prerelease part says the rest.
+pub fn parse_version(version: &str) -> Result<semver::Version, InvalidDocument> {
+    if version.is_empty() {
+        return Err(InvalidDocument::Version);
+    }
+    semver::Version::parse(version).map_err(|_| InvalidDocument::NotSemver(version.to_string()))
 }
 
-impl VersionOrder {
-    pub fn is_source(&self) -> bool {
-        *self == VersionOrder::Source
-    }
-}
-
-impl std::fmt::Display for VersionOrder {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            VersionOrder::Source => "source",
-            VersionOrder::Semver => "semver",
-        })
-    }
+/// The channel a version is on: the first identifier of its prerelease
+/// part, when that is not a number. `1.3.0-nightly.20260904` is on
+/// `nightly` and `1.2.0-beta.2` on `beta`; `1.2.0` and `1.2.0-1` are on
+/// none.
+pub fn channel(version: &semver::Version) -> Option<&str> {
+    let first = version.pre.as_str().split('.').next()?;
+    (!first.is_empty() && !first.bytes().all(|b| b.is_ascii_digit())).then_some(first)
 }
 
 /// One thing a repackager checked. Documented kinds:
@@ -455,10 +436,7 @@ pub struct ReleaseList {
     /// than it has seen.
     pub sequence: u64,
     pub identity: Identity,
-    /// How consumers order the versions listed.
-    #[serde(default, skip_serializing_if = "VersionOrder::is_source")]
-    pub version_order: VersionOrder,
-    /// Newest first: under `source` ordering this order is the ranking.
+    /// In any order; consumers rank by semver precedence.
     pub releases: Vec<ReleaseRef>,
 }
 
@@ -470,10 +448,6 @@ pub struct ReleaseRef {
     /// URL of the release's `packslip.sigstore.json`. The statement's
     /// subject of the same name carries that file's digest.
     pub packslip: String,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub prerelease: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub channel: Option<String>,
     /// Set when the vendor withdrew the release. Consumers never select a
     /// yanked release and warn when they hold one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -514,6 +488,10 @@ pub enum InvalidDocument {
     Project(String),
     #[error("version must not be empty")]
     Version,
+    #[error(
+        "version must be semver 2.0.0 (MAJOR.MINOR.PATCH, with an optional prerelease part), got {0:?}"
+    )]
+    NotSemver(String),
     #[error("{field} must be RFC 3339, got {value:?}")]
     Timestamp { field: &'static str, value: String },
     #[error("artifact {0:?} appears more than once")]
@@ -645,9 +623,7 @@ impl Statement {
         if !valid_project(&p.project) {
             return Err(InvalidDocument::Project(p.project.clone()));
         }
-        if p.version.is_empty() {
-            return Err(InvalidDocument::Version);
-        }
+        parse_version(&p.version)?;
         check_timestamp("published_at", &p.published_at)?;
         if p.artifacts.is_empty() {
             return Err(InvalidDocument::NoArtifacts);
@@ -814,9 +790,7 @@ impl ReleaseListStatement {
         }
         let mut seen = std::collections::BTreeSet::new();
         for release in &p.releases {
-            if release.version.is_empty() {
-                return Err(InvalidDocument::Version);
-            }
+            parse_version(&release.version)?;
             if !seen.insert(release.version.as_str()) {
                 return Err(InvalidDocument::DuplicateRelease(release.version.clone()));
             }
@@ -925,9 +899,6 @@ mod tests {
                 project: "github.com/jdx/mise".into(),
                 version: "2026.9.1".into(),
                 published_at: "2026-09-01T12:00:00Z".into(),
-                prerelease: false,
-                channel: None,
-                version_order: VersionOrder::Semver,
                 source: Some(Source {
                     repo: "https://github.com/jdx/mise".into(),
                     commit: Some("b".repeat(40)),
@@ -981,7 +952,6 @@ mod tests {
                     key_id: "5A0A0B8B9C6D7E1F".into(),
                     issuer: None,
                 },
-                version_order: VersionOrder::Source,
                 releases: vec![ReleaseRef {
                     version: "2026.9.1".into(),
                     published_at: "2026-09-01T12:00:00Z".into(),
@@ -1011,23 +981,50 @@ mod tests {
             json.starts_with(r#"{"_type":"https://in-toto.io/Statement/v1","subject""#),
             "{json}"
         );
-        assert!(!json.contains("prerelease"), "defaults are omitted: {json}");
-        assert!(json.contains(r#""version_order":"semver""#), "{json}");
-        assert!(!json.contains("attested_by"), "{json}");
+        assert!(
+            !json.contains("attested_by"),
+            "defaults are omitted: {json}"
+        );
         assert!(json.contains(r#""bin":["mise/bin/mise"]"#), "{json}");
         assert_eq!(serde_json::from_str::<Statement>(&json).unwrap(), s);
     }
 
     #[test]
     fn a_v0_2_document_round_trips_byte_for_byte() {
-        let old = r#"{"_type":"https://in-toto.io/Statement/v1","subject":[{"name":"t-linux-x64.tar.xz","digest":{"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}],"predicateType":"https://packslip.dev/release/v1","predicate":{"project":"github.com/o/r","version":"1","published_at":"2026-09-01T00:00:00Z","artifacts":[{"name":"t-linux-x64.tar.xz","os":"linux","arch":"x86_64","libc":"gnu","size":5,"format":"tar.xz","bin":["t"]}],"identity":{"scheme":"sigstore-oidc","key_id":"https://github.com/o/r/.github/workflows/r.yml@refs/tags/v1","issuer":"https://token.actions.githubusercontent.com"}}}"#;
+        let old = r#"{"_type":"https://in-toto.io/Statement/v1","subject":[{"name":"t-linux-x64.tar.xz","digest":{"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}],"predicateType":"https://packslip.dev/release/v1","predicate":{"project":"github.com/o/r","version":"1.0.0","published_at":"2026-09-01T00:00:00Z","artifacts":[{"name":"t-linux-x64.tar.xz","os":"linux","arch":"x86_64","libc":"gnu","size":5,"format":"tar.xz","bin":["t"]}],"identity":{"scheme":"sigstore-oidc","key_id":"https://github.com/o/r/.github/workflows/r.yml@refs/tags/v1","issuer":"https://token.actions.githubusercontent.com"}}}"#;
         let parsed: Statement = serde_json::from_str(old).unwrap();
         parsed.validate().unwrap();
         assert_eq!(parsed.predicate.attested_by, Attestor::Vendor);
-        assert_eq!(parsed.predicate.version_order, VersionOrder::Source);
-        assert!(!parsed.predicate.prerelease);
         assert_eq!(parsed.predicate.artifacts[0].bin, [Bin::new("t")]);
         assert_eq!(String::from_utf8(parsed.canonical_bytes()).unwrap(), old);
+    }
+
+    #[test]
+    fn versions_are_semver_and_name_their_channel() {
+        for bad in ["", "1", "1.2", "v1.2.3", "1.2.3.4", "2026-09-04", "nightly"] {
+            assert!(parse_version(bad).is_err(), "{bad:?} should be refused");
+        }
+        let cases = [
+            ("1.2.3", false, None),
+            ("2026.9.1", false, None),
+            ("1.2.3+build.5", false, None),
+            ("1.2.0-rc.1", true, Some("rc")),
+            ("1.2.0-beta.2", true, Some("beta")),
+            ("1.3.0-nightly.20260904", true, Some("nightly")),
+            ("1.2.0-1", true, None),
+            ("1.2.0-0.3.7", true, None),
+        ];
+        for (text, prerelease, expected) in cases {
+            let version = parse_version(text).unwrap();
+            assert_eq!(!version.pre.is_empty(), prerelease, "{text}");
+            assert_eq!(channel(&version), expected, "{text}");
+        }
+        let mut doc = sample();
+        doc.predicate.version = "1.2".into();
+        assert!(matches!(
+            doc.validate(),
+            Err(InvalidDocument::NotSemver(v)) if v == "1.2"
+        ));
     }
 
     #[test]

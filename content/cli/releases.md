@@ -10,7 +10,6 @@ For a project on its own domain: lists released packslips with their digests so 
 ## Flags
 - **`--project <PROJECT>`** — The project's name, which every listed packslip must carry
 - **`--sequence <SEQUENCE>`** — Increases with every list published
-- **`--version-order <VERSION_ORDER>`** — How consumers order the listed versions: source (this list's order, the default) or semver
 - **`--valid-for <VALID_FOR>`** — How long the list stays current: 30d, 12h, 2w
 
   **Default:** `30d`

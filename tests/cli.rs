@@ -352,6 +352,27 @@ fn variants_urls_evidence_and_monorepo_names() {
     assert_ne!(code, 0);
     assert!(err.contains("give one a variant"), "{err}");
 
+    let (code, _, err) = packslip(
+        d,
+        &[
+            "create",
+            "--project",
+            "github.com/oxc-project/oxc/oxlint",
+            "--version",
+            "1.0",
+            "--key",
+            "k.key",
+            "--no-log",
+            "--out",
+            "dist",
+            "--bin",
+            "oxlint",
+            "oxlint-linux-x64.tar.gz",
+        ],
+    );
+    assert_ne!(code, 0);
+    assert!(err.contains("semver"), "{err}");
+
     let (code, out, err) = packslip(
         d,
         &[
@@ -359,7 +380,7 @@ fn variants_urls_evidence_and_monorepo_names() {
             "--project",
             "github.com/oxc-project/oxc/oxlint",
             "--version",
-            "1.0.0",
+            "1.0.0-beta.1",
             "--key",
             "k.key",
             "--no-log",
@@ -371,11 +392,6 @@ fn variants_urls_evidence_and_monorepo_names() {
             "oxlint-linux-arm64=https://cdn.example.com/oxlint-linux-arm64",
             "--bin",
             "oxlint=bin/oxlint-x86_64",
-            "--prerelease",
-            "--channel",
-            "beta",
-            "--version-order",
-            "semver",
             "--notes-url",
             "https://github.com/oxc-project/oxc/releases/tag/oxlint_v1.0.0",
             "--source-repo",
@@ -403,9 +419,9 @@ fn variants_urls_evidence_and_monorepo_names() {
     assert_eq!(arts[2]["url"], "https://cdn.example.com/oxlint-linux-arm64");
     assert_eq!(arts[0]["bin"][0]["name"], "oxlint");
     assert_eq!(arts[0]["bin"][0]["path"], "bin/oxlint-x86_64");
-    assert_eq!(doc["predicate"]["prerelease"], true);
-    assert_eq!(doc["predicate"]["channel"], "beta");
-    assert_eq!(doc["predicate"]["version_order"], "semver");
+    assert_eq!(doc["predicate"]["version"], "1.0.0-beta.1");
+    assert!(doc["predicate"].get("prerelease").is_none());
+    assert!(doc["predicate"].get("channel").is_none());
     assert_eq!(doc["predicate"]["source"]["tag"], "oxlint_v1.0.0");
     assert_eq!(
         doc["subject"][0]["digest"]["sha512"].as_str().map(str::len),
@@ -427,7 +443,9 @@ fn variants_urls_evidence_and_monorepo_names() {
     );
     assert_eq!(code, 0, "{err}");
     assert!(
-        out.starts_with("ok: github.com/oxc-project/oxc/oxlint 1.0.0 (prerelease) published"),
+        out.starts_with(
+            "ok: github.com/oxc-project/oxc/oxlint 1.0.0-beta.1 (beta prerelease) published"
+        ),
         "{out}"
     );
 
@@ -439,7 +457,7 @@ fn variants_urls_evidence_and_monorepo_names() {
             "--project",
             "packages.example.com/tool",
             "--version",
-            "2.0",
+            "2.0.0",
             "--key",
             "k.key",
             "--no-log",
@@ -459,7 +477,7 @@ fn variants_urls_evidence_and_monorepo_names() {
             "--project",
             "packages.example.com/tool",
             "--version",
-            "2.0",
+            "2.0.0",
             "--key",
             "k.key",
             "--no-log",

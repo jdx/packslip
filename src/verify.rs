@@ -29,8 +29,9 @@ pub struct Verified {
     pub key_id: String,
     /// Whether the vendor or a repackager made the claim.
     pub attested_by: crate::model::Attestor,
-    pub version_order: crate::model::VersionOrder,
+    /// Whether the version has a prerelease part.
     pub prerelease: bool,
+    /// The channel the version's prerelease part names, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub channel: Option<String>,
     /// The OIDC issuer, for `sigstore-oidc`.
@@ -150,6 +151,7 @@ pub fn verify(
     let verified = sigstore::verify(bundle, trust, options.require_log, options.trusted_root)?;
     let statement: Statement = serde_json::from_slice(&verified.statement)?;
     statement.validate()?;
+    let version = crate::model::parse_version(&statement.predicate.version)?;
     let (scheme, key_id, issuer) =
         check_declared(&statement.predicate.identity, &verified.signed_by)?;
     let mut checked = Vec::new();
@@ -198,9 +200,8 @@ pub fn verify(
         scheme,
         key_id,
         attested_by: statement.predicate.attested_by,
-        version_order: statement.predicate.version_order,
-        prerelease: statement.predicate.prerelease,
-        channel: statement.predicate.channel.clone(),
+        prerelease: !version.pre.is_empty(),
+        channel: crate::model::channel(&version).map(str::to_string),
         issuer,
         logged_at: logged_at(verified.integrated_time),
         provenance_linked: statement.provenance_linked(),

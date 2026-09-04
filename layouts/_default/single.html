@@ -27,7 +27,7 @@
     <li><a href="#repackager">Repackager attestation</a></li>
     <li><a href="#signing">Signing</a></li>
     <li><a href="#discovery">Discovery</a></li>
-    <li><a href="#ordering">Ordering versions</a></li>
+    <li><a href="#versions">Versions</a></li>
     <li><a href="#consumer-rules">Consumer rules</a></li>
     <li><a href="#proves">What it proves</a></li>
     <li><a href="#tooling">Tooling</a></li>
@@ -74,7 +74,6 @@
     "project": "github.com/jdx/mise",
     "version": "2026.9.1",
     "published_at": "2026-09-01T12:00:00Z",
-    "channel": "stable",
     "source": { "repo": "https://github.com/jdx/mise", "commit": "...", "tag": "v2026.9.1" },
     "artifacts": [
       {
@@ -106,8 +105,7 @@
   <p>Rules:</p>
   <ul>
     <li><code>subject</code> lists every artifact by file name with its digests, plus any separate file a resource comes from. <code>artifacts</code> carries the same names with platform, size, download URL, format, executables, requirements, and provenance links. Every artifact is a subject, every subject is an artifact or a resource's <code>asset</code>, and neither list contains a duplicate. At least one artifact is required. <code>sha256</code> is required and is 64 lowercase hex characters; <code>sha512</code> is optional and 128.</li>
-    <li><code>project</code> is a name as defined above. <code>version</code> is the vendor's version string, compared as opaque text. <code>published_at</code> is RFC 3339 UTC.</li>
-    <li><code>prerelease</code> (default false) marks a release not meant for general use; consumers skip it unless asked for prereleases. <code>channel</code> is the vendor's own word for the release track (<code>stable</code>, <code>beta</code>, <code>nightly</code>). <code>version_order</code> is <code>source</code> (default) or <code>semver</code>; see <a href="#ordering">Ordering versions</a>.</li>
+    <li><code>project</code> is a name as defined above. <code>version</code> is semver 2.0.0; its prerelease part, if any, says whether the release is a prerelease and which channel it is on. See <a href="#versions">Versions</a>. <code>published_at</code> is RFC 3339 UTC.</li>
     <li><code>os</code>, <code>arch</code>, and <code>libc</code> use the values <code>linux</code>, <code>darwin</code>, <code>windows</code>, <code>freebsd</code>; <code>x86_64</code>, <code>aarch64</code>, <code>armv7</code>, <code>riscv64</code>, <code>i686</code>; <code>gnu</code>, <code>musl</code>. <code>format</code> is the archive or installer type: <code>tar.xz</code>, <code>tar.gz</code>, <code>tar.zst</code>, <code>tar.bz2</code>, <code>tgz</code>, <code>zip</code>, <code>7z</code>, <code>deb</code>, <code>rpm</code>, <code>dmg</code>, <code>pkg</code>, <code>msi</code>, <code>msix</code>, <code>exe</code>, <code>appimage</code>, or <code>raw</code> for a bare executable.</li>
     <li><code>variant</code> tells apart artifacts that share os, arch, libc, and format: <code>fips</code>, <code>baseline</code>, <code>debug</code>, <code>installer</code>, <code>source</code>. A vendor must not publish two artifacts that agree on all five; <code>packslip create</code> refuses to. Consumers that find such a pair refuse to choose.</li>
     <li><code>bin</code> lists the executables inside the artifact. Each entry is a path relative to the archive root, or the artifact's own name when it is a bare executable. When the name to put on PATH differs from the file name, the entry is <code>{ "path": "bin/oxlint-x86_64", "name": "oxlint" }</code>. Windows entries carry their <code>.exe</code>.</li>
@@ -131,11 +129,8 @@
       <tr><td><code>subject[].digest.sha512</code></td><td>string</td><td><span class="opt">optional</span></td><td>SHA-512 of the file, lowercase hex.</td></tr>
       <tr><td><code>predicateType</code></td><td>string</td><td><span class="req">required</span></td><td>Always <code>https://packslip.dev/release/v1</code>.</td></tr>
       <tr><td><code>predicate.project</code></td><td>string</td><td><span class="req">required</span></td><td>Host path naming the project, such as <code>github.com/jdx/mise</code> or <code>github.com/oxc-project/oxc/oxlint</code>.</td></tr>
-      <tr><td><code>predicate.version</code></td><td>string</td><td><span class="req">required</span></td><td>The vendor's version string. Opaque; never parsed for ordering.</td></tr>
+      <tr><td><code>predicate.version</code></td><td>string</td><td><span class="req">required</span></td><td>Semver 2.0.0. Its prerelease part marks a prerelease and names the channel.</td></tr>
       <tr><td><code>predicate.published_at</code></td><td>string</td><td><span class="req">required</span></td><td>RFC 3339 UTC publish time.</td></tr>
-      <tr><td><code>predicate.prerelease</code></td><td>boolean</td><td><span class="opt">optional</span></td><td>Not for general use. Default false.</td></tr>
-      <tr><td><code>predicate.channel</code></td><td>string</td><td><span class="opt">optional</span></td><td>Release track: <code>stable</code>, <code>beta</code>, <code>nightly</code>.</td></tr>
-      <tr><td><code>predicate.version_order</code></td><td>string</td><td><span class="opt">optional</span></td><td><code>source</code> (default: the release list's order) or <code>semver</code>.</td></tr>
       <tr><td><code>predicate.source</code></td><td>object</td><td><span class="opt">optional</span></td><td>Where the release was built from.</td></tr>
       <tr><td><code>predicate.source.repo</code></td><td>string</td><td><span class="req">required</span></td><td>Source repository URL.</td></tr>
       <tr><td><code>predicate.source.commit</code></td><td>string</td><td><span class="opt">optional</span></td><td>Commit the release was built from.</td></tr>
@@ -217,9 +212,9 @@
 
   <h2 id="discovery">Discovery</h2>
   <p>Publish the bundle next to the artifacts: as a release asset, or under the version directory of a download site.</p>
-  <p>Every project has a release list, and it is what consumers order by:</p>
+  <p>Every project has a release list, and it is where consumers find what was released and what was withdrawn:</p>
   <ul>
-    <li>For <code>github.com/&lt;owner&gt;/&lt;repo&gt;[/&lt;tool&gt;]</code> the list is the repository's releases endpoint. Its order is the vendor's order. A release counts when it is not a draft and carries a packslip whose <code>project</code> matches; to yank one, remove its packslip asset or the release.</li>
+    <li>For <code>github.com/&lt;owner&gt;/&lt;repo&gt;[/&lt;tool&gt;]</code> the list is the repository's releases endpoint. A release counts when it is not a draft and carries a packslip whose <code>project</code> matches. The endpoint's order and its prerelease flag are not consulted; the version says both. To yank a release, delete it, or delete its packslip asset where the repository still permits that.</li>
     <li>Any other project publishes a signed list at <code>https://&lt;host&gt;/.well-known/packslip/&lt;path&gt;.json</code>, where <code>&lt;path&gt;</code> is the project name after the host, or <code>packslip.json</code> directly under <code>.well-known</code> when the name is a bare host.</li>
   </ul>
   <p>The list is required: a consumer that finds none refuses the project rather than guessing at URLs. It is a bundle of the same shape as a packslip, with the <code>releases/v1</code> predicate:</p>
@@ -238,7 +233,6 @@
     "expires_at": "2026-10-01T12:00:00Z",
     "sequence": 42,
     "identity": { "scheme": "sigstore-key", "key_id": "5A0A0B8B9C6D7E1F" },
-    "version_order": "semver",
     "releases": [
       { "version": "2026.9.1", "published_at": "2026-09-01T12:00:00Z",
         "packslip": "https://dl.example.com/2026.9.1/packslip.sigstore.json",
@@ -250,16 +244,19 @@
   }
 }</code></pre>
   <p>Each subject is a listed packslip's URL with the digest of that file, so the list pins the exact documents it points at. <code>expires_at</code> and <code>sequence</code> are borrowed from TUF's timestamp role: a consumer refuses a list that has expired, or whose sequence is lower than one it has already accepted, so a mirror cannot freeze or roll back the vendor's view.</p>
-  <p>Each entry may carry <code>prerelease</code> and <code>channel</code> (copied from the packslip), <code>status: "yanked"</code> with a <code>status_reason</code> when the vendor withdrew the release, and <code>security: true</code> when it fixes a vulnerability. A consumer never selects a yanked release, warns when it holds one, and may shorten its minimum release age for a security release.</p>
+  <p>Each entry may carry <code>status: "yanked"</code> with a <code>status_reason</code> when the vendor withdrew the release, and <code>security: true</code> when it fixes a vulnerability. A consumer never selects a yanked release, warns when it holds one, and may shorten its minimum release age for a security release. Nothing else about a release lives on the list: its version says the rest.</p>
   <p><code>packslip releases</code> produces the list from local copies of the released bundles. The list separates the name from where the bytes live: the identity is anchored to the domain, and the artifacts can be anywhere.</p>
 
-  <h2 id="ordering">Ordering versions</h2>
-  <p><code>version</code> is the vendor's string, and a consumer never infers an ordering scheme from it. Projects switch schemes over their history, two-component versions parse and sort wrong, and date versions look like semver. Instead the vendor declares how its versions order with <code>version_order</code>, on each release and on the list, using the two values mise's registry uses:</p>
+  <h2 id="versions">Versions</h2>
+  <p><code>version</code> is a semver 2.0.0 version: <code>MAJOR.MINOR.PATCH</code>, an optional prerelease part after <code>-</code>, optional build metadata after <code>+</code>. Calver such as <code>2026.9.1</code> qualifies. <code>packslip create</code> refuses anything else, and so does a consumer. The tag can be spelled however the vendor likes (<code>v2026.9.1</code>, <code>oxlint_v1.0.0</code>); <code>source.tag</code> carries it.</p>
+  <p>One required scheme is what lets everything about a release follow from its signed version string, with no flag anywhere that could disagree with it:</p>
   <ul>
-    <li><code>source</code> (default): the release list's order, newest first, is the ranking. On GitHub that is the releases endpoint's order; on a vendor's own list it is the array order. "Latest" is the first eligible entry.</li>
-    <li><code>semver</code>: versions are strict <code>MAJOR.MINOR.PATCH</code> (calver such as <code>2026.9.1</code> qualifies) and sort as semver. "Latest" is the highest eligible version, so a backport such as 20.19.1 published after 22.0.0 never masquerades as the newest release, and range constraints (<code>^1.2</code>) have meaning.</li>
+    <li>Order is semver precedence. "Latest" is the highest eligible version, so a backport such as 20.19.1 published after 22.0.0 never masquerades as the newest release, and range constraints (<code>^1.2</code>) have meaning. Build metadata takes no part, as semver says. The order of the release list, GitHub's or the vendor's, is not consulted.</li>
+    <li>A prerelease is a version with a prerelease part: <code>1.2.0-rc.1</code> is one, <code>1.2.0</code> is not. Consumers skip prereleases unless asked for them. Promoting a release candidate means cutting the final version, not editing a flag.</li>
+    <li>A channel is the first identifier of the prerelease part, when that is not a number: <code>1.3.0-nightly.20260904</code> is on <code>nightly</code>, <code>1.2.0-beta.2</code> on <code>beta</code>, <code>1.2.0-rc.1</code> on <code>rc</code>. A release with no prerelease part is on no channel, and so is <code>1.2.0-1</code>. A consumer asked for a channel selects only releases on it, ranked by precedence. The names are the vendor's; packslip defines none.</li>
   </ul>
-  <p>Eligible means not yanked, not a prerelease unless prereleases were asked for, and in the requested channel when one was given. A requested version matches as a prefix on dot-separated components under either order, so <code>20</code> and <code>3.12</code> mean what people expect; range constraints are refused under <code>source</code> rather than guessed. Rollback protection comes from the release list's <code>sequence</code>, not from anything a single release says.</p>
+  <p>Eligible means not yanked, not a prerelease unless prereleases were asked for, and on the requested channel when one was given. A requested version matches as a prefix on dot-separated components, so <code>20</code> and <code>3.12</code> mean what people expect and <code>1.2.0-beta</code> means the betas of 1.2.0. Rollback protection comes from the release list's <code>sequence</code>, not from anything a single release says.</p>
+  <p>A packslip carries none of this as a field, on purpose. It is signed once, and on a GitHub repository with immutable releases it can never be replaced, while GitHub's own prerelease flag stays editable after publishing. A flag in the document would end up either frozen or contradicted. So the packslip says what shipped, the version says how to treat it, and the one thing that stays mutable, withdrawing a release, is the release list's job. An earlier draft let a vendor declare list order instead of semver; it went, because the prerelease and channel fields it then needed had no honest home.</p>
 
   <h2 id="consumer-rules">Consumer rules</h2>
   <ol>
@@ -267,7 +264,7 @@
     <li>Verify the bundle: signature, certificate chain and log entry as sigstore defines them, then the statement's structure, then the subject digest of every artifact or asset you downloaded, and the size of every artifact.</li>
     <li>Enforce no-downgrade: refuse a release whose <code>identity.scheme</code> is weaker than the last accepted one, whose signer changed without a human saying so, whose <code>attested_by</code> went from vendor to repackager, or that dropped per-artifact provenance the last release carried. For a keyless signer, compare the workflow path, not the ref: a new tag of the same workflow is the same signer.</li>
     <li>Apply any minimum release age to the log's integration time, falling back to <code>published_at</code> only for an unlogged bundle you chose to accept.</li>
-    <li>Use the project's release list (GitHub's releases endpoint, or the signed list) and refuse a project that has neither. Refuse a signed list that has expired or whose <code>sequence</code> is below the last one accepted; never select a yanked entry; skip prereleases unless asked for them; order as <code>version_order</code> says.</li>
+    <li>Use the project's release list (GitHub's releases endpoint, or the signed list) and refuse a project that has neither. Refuse a signed list that has expired or whose <code>sequence</code> is below the last one accepted; never select a yanked entry; skip prereleases unless asked for them; rank by semver precedence.</li>
     <li>Select one artifact by os, arch, libc, format, and, when needed, variant. Refuse to guess between two artifacts that match.</li>
     <li>Take each resource from the most verifiable source offered, in the order <a href="#resources">Resources</a> gives; run an <code>exec</code> entry only if you have chosen to run vendor code at install time; ignore kinds you do not know.</li>
   </ol>
@@ -286,7 +283,7 @@
         <li>Platforms: <code>path:os/arch[/libc]</code> overrides what the file name implies; <code>path@variant</code> marks a second build of one platform.</li>
         <li>Executables: <code>--bin NAME=PATH</code> when the name on PATH differs from the file.</li>
         <li>URLs: <code>--url FILENAME=URL</code> sets one artifact's or asset's URL.</li>
-        <li>Metadata: <code>--prerelease</code>, <code>--channel</code>, <code>--notes-url</code>, <code>--no-sha512</code>, and <code>--attested-by repackager</code> with <code>--evidence KIND[=DETAIL]</code>.</li>
+        <li>Metadata: <code>--notes-url</code>, <code>--no-sha512</code>, and <code>--attested-by repackager</code> with <code>--evidence KIND[=DETAIL]</code>.</li>
         <li>Resources: <code>--resource KIND[/QUALIFIER]=SOURCE:VALUE</code>, as in <code>completion/zsh=archive:share/zsh/site-functions/_tool</code>, <code>completion/bash,zsh,fish=exec:tool completion {shell}</code>, <code>man=archive:man/man1/tool.1</code>, <code>cli-spec/usage=exec:tool usage</code>, <code>skill/NAME=repo:skills/tool</code>, <code>skill/NAME=asset:dist/tool-skill.tar.gz</code>, <code>desktop=archive:...</code>, <code>icon=archive:...</code>, or <code>app=archive:Tool.app</code>. A <code>cli-spec</code> describes the sole <code>--bin</code> unless named as <code>cli-spec/usage/NAME</code>. An <code>asset</code> is a local file digested into the subject; a file given as both an artifact and an asset is the asset.</li>
         <li>Signing: <code>--key release.key</code> signs with a key; <code>--no-log</code> skips Rekor.</li>
       </ul>

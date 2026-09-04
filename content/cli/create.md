@@ -25,9 +25,6 @@ Digests every artifact, infers os/arch/libc/format from file names (override wit
 - **`--commit <COMMIT>`** — Source commit
 - **`--tag <TAG>`** — Source tag
 - **`--published-at <PUBLISHED_AT>`** — RFC 3339 publish time; defaults to now
-- **`--prerelease`** — Mark the release as not for general use
-- **`--channel <CHANNEL>`** — The release channel: stable, beta, nightly
-- **`--version-order <VERSION_ORDER>`** — How consumers order this project's versions: source (the release list's order, the default) or semver (strict MAJOR.MINOR.PATCH, calver included)
 - **`--notes-url <NOTES_URL>`** — URL of the release notes
 - **`--sbom <SBOM>`** — SBOM URL
 - **`--bin <BIN>`** — Executable inside every archive, as PATH or NAME=PATH (repeatable)

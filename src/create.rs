@@ -6,7 +6,7 @@ use std::path::Path;
 use crate::model::{
     Artifact, Attestor, Bin, Digest, Envelope, Evidence, Identity, PREDICATE_TYPE, Predicate,
     RELEASES_PREDICATE_TYPE, ReleaseList, ReleaseListStatement, ReleaseRef, Requires, Resource,
-    STATEMENT_TYPE, Source, Statement, Subject, VersionOrder,
+    STATEMENT_TYPE, Source, Statement, Subject,
 };
 
 /// What `create` needs.
@@ -14,9 +14,6 @@ pub struct Request<'a> {
     pub project: &'a str,
     pub version: &'a str,
     pub published_at: Option<&'a str>,
-    pub prerelease: bool,
-    pub channel: Option<&'a str>,
-    pub version_order: VersionOrder,
     pub source: Option<Source>,
     pub artifacts: Vec<ArtifactInput<'a>>,
     /// Completions, man pages, CLI specs, skills, desktop entries, icons,
@@ -45,9 +42,6 @@ impl<'a> Request<'a> {
             project,
             version,
             published_at: None,
-            prerelease: false,
-            channel: None,
-            version_order: VersionOrder::Source,
             source: None,
             artifacts: Vec::new(),
             resources: Vec::new(),
@@ -375,9 +369,6 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
             project: request.project.into(),
             version: request.version.into(),
             published_at,
-            prerelease: request.prerelease,
-            channel: request.channel.map(str::to_string),
-            version_order: request.version_order,
             source: request.source.clone(),
             artifacts,
             resources,
@@ -413,7 +404,6 @@ pub struct ListRequest<'a> {
     /// How long the list stays current.
     pub valid_for: std::time::Duration,
     pub sequence: u64,
-    pub version_order: VersionOrder,
     pub releases: Vec<ListedRelease<'a>>,
     pub identity: Identity,
 }
@@ -483,8 +473,6 @@ pub fn create_release_list(request: &ListRequest<'_>) -> Result<CreatedList, Err
             version: statement.predicate.version,
             published_at: statement.predicate.published_at,
             packslip: listed.url.to_string(),
-            prerelease: statement.predicate.prerelease,
-            channel: statement.predicate.channel,
             status: listed
                 .yanked
                 .is_some()
@@ -503,7 +491,6 @@ pub fn create_release_list(request: &ListRequest<'_>) -> Result<CreatedList, Err
             expires_at: expires.to_string(),
             sequence: request.sequence,
             identity: request.identity.clone(),
-            version_order: request.version_order,
             releases,
         },
     };
@@ -954,7 +941,6 @@ mod tests {
             generated_at: Some("2026-09-01T01:00:00Z"),
             valid_for: std::time::Duration::from_secs(30 * 86_400),
             sequence: 3,
-            version_order: VersionOrder::Source,
             releases: vec![ListedRelease {
                 url: "https://dl.example.com/1.0.0/packslip.sigstore.json",
                 bundle_path: &bundle_path,
@@ -997,7 +983,6 @@ mod tests {
             generated_at: None,
             valid_for: std::time::Duration::from_secs(60),
             sequence: 4,
-            version_order: VersionOrder::Source,
             releases: vec![
                 ListedRelease {
                     url: "https://x/a.sigstore.json",
@@ -1021,7 +1006,6 @@ mod tests {
             generated_at: None,
             valid_for: std::time::Duration::from_secs(60),
             sequence: 1,
-            version_order: VersionOrder::Source,
             releases: vec![ListedRelease {
                 url: "https://x/packslip.sigstore.json",
                 bundle_path: &bundle_path,
