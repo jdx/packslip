@@ -675,9 +675,9 @@ pub struct RequiredBin {
     /// The name as the executable invokes it, bare: `java`, `python3`,
     /// `git`. No directory and no `.exe`.
     pub name: String,
-    /// The lowest version that works, matched as a prefix on
-    /// dot-separated components like a requested version: `17` means
-    /// 17.0.0 and later.
+    /// The lowest version that works, compared numerically by dot-separated
+    /// components with missing components padded with zero: `17` means
+    /// 17.0.0 and later, including 21. Unrecognized spellings are unchecked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min: Option<String>,
 }

@@ -273,7 +273,7 @@
       "description": "A command an executable needs on PATH.",
       "properties": {
         "min": {
-          "description": "The lowest version that works, matched as a prefix on\ndot-separated components like a requested version: `17` means\n17.0.0 and later.",
+          "description": "The lowest version that works, compared numerically by dot-separated\ncomponents with missing components padded with zero: `17` means\n17.0.0 and later, including 21. Unrecognized spellings are unchecked.",
           "type": [
             "string",
             "null"
