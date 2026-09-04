@@ -1,6 +1,7 @@
 baseURL = "https://packslip.dev/"
 locale = "en-US"
 title = "packslip"
+disableHugoGeneratorInject = true
 disableKinds = ["rss", "sitemap", "taxonomy", "term"]
 
 [caches]

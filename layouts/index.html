@@ -6,11 +6,13 @@
 <title>packslip — a signed release manifest</title>
 <meta name="description" content="packslip: one signed file per release that says what shipped and how to verify it. Signed from CI with no key to manage, verified against the repository name.">
 <meta property="og:title" content="packslip — a signed release manifest">
-<meta property="og:description" content="One signed file per release. No key to manage, no registry to join. Checksums, platforms, executables, completions, skills, and provenance links in a standard sigstore bundle.">
+<meta property="og:description" content="A signed release manifest that describes artifacts, platforms, checksums, executables, and provenance in a verifiable sigstore bundle.">
 <meta property="og:url" content="https://packslip.dev/">
 <meta property="og:type" content="website">
 {{ partial "social-image.html" . }}
-<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<meta name="twitter:title" content="packslip — a signed release manifest">
+<meta name="twitter:description" content="A signed release manifest that describes artifacts, platforms, checksums, executables, and provenance in a verifiable sigstore bundle.">
+{{ partial "seo.html" . }}
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
