@@ -249,13 +249,6 @@
             }
           ]
         },
-        "supersedes": {
-          "description": "The version this release replaces, for ordering.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "version": {
           "type": "string"
         },

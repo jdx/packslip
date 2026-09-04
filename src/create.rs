@@ -30,7 +30,6 @@ pub struct Request<'a> {
     pub url_base: Option<&'a str>,
     pub notes_url: Option<&'a str>,
     pub sbom: Option<&'a str>,
-    pub supersedes: Option<&'a str>,
     /// Who will sign the document.
     pub identity: Identity,
     pub attested_by: Attestor,
@@ -56,7 +55,6 @@ impl<'a> Request<'a> {
             url_base: None,
             notes_url: None,
             sbom: None,
-            supersedes: None,
             identity,
             attested_by: Attestor::Vendor,
             evidence: Vec::new(),
@@ -371,7 +369,6 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
             evidence: request.evidence.clone(),
             notes_url: request.notes_url.map(str::to_string),
             sbom: request.sbom.map(str::to_string),
-            supersedes: request.supersedes.map(str::to_string),
         },
     };
     statement.validate()?;
@@ -709,12 +706,11 @@ mod tests {
             provenance: provenance.iter().map(|s| s.to_string()).collect(),
             ..ArtifactInput::new(path)
         };
-        let request = |artifacts, source, url_base, supersedes| Request {
+        let request = |artifacts, source, url_base| Request {
             published_at: Some("2026-09-01T00:00:00Z"),
             source,
             artifacts,
             url_base,
-            supersedes,
             ..Request::new("tool.example.com", "1.0.0", key_identity(&key))
         };
         let created = create(&request(
@@ -739,7 +735,6 @@ mod tests {
                 tag: Some("v1.0.0".into()),
             }),
             Some("https://github.com/example/tool/releases/download/v1.0.0/"),
-            Some("0.9.0"),
         ))
         .unwrap();
         let arts = &created.statement.predicate.artifacts;
@@ -776,13 +771,11 @@ mod tests {
             vec![input(&a, Some("darwin"), &[], &[])],
             None,
             None,
-            None,
         ))
         .unwrap();
         assert_eq!(overridden.statement.predicate.artifacts[0].libc, None);
         let overridden = create(&request(
             vec![input(&b, Some("linux"), &[], &[])],
-            None,
             None,
             None,
         ))
@@ -799,7 +792,6 @@ mod tests {
             vec![input(&a, None, &[], &[]), input(&fips, None, &[], &[])],
             None,
             None,
-            None,
         ))
         .unwrap_err();
         assert!(matches!(err, Error::Ambiguous { .. }), "{err}");
@@ -812,7 +804,6 @@ mod tests {
                     ..ArtifactInput::new(&fips)
                 },
             ],
-            None,
             None,
             None,
         ))
@@ -890,7 +881,7 @@ mod tests {
                 kind: "pkgbuild-checksums".into(),
                 detail: None,
             }],
-            ..request(vec![input(&b, None, &[], &[])], None, None, None)
+            ..request(vec![input(&b, None, &[], &[])], None, None)
         })
         .unwrap();
         assert!(

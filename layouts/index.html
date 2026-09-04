@@ -64,8 +64,7 @@
     <span class="k">"identity"</span>: {
       <span class="k">"scheme"</span>: <span class="s">"sigstore-oidc"</span>,
       <span class="k">"key_id"</span>: <span class="s">"https://github.com/jdx/mise/.github/workflows/release.yml@refs/tags/v2026.9.1"</span>,
-      <span class="k">"issuer"</span>: <span class="s">"https://token.actions.githubusercontent.com"</span> },
-    <span class="k">"supersedes"</span>: <span class="s">"2026.9.0"</span>
+      <span class="k">"issuer"</span>: <span class="s">"https://token.actions.githubusercontent.com"</span> }
   }
 }</code></pre>
   </div>
@@ -202,7 +201,6 @@ packslip releases --project mytool.example.com \
         <li><strong>Verify the bundle,</strong> then the statement, then the subject digest and size of every artifact you downloaded.</li>
         <li><strong>Enforce no-downgrade.</strong> Refuse a release whose scheme is weaker than the last accepted one, whose signer changed without a human saying so, or that dropped provenance the last release carried. Compare keyless signers by workflow path, not ref.</li>
         <li><strong>Apply a minimum release age</strong> to the log's integration time, so a hijacked release is noticed before unattended installs pick it up.</li>
-        <li><strong>Treat <code>supersedes</code> as the ordering hint</strong> for rollback detection. Never parse version strings.</li>
         <li><strong>Order by the vendor's word, never by parsing.</strong> Every project has a release list: GitHub's releases endpoint, or a signed list on the vendor's domain. <code>version_order</code> says whether that list's order or semver ranks releases. Refuse a stale signed list, never select a yanked release, skip prereleases unless asked.</li>
         <li><strong>Never guess between two artifacts.</strong> Select by os, arch, libc, format, and variant; if two still match, stop.</li>
       </ol>

@@ -83,9 +83,6 @@ pub struct Predicate {
     pub notes_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sbom: Option<String>,
-    /// The version this release replaces, for ordering.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub supersedes: Option<String>,
 }
 
 /// Who signed the claim.
@@ -959,7 +956,6 @@ mod tests {
                 evidence: vec![],
                 notes_url: None,
                 sbom: None,
-                supersedes: Some("2026.9.0".into()),
             },
         }
     }
