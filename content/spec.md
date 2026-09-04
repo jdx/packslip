@@ -461,8 +461,12 @@ registry. Beside `os_min` and `glibc_min`:
 - `bin` lists the commands the executables run and cannot work without,
   each a bare name as the executable invokes it (`java`, `python3`,
   `git`; no directory, no `.exe`) with an optional `min`, the lowest
-  version that works, matched as a prefix on dot-separated components
-  like a requested version, so `17` means 17.0.0 and later. The vendor
+  version that works, compared
+  as a numeric lower bound, so `17` means 17.0.0 and later, including
+  21. A consumer compares dot-separated nonnegative integer components
+  numerically, padding missing components with zero; `2.10` exceeds
+  `2.9`. If either spelling cannot be compared this way, the check is
+  unknown and the consumer warns rather than guessing. The vendor
   declares these; nothing in a binary says it runs `java`. Only hard
   requirements belong here; an optional integration goes under
   `extensions`. A required command may not be one the release itself
@@ -483,18 +487,20 @@ run without it:
   needs, as a tool it can install where it can.
 
 It fails on nothing it cannot check: a version it cannot read, a loader
-it cannot ask, is a warning, not a refusal. Between two artifacts that fit
-the host, it prefers the one whose requirements the host meets.
+it cannot ask, is a warning, not a refusal. Artifact selection happens
+first, by Selecting an artifact. Requirements
+do not break a selection tie or silently select a different build: after
+selection, the consumer checks the chosen artifact and reports the result.
 
 How to check, on the common hosts: a library by the loader's own search,
 which is the dynamic linker's cache and search path on Linux
 (`ldconfig -p`, `LD_LIBRARY_PATH`), the system library and framework
 directories on macOS, and PATH with the system directory on Windows; a
 command by looking its name up on PATH, with `.exe` on Windows, and
-running it with `--version` to read a version, of which `min` must be a
-prefix by dot-separated components. `glibc_min` compares the same way
-against the host's glibc, and `os_min` against the version the OS
-reports.
+running it with `--version` to read a version. Compare `min`,
+`glibc_min`, and `os_min` as numeric lower bounds using the rule above,
+against the command, glibc, and OS versions respectively. A version
+probe that fails or has an unrecognized spelling leaves the check unknown.
 
 That is the boundary. `requires` names what the host must have, by names
 the OS itself resolves. It does not name other projects, versions of
@@ -716,6 +722,13 @@ a vendor that never needs those never writes it. Withdrawing a release
 this way works on a repository with immutable releases, where the release
 and its packslip cannot be deleted.
 
+Once a consumer has accepted a supplementary signed list for a project,
+a missing list is an error, not a return to endpoint-only discovery.
+Otherwise removing the list would undo its withdrawals without a newer
+signed statement. A vendor retiring its entries publishes a fresh,
+unexpired list with a nondecreasing sequence; a user may explicitly
+forget the remembered list policy for that project.
+
 ### Lists from other publishers
 
 A list need not come from the vendor. A registry, a mirror, or a scanning
@@ -738,7 +751,10 @@ its judgement without a per-tool recipe.
 Such a list is a stamp on the releases it names. A consumer that trusts
 one or more stamping hosts treats a version none of them lists as not
 released: it is not offered and not installed, however valid the vendor's
-own document is. Any one trusted host's stamp suffices. A user who
+own document is. Any one trusted host's non-yanked stamp suffices. A host
+withdrawing its own stamp does not veto another trusted host's approval; an operator that
+needs one host to control admission configures that host alone. A vendor
+withdrawal still excludes the version regardless of stamps. A user who
 trusts a vendor outright says so for that project alone, and the
 consumer then takes the vendor's document under the vendor's pin with no
 stamp at all. A stamping host signs with whichever scheme fits it: a
@@ -889,8 +905,8 @@ which the reference implementation provides as `select_artifact`.
    requirements says: refuse when a library, glibc, or OS version means
    the executables cannot start, warn when a command is missing or too
    old, and report either in your own terms. Fail on nothing you cannot
-   check. Between two artifacts that tie, prefer the one whose
-   requirements the host meets.
+   check. Check the artifact selected by rule 6; requirements do not
+   resolve an ambiguous selection.
 8. For each thing the resources describe, as Resources defines one, keep
    the entries whose scope fits the selected artifact and the most
    specific of those, then take the most verifiable source offered in the
