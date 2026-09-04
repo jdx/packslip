@@ -373,6 +373,15 @@ from a `cli-spec`, and only then `exec`. It ignores kinds and sources it
 does not know, so a vendor may ship a `font` or a kind of its own before
 the specification names it.
 
+A resource is an extra, and the executables are installed with or without
+it. A consumer that cannot fetch one, because the asset or the repository
+file is not there or the network fails, reports that and finishes the
+install without it; a later attempt may fetch it. A resource that arrives
+with a digest other than the one `subject` gives, or a repository file
+that is not what `source.commit` holds, is another matter: that is a
+broken release or a tampered one, and the consumer refuses it as it would
+an artifact.
+
 An artifact with `bin` is something a command-line package manager
 installs. A release whose resources include `desktop` or `app` is something
 a desktop launcher installs. Many applications are both, and the entries say
@@ -809,7 +818,9 @@ which the reference implementation provides as `select_artifact`.
    the entries whose scope fits the selected artifact and the most
    specific of those, then take the most verifiable source offered in the
    order Resources gives; run an `exec` entry only if you have chosen to
-   run vendor code at install time; ignore kinds you do not know.
+   run vendor code at install time; ignore kinds you do not know. A
+   resource you cannot fetch is reported, not fatal; one whose digest is
+   not the one the document signed fails the install.
 
 ## What a verified packslip proves
 
