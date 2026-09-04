@@ -71,7 +71,8 @@ A release ships one file per project: a
 content is a DSSE envelope of type `application/vnd.in-toto+json` carrying
 the statement below. Its verification material is the signer's Fulcio
 certificate or a public-key hint, plus the Rekor transparency log entry for
-the signature.
+the signature. Only an air-gapped key-signed release omits the log entry;
+see Signing.
 
 The bundle carries the statement, so the signed bytes are exactly the
 payload bytes and a consumer needs no canonicalization step. `packslip show`
@@ -208,8 +209,9 @@ Documented kinds:
 - `cli-spec`: a machine-readable description of the executable named by
   `bin`, in `format`. The documented format is `usage`, a
   [usage](https://usage.jdx.dev) spec. From it, the consumer's own copy of
-  `usage` generates completions for any shell, a man page, and markdown
-  documentation, so nothing of the vendor's runs at install time.
+  `usage` generates completions for every shell it supports, a man page,
+  and markdown documentation, so nothing of the vendor's runs at install
+  time.
   Completions generated this way call `usage complete-word` at shell
   runtime, so a consumer that generates them installs `usage` beside the
   tool. Man pages and documentation carry no such dependency. A vendor that
@@ -423,8 +425,9 @@ not by itself prove anything about how the artifacts were built. That is
 what SLSA provenance is for: an artifact whose linked provenance a
 consumer verifies earns the SLSA build level its builder establishes
 (GitHub-hosted runners with `actions/attest-build-provenance` give Build
-L3). Consumers record what they verified as a SLSA Verification Summary
-or in their own terms; packslip defines no level scale of its own.
+L2, or L3 when the build runs in a reusable workflow). Consumers record
+what they verified as a SLSA Verification Summary or in their own terms;
+packslip defines no level scale of its own.
 
 A resource from an `archive` or `asset` is covered by the same digests;
 one from `repo` by the commit; an `exec` entry by nothing beyond the

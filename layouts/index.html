@@ -123,7 +123,7 @@
   <div class="cols">
     <div>
       <h3><code>github.com/jdx/mise</code></h3>
-      <p>Releases and their packslips are GitHub release assets. The signer must be a workflow of that repository, through GitHub's OIDC issuer. <code>gitlab.com/group/tool</code> works the same way.</p>
+      <p>Releases and their packslips are GitHub release assets. The signer must be a workflow of that repository, through GitHub's OIDC issuer. <code>gitlab.com/group/tool</code> works the same way, through GitLab's own issuer.</p>
     </div>
     <div>
       <h3><code>mise.jdx.dev</code></h3>
@@ -146,7 +146,7 @@
     </div>
     <div>
       <h3>Linked provenance</h3>
-      <p>Each artifact can link to its SLSA build provenance. A consumer that verifies those statements gets whatever build level the builder provides. On GitHub-hosted runners that is Build L3, and the packslip action produces the provenance for you.</p>
+      <p>Each artifact can link to its SLSA build provenance. A consumer that verifies those statements gets whatever build level the builder provides. On GitHub-hosted runners that is Build L2, or L3 when the build runs in a reusable workflow, and the packslip action produces the provenance for you.</p>
     </div>
     <div>
       <h3>No scale of its own</h3>
@@ -201,7 +201,7 @@ packslip releases --project mytool.example.com \
         <li><strong>Verify the bundle,</strong> then the statement, then the digest and size of every artifact you downloaded.</li>
         <li><strong>Never downgrade.</strong> Refuse a release signed with a weaker scheme than the last one you accepted, signed by someone new without a human approving it, or missing provenance the last release had. A keyless signer is its workflow path, so a new tag of the same workflow is the same signer.</li>
         <li><strong>Wait before installing.</strong> Apply a minimum release age to the time the transparency log recorded, so a hijacked release is noticed before unattended installs pick it up.</li>
-        <li><strong>Let the vendor order releases.</strong> Every project has a release list: GitHub's releases endpoint, or a signed list on the vendor's domain. Take the order from it, sort as semver only when the vendor says to, and never parse version strings yourself. Refuse a stale signed list, never pick a yanked release, and skip prereleases unless asked.</li>
+        <li><strong>Let the vendor order releases.</strong> Every project has a release list: GitHub's releases endpoint, or a signed list on the vendor's domain. Take the order from it, sort as semver only when the vendor says to, and never guess the scheme from the version string. Refuse a stale signed list, never pick a yanked release, and skip prereleases unless asked.</li>
         <li><strong>Never guess between two artifacts.</strong> Select by os, arch, libc, format, and variant. If two still match, stop.</li>
       </ol>
 <pre><code>packslip verify packslip.sigstore.json \
