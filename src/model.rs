@@ -307,7 +307,9 @@ pub fn resource_fits(resource: &Resource, artifact: &Artifact) -> bool {
 /// Resources section says: for each thing the entries describe (see
 /// [`Resource::identities`]), those that fit the artifact and, of them,
 /// the most specific. Entries for different things never hide one
-/// another. Document order is kept, and an entry that describes several
+/// another. Document order is kept as the final tie-breaker within each
+/// source type; consumers apply source priority before trying alternatives.
+/// An entry that describes several
 /// things, such as an `exec` completion for several shells, appears
 /// once.
 pub fn select_resources<'a>(statement: &'a Statement, artifact: &Artifact) -> Vec<&'a Resource> {
@@ -2958,6 +2960,30 @@ mod tests {
             Some(".well-known/packslip/oxlint.json")
         );
         assert_eq!(github_list_path("mise.jdx.dev"), None);
+    }
+
+    #[test]
+    fn resource_ties_preserve_document_order() {
+        let mut doc = sample();
+        doc.predicate.resources = ["first", "second"]
+            .map(|path| Resource {
+                name: Some("guide".into()),
+                archive: Some(path.into()),
+                ..Resource::new("skill")
+            })
+            .to_vec();
+        let artifact = &doc.predicate.artifacts[0];
+        assert_eq!(
+            select_resources(&doc, artifact),
+            doc.predicate.resources.iter().collect::<Vec<_>>()
+        );
+        doc.predicate.resources.swap(0, 1);
+        assert_eq!(
+            select_resources(&doc, &doc.predicate.artifacts[0])[0]
+                .archive
+                .as_deref(),
+            Some("second")
+        );
     }
 
     #[test]
