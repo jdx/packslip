@@ -172,8 +172,8 @@ steps:
     with:
       artifacts: dist/*.tar.xz dist/*.zip
       bin: mytool</code></pre>
-      <p>The action attests build provenance for every artifact, writes the packslip, signs it with the job's identity, verifies the result, and uploads <code>packslip.sigstore.json</code> to the release. The project name defaults to the repository and the version to the tag.</p>
-      <p>Platforms are read from file names. Flags cover the rest: an executable whose PATH name differs from its file, two builds of one platform, the completions, man page, <a href="https://usage.jdx.dev">usage</a> spec, skill, or desktop entry that ship alongside, and provenance you publish yourself. A monorepo runs the step once per tool with a subpath in the project name. The <a href="/release/v1/#tooling">tooling section of the spec</a> lists every option.</p>
+      <p>The action attests build provenance for every artifact, writes the packslip, signs it with the job's identity, verifies the result, and uploads <code>packslip.sigstore.json</code> to the release.</p>
+      <p>Most fields are detected. The project name comes from the repository, the version from the tag, and each artifact's os, arch, libc, and format from its file name. Anything the defaults cannot know is an input: the executables inside the archives, a variant name for two builds of one platform, and the completions, man page, <a href="https://usage.jdx.dev">usage</a> spec, skill, or desktop entry that ship alongside. A repository with several tools runs the step once per tool with a subpath in the project name. The <a href="/release/v1/#tooling">tooling section of the spec</a> lists every option.</p>
       <h3>Everywhere else</h3>
       <p>The action wraps a plain binary that runs anywhere. In any CI system that issues OIDC tokens it signs keylessly. Elsewhere, generate a key once, keep the secret half in your secret store, and publish the public half so consumers can pin it. Either way the signature goes into the Rekor log.</p>
 <pre><code>cargo install packslip
