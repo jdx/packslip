@@ -88,7 +88,6 @@ jobs:
           # Communiqué compares this tag with the previous release and needs
           # the intervening commits and tags to write accurate notes.
           fetch-depth: 0
-          persist-credentials: false
       - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
         continue-on-error: true
         with:
