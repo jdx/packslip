@@ -352,7 +352,7 @@
           ]
         },
         "bin": {
-          "description": "For `cli-spec`: the executable the spec describes, by its `bin`\nname.",
+          "description": "The executable this entry is for, by its `bin` name. Required for\n`cli-spec`; for `completion` and `man`, required when the release\nhas more than one executable, and meaning that one when it has\none.",
           "type": [
             "string",
             "null"

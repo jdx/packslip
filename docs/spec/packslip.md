@@ -269,7 +269,7 @@ Windows installer.
 | `resources[].shell` | string | completion | The shell a static completion is for. |
 | `resources[].shells[]` | array of string | completion | Every shell an `exec` completion generates, substituted for `{shell}` in the argv. |
 | `resources[].format` | string | cli-spec, sbom | The spec format (`usage`) or the SBOM format (`cyclonedx`, `spdx`). |
-| `resources[].bin` | string | cli-spec | The executable the spec describes, by its `bin` name. |
+| `resources[].bin` | string | cli-spec, completion, man | The executable the entry is for, by its `bin` name. Required for a `cli-spec`; for a `completion` or `man`, required when the release has more than one executable, and meaning that one when it has one. |
 | `resources[].name` | string | skill | The skill's name. |
 | `predicate.identity.scheme` | string | required | `sigstore-oidc` or `sigstore-key`. |
 | `predicate.identity.key_id` | string | required | The certificate identity, or the key id in uppercase hex. |
@@ -309,8 +309,9 @@ without them describes every artifact. A resource applies to the selected
 artifact when each field it carries equals the artifact's.
 
 Entries compete only with entries for the same thing. Two entries are for
-the same thing when they share a `kind` and an identity: the `shell` for a
-completion, `bin` and `format` for a `cli-spec`, `name` for a skill,
+the same thing when they share a `kind` and an identity: `bin` and
+`shell` for a completion, `bin` and `format` for a `cli-spec`, `name` for
+a skill,
 `format` for an SBOM, and for every other kind the file name of the
 source, or the kind alone for an `exec` source. Among the entries for one
 thing that apply to the selected artifact, a consumer takes the most
@@ -326,8 +327,10 @@ Documented kinds:
 - `completion`: a shell completion script. With a static source, `shell`
   names the shell: `bash`, `zsh`, `fish`, `powershell`, `nushell`,
   `elvish`. With `exec`, `shells` lists every shell the command generates
-  and the argv carries a `{shell}` placeholder.
+  and the argv carries a `{shell}` placeholder. `bin` names the executable
+  the script completes; a release with one executable may leave it out.
 - `man`: a man page. The section is the file's suffix, as in `mise.1`.
+  `bin` names the executable it documents, as for a completion.
 - `cli-spec`: a machine-readable description of the executable named by
   `bin`, in `format`. The documented format is `usage`, a
   [usage](https://usage.jdx.dev) spec. From it, the consumer's own copy of

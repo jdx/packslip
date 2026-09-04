@@ -722,8 +722,10 @@ pub struct Resource {
     /// For `skill`: the skill's name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    /// For `cli-spec`: the executable the spec describes, by its `bin`
-    /// name.
+    /// The executable this entry is for, by its `bin` name. Required for
+    /// `cli-spec`; for `completion` and `man`, required when the release
+    /// has more than one executable, and meaning that one when it has
+    /// one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bin: Option<String>,
     /// For `cli-spec`: the spec format, of which `usage` is documented.
@@ -806,14 +808,19 @@ impl Resource {
     }
 
     /// What this entry is an entry for, so that only entries for the same
-    /// thing compete over platform scope: the shell of a completion (one
-    /// per shell an `exec` entry generates), `bin` and `format` of a
-    /// cli-spec, the name of a skill, the format of an SBOM, and for
-    /// every other kind the file name of the source, or the kind alone
-    /// for an `exec` source. Each is prefixed by the kind.
+    /// thing compete over platform scope: `bin` and the shell of a
+    /// completion (one per shell an `exec` entry generates), `bin` and
+    /// `format` of a cli-spec, the name of a skill, the format of an
+    /// SBOM, and for every other kind `bin`, if any, and the file name of
+    /// the source, or the kind alone for an `exec` source. Each is
+    /// prefixed by the kind.
     pub fn identities(&self) -> Vec<String> {
-        let kind = &self.kind;
-        match kind.as_str() {
+        let kind = match &self.bin {
+            Some(bin) if self.kind != "cli-spec" => format!("{}/{bin}", self.kind),
+            _ => self.kind.clone(),
+        };
+        let kind = &kind;
+        match self.kind.as_str() {
             "completion" => {
                 let shells: Vec<&str> = self
                     .shell
@@ -1098,6 +1105,12 @@ pub enum InvalidDocument {
     CliSpec(String),
     #[error("cli-spec {0:?} describes {1:?}, which is not a bin name of any artifact")]
     CliSpecBin(String, String),
+    #[error("resource {0:?} is for {1:?}, which is not a bin name of any artifact")]
+    ResourceBin(String, String),
+    #[error(
+        "resource {0:?} does not say which executable it is for, and the release has several: {1}"
+    )]
+    ResourceNeedsBin(String, String),
     #[error("skill {0:?} needs a name without a slash")]
     SkillName(String),
     #[error("app {0:?} must come from an archive")]
@@ -1378,6 +1391,18 @@ impl Statement {
             }
             if resource.url.is_some() && source != ResourceSource::Asset {
                 return Err(InvalidDocument::ResourceUrl(label));
+            }
+            if matches!(resource.kind.as_str(), "completion" | "man") {
+                match &resource.bin {
+                    Some(bin) if !is_bin(bin) => {
+                        return Err(InvalidDocument::ResourceBin(label, bin.clone()));
+                    }
+                    None if bin_names.len() > 1 => {
+                        let names: Vec<&str> = bin_names.iter().copied().collect();
+                        return Err(InvalidDocument::ResourceNeedsBin(label, names.join(", ")));
+                    }
+                    _ => {}
+                }
             }
             match resource.kind.as_str() {
                 "completion" => {
@@ -2064,6 +2089,13 @@ mod tests {
                 },
                 |e| matches!(e, InvalidDocument::CliSpecBin(_, _)),
             ),
+            (
+                Resource {
+                    bin: Some("other".into()),
+                    ..archive("man", "mise.1")
+                },
+                |e| matches!(e, InvalidDocument::ResourceBin(_, _)),
+            ),
             (archive("skill", "skills/mise"), |e| {
                 matches!(e, InvalidDocument::SkillName(_))
             }),
@@ -2500,6 +2532,44 @@ mod tests {
         assert!(
             !resource_fits(&windows, &artifacts[4]),
             "a portable artifact is not a Windows one"
+        );
+    }
+
+    #[test]
+    fn a_release_with_several_executables_says_which_one_a_completion_is_for() {
+        let mut s = sample();
+        s.predicate.artifacts[0].bin.push(Bin::new("bin/other"));
+        let completion = |bin: Option<&str>| Resource {
+            shell: Some("zsh".into()),
+            archive: Some("share/_x".into()),
+            bin: bin.map(Into::into),
+            ..Resource::new("completion")
+        };
+        s.predicate.resources = vec![completion(None)];
+        let err = s.validate().unwrap_err();
+        assert!(
+            matches!(&err, InvalidDocument::ResourceNeedsBin(_, names) if names == "mise, other"),
+            "{err}"
+        );
+        s.predicate.resources = vec![completion(Some("other"))];
+        s.validate().unwrap();
+        s.predicate.resources = vec![completion(Some("mise.exe"))];
+        s.validate().unwrap();
+        let mut man = Resource::new("man");
+        man.archive = Some("share/man/other.1".into());
+        s.predicate.resources = vec![man];
+        assert!(matches!(
+            s.validate(),
+            Err(InvalidDocument::ResourceNeedsBin(_, _))
+        ));
+        // Two entries for different executables are different things.
+        assert_ne!(
+            completion(Some("mise")).identities(),
+            completion(Some("other")).identities()
+        );
+        assert_eq!(
+            completion(Some("other")).identities(),
+            ["completion/other/zsh"]
         );
     }
 

@@ -343,7 +343,7 @@ struct Create {
     /// separate release file, by local path), repo (a path at --commit),
     /// or exec (a command whose stdout is the file). Kinds: completion/SHELL
     /// (or completion/SHELL,SHELL with exec and a {shell} placeholder),
-    /// man, cli-spec/FORMAT[/BIN], skill/NAME, sbom/FORMAT, desktop, icon,
+    /// man[/BIN], cli-spec/FORMAT[/BIN], skill/NAME, sbom/FORMAT, desktop, icon,
     /// app. Example: 'completion/zsh=archive:share/zsh/site-functions/_tool'
     /// (repeatable)
     #[usage(long)]
@@ -413,7 +413,25 @@ fn parse_resource(spec: &str, default_bin: Option<&str>) -> Result<ResourceSpec>
                 .collect();
         }
         ("completion", [shell]) => resource.shell = Some(shell.trim().to_string()),
-        ("completion", _) => bail!("--resource {spec:?}: completion wants completion/SHELL"),
+        ("completion", [shell, bin]) => {
+            if shell.contains(',') {
+                resource.shells = shell
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect();
+            } else {
+                resource.shell = Some(shell.trim().to_string());
+            }
+            resource.bin = Some(bin.to_string());
+        }
+        ("completion", _) => {
+            bail!("--resource {spec:?}: completion wants completion/SHELL[/BIN]")
+        }
+        ("man", []) => {}
+        ("man", [bin]) => resource.bin = Some(bin.to_string()),
+        ("man", _) => bail!("--resource {spec:?}: man wants man[/BIN]"),
         ("cli-spec", [format]) => {
             resource.format = Some(format.to_string());
             let Some(bin) = default_bin else {
@@ -1277,6 +1295,19 @@ mod tests {
         let r = parse_resource("cli-spec/usage/other=repo:specs/other.kdl", Some("tool")).unwrap();
         assert_eq!(r.resource.bin.as_deref(), Some("other"));
         assert_eq!(r.resource.repo.as_deref(), Some("specs/other.kdl"));
+        let r = parse_resource("completion/zsh/other=archive:share/_other", None).unwrap();
+        assert_eq!(r.resource.shell.as_deref(), Some("zsh"));
+        assert_eq!(r.resource.bin.as_deref(), Some("other"));
+        let r = parse_resource(
+            "completion/bash,zsh/other=exec:other completion {shell}",
+            None,
+        )
+        .unwrap();
+        assert_eq!(r.resource.shells, ["bash", "zsh"]);
+        assert_eq!(r.resource.bin.as_deref(), Some("other"));
+        let r = parse_resource("man/other=archive:share/man/other.1", None).unwrap();
+        assert_eq!(r.resource.bin.as_deref(), Some("other"));
+        assert!(r.resource.name.is_none());
         assert!(parse_resource("cli-spec/usage=repo:x", None).is_err());
         let r = parse_resource("skill/tool=asset:dist/tool-skill.tar.gz", None).unwrap();
         assert_eq!(r.resource.name.as_deref(), Some("tool"));
