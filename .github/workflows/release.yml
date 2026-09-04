@@ -50,18 +50,33 @@ jobs:
           - target: aarch64-unknown-linux-musl
             runner: ubuntu-24.04-arm
             asset: linux-arm64
+          # macOS is arm64 only. Every Mac Apple sells runs Apple silicon,
+          # and Rosetta 2 runs this binary on the Intel machines that are
+          # left, so an x64 build would be a second signed and notarized
+          # artifact serving a shrinking audience.
           - target: aarch64-apple-darwin
             runner: macos-latest
             asset: darwin-arm64
-          - target: x86_64-apple-darwin
-            runner: macos-latest
-            asset: darwin-x64
           - target: x86_64-pc-windows-msvc
             runner: windows-latest
             asset: windows-x64
+          # Built natively rather than cross-compiled from the x64 image:
+          # aws-lc-sys compiles C and assembly for the host toolchain, and
+          # arranging an ARM64 MSVC cross-build is more moving parts than a
+          # runner that is already the target.
+          - target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+            asset: windows-arm64
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
+      # The Developer ID certificate has to be in the keychain before the
+      # signing step below can find it.
+      - if: contains(matrix.target, 'apple')
+        uses: apple-actions/import-codesign-certs@5142e029c445c10ffc7149d172e540235a065466 # v7
+        with:
+          p12-file-base64: ${{ secrets.CERTIFICATES_P12 }}
+          p12-password: ${{ secrets.CERTIFICATES_P12_PASS }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -78,6 +93,75 @@ jobs:
           CC_x86_64_unknown_linux_musl: musl-gcc
           CC_aarch64_unknown_linux_musl: musl-gcc
           AWS_LC_SYS_PREBUILT_NASM: "1"
+      # Signing settles who built the binary; notarization is what Gatekeeper
+      # demands once a download carries the quarantine bit, which is to say
+      # whenever someone fetches it in a browser rather than with curl.
+      # Without a ticket it is blocked behind a "cannot be verified" dialog
+      # that only a deliberate override gets past.
+      #
+      # The ticket lives on Apple's side and is keyed to the binary's cdhash,
+      # so notarizing does not rewrite the file that gets packaged below.
+      # Stapling would, but `stapler` only writes into bundles, disk images,
+      # and installer packages, and this is a bare Mach-O in an archive;
+      # Gatekeeper resolves the ticket online instead.
+      - name: Sign and notarize the macOS binary
+        if: contains(matrix.target, 'apple')
+        shell: bash
+        env:
+          BINARY: target/${{ matrix.target }}/release/packslip
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$APPLE_API_KEY_P8" ] || [ -z "$APPLE_API_KEY_ID" ] || [ -z "$APPLE_API_ISSUER_ID" ]; then
+            echo "::error title=Notarization credentials missing::App Store Connect credentials are required for macOS releases."
+            exit 1
+          fi
+
+          # --options runtime and --timestamp are what the notary service
+          # requires; without them a submission comes back Invalid.
+          codesign -f --options runtime --timestamp --prefix dev.jdx. \
+            -s "Developer ID Application: Jeffrey Dickey (4993Y37DX6)" "$BINARY"
+          codesign --verify --strict --verbose=2 "$BINARY"
+
+          # Outside the workspace, so no later step can sweep the key into an
+          # artifact, and removed even when notarization fails.
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          printf '%s' "$APPLE_API_KEY_P8" | base64 --decode > "$work/key.p8"
+
+          # notarytool takes a container, never a bare executable. A copy is
+          # fine: a Mach-O carries its signature inline, so the cdhash the
+          # ticket is keyed to is the one that ships.
+          mkdir "$work/stage"
+          cp "$BINARY" "$work/stage/"
+          ditto -c -k --norsrc --noextattr "$work/stage" "$work/submission.zip"
+
+          # `--wait` is not a gate on its own: it can return zero on an
+          # Invalid submission, so the reported status is what decides.
+          # plutil reads JSON and ships with macOS, which keeps this off jq.
+          result="$(xcrun notarytool submit "$work/submission.zip" \
+            --key "$work/key.p8" \
+            --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER_ID" \
+            --output-format json \
+            --timeout 30m \
+            --wait)"
+          echo "$result"
+
+          status="$(printf '%s' "$result" | plutil -extract status raw -o - -)"
+          id="$(printf '%s' "$result" | plutil -extract id raw -o - -)"
+          if [ "$status" != "Accepted" ]; then
+            echo "::error::notarization returned $status for submission $id"
+            xcrun notarytool log "$id" \
+              --key "$work/key.p8" \
+              --key-id "$APPLE_API_KEY_ID" \
+              --issuer "$APPLE_API_ISSUER_ID" || true
+            exit 1
+          fi
+          echo "notarized: submission $id"
       - name: Package
         shell: bash
         env:
