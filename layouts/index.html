@@ -84,7 +84,7 @@
     </div>
     <div>
       <h3>Build provenance says how, not what</h3>
-      <p>SLSA provenance proves an artifact came out of a given build. It does not say which artifact is for which platform, what to put on PATH, or what else shipped in the release: the shell completions, the man page, the agent skill, the desktop entry or app bundle for a GUI.</p>
+      <p><a href="https://slsa.dev/spec/v1.0/provenance">SLSA provenance</a> proves an artifact came out of a given build. It does not say which artifact is for which platform, what to put on PATH, or what else shipped in the release: the shell completions, the man page, the agent skill, the desktop entry or app bundle for a GUI.</p>
     </div>
   </div>
 </section>
@@ -103,7 +103,7 @@
     </div>
     <div class="step">
       <h3>One file ships beside the artifacts</h3>
-      <p><code>packslip.sigstore.json</code> becomes a release asset. It is an ordinary sigstore bundle: the statement, the certificate naming the workflow that signed it, and the Rekor log entry proving when. <code>cosign</code> and <code>gh attestation</code> read it as-is.</p>
+      <p><code>packslip.sigstore.json</code> becomes a release asset. It is an ordinary sigstore bundle: the statement, the certificate naming the workflow that signed it, and the <a href="https://docs.sigstore.dev/logging/overview/">Rekor</a> log entry proving when. <a href="https://github.com/sigstore/cosign"><code>cosign</code></a> and <a href="https://cli.github.com/manual/gh_attestation"><code>gh attestation</code></a> read it as-is.</p>
     </div>
     <div class="step">
       <h3>The consumer checks the name</h3>
@@ -113,7 +113,7 @@
     </div>
   </div>
   <div class="prose" style="margin-top:2rem">
-    <p>packslip invents as little as it can. The document is an <a href="https://github.com/in-toto/attestation">in-toto statement</a> inside a <a href="https://docs.sigstore.dev/">sigstore</a> bundle, the same shape GitHub artifact attestations, npm provenance, and Homebrew bottles already use, so tools that read those formats can read this one. Identity comes from sigstore's certificate authority and transparency log. The only new part is the payload: the release manifest itself.</p>
+    <p>packslip invents as little as it can. The document is an <a href="https://github.com/in-toto/attestation">in-toto statement</a> inside a <a href="https://docs.sigstore.dev/">sigstore</a> bundle, the same shape <a href="https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-to-establish-provenance-for-builds">GitHub artifact attestations</a>, <a href="https://docs.npmjs.com/generating-provenance-statements">npm provenance</a>, and Homebrew bottles already use, so tools that read those formats can read this one. Identity comes from sigstore's certificate authority and transparency log. The only new part is the payload: the release manifest itself.</p>
   </div>
 </section>
 
@@ -146,11 +146,11 @@
     </div>
     <div>
       <h3>Linked provenance proves how it was built</h3>
-      <p>Each artifact can link to its SLSA build provenance. A consumer that verifies those statements gets whatever build level the builder provides. On GitHub-hosted runners that is Build L2, or L3 when the build runs in a reusable workflow, and the packslip action produces the provenance for you.</p>
+      <p>Each artifact can link to its SLSA build provenance. A consumer that verifies those statements gets whatever <a href="https://slsa.dev/spec/v1.0/levels">build level</a> the builder provides. On GitHub-hosted runners that is Build L2, or L3 when the build runs in a reusable workflow, and the packslip action produces the provenance for you.</p>
     </div>
     <div>
       <h3>Consumers set their own bar</h3>
-      <p>packslip defines no evidence levels. Consumers record what they verified, as a SLSA verification summary or in their own terms, and set their own minimum: which signing scheme, which signer, and whether provenance is required. Once a release meets it, later releases may not fall below it.</p>
+      <p>packslip defines no evidence levels. Consumers record what they verified, as a <a href="https://slsa.dev/spec/v1.0/verification_summary">SLSA verification summary</a> or in their own terms, and set their own minimum: which signing scheme, which signer, and whether provenance is required. Once a release meets it, later releases may not fall below it.</p>
     </div>
   </div>
 </section>
@@ -201,7 +201,7 @@ packslip releases --project mytool.example.com \
         <li><strong>Verify the bundle,</strong> then the statement, then the digest and size of every artifact you downloaded.</li>
         <li><strong>Never downgrade.</strong> Refuse a release signed with a weaker scheme than the last one you accepted, signed by someone new without a human approving it, or missing provenance the last release had. A keyless signer is identified by its workflow path, so a new tag of the same workflow is the same signer.</li>
         <li><strong>Wait before installing.</strong> Apply a minimum release age to the time the transparency log recorded, so a hijacked release is noticed before unattended installs pick it up.</li>
-        <li><strong>Order by semver.</strong> Every version is semver: precedence ranks releases, a prerelease part marks a prerelease, and its first identifier names the channel. Every project has a release list: GitHub's releases endpoint, or a signed list on the vendor's domain. It only says what was released and what was withdrawn. Refuse a stale signed list, never pick a yanked release, and skip prereleases unless asked.</li>
+        <li><strong>Order by semver.</strong> Every version is <a href="https://semver.org/spec/v2.0.0.html">semver</a>: precedence ranks releases, a prerelease part marks a prerelease, and its first identifier names the channel. Every project has a release list: GitHub's releases endpoint, or a signed list on the vendor's domain. It only says what was released and what was withdrawn. Refuse a stale signed list, never pick a yanked release, and skip prereleases unless asked.</li>
         <li><strong>Never guess between two artifacts.</strong> Select by os, arch, libc, format, and variant. If two still match, fail instead of picking one.</li>
       </ol>
 <pre><code>packslip verify packslip.sigstore.json \
