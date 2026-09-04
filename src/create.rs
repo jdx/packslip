@@ -414,8 +414,15 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
                     crate::linkage::read_executables(input.path, format.as_deref(), &bin)?
                 && let Some(read) = crate::linkage::host_libraries(&executables)
             {
-                match &requires.libs {
-                    Some(given) if *given != read => {
+                // The read list is sorted; a given one may be in any order.
+                let given_sorted = requires.libs.as_ref().map(|given| {
+                    let mut sorted = given.clone();
+                    sorted.sort();
+                    sorted.dedup();
+                    sorted
+                });
+                match (&requires.libs, given_sorted) {
+                    (Some(given), Some(sorted)) if sorted != read => {
                         return Err(Error::LibsMismatch {
                             artifact: name,
                             given: given.join(", "),
