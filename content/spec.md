@@ -179,7 +179,12 @@ Rules:
   entry is `{ "path": "bin/oxlint-x86_64", "name": "oxlint" }`. Two
   entries may share a path under different names, which is how a vendor
   declares an alias such as `pnpx` for `pnpm`; a consumer may link or
-  copy. Windows entries carry their `.exe`.
+  copy. A name is the command as typed, without `.exe`: a Windows path
+  carries its extension (`bin/tool.exe`) and the consumer puts that file
+  on PATH as `name.exe`. `requires.bin` and a resource's `bin` are
+  written the same way, so names compare without adding or stripping
+  anything. The reference implementation reads an older document that
+  wrote `name` with `.exe` as if it had not.
 - `requires` states what the host must already provide: `os_min` in the
   OS's own terms (`12` for macOS Monterey, `10.0.17763` for Windows),
   `glibc_min` for a `gnu` Linux build, `libs`, the shared libraries the
@@ -255,7 +260,7 @@ Windows installer.
 | `artifacts[].size` | integer | required | File size in bytes. Verified alongside the digest. |
 | `artifacts[].url` | string | optional | Download URL. |
 | `artifacts[].format` | string | optional | Archive, compression, or installer type, or `raw` for a bare executable. |
-| `artifacts[].bin[]` | array of string or object | optional | Executables inside the artifact: a path from the archive root, or `{ path, name }` when the PATH name differs. |
+| `artifacts[].bin[]` | array of string or object | optional | Executables inside the artifact: a path from the archive root, or `{ path, name }` when the PATH name differs. A name is the command as typed, without `.exe`. |
 | `artifacts[].requires` | object | optional | What the host must provide. See Host requirements. |
 | `requires.os_min` | string | optional | Minimum OS version in the OS's own terms. |
 | `requires.glibc_min` | string | optional | Minimum glibc for a `gnu` Linux build. |
