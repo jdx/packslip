@@ -12,9 +12,8 @@ enabled as described below.
    changelog generated from conventional commits through `cliff.toml`.
    The workflow also regenerates the CLI documentation in that PR.
 2. A maintainer reviews and merges the PR.
-3. If `RELEASE_PLZ_RELEASE` is `true`, the release job creates the
-   `vX.Y.Z` tag. When crate publishing is enabled in `release-plz.toml`,
-   it publishes to crates.io before tagging.
+3. If `RELEASE_PLZ_RELEASE` is `true`, the release job publishes the crate
+   to crates.io and then creates the `vX.Y.Z` tag.
 4. The tag triggers `release.yml`, which checks that the tag matches
    `Cargo.toml`, builds five platform binaries, signs and notarizes the
    macOS one, attests them all, and creates a draft GitHub release. It

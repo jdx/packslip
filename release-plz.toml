@@ -5,16 +5,11 @@
 git_release_enable = false
 git_tag_enable = true
 git_tag_name = "v{{ version }}"
-# Off until the crate has been published to crates.io once by hand and a
-# Trusted Publisher is registered; then flip to true (RELEASING.md).
-# While off, release-plz measures the release against the last git tag
-# rather than the registry.
-publish = false
+# 0.2.0 was published by hand to create the crate, and a Trusted Publisher
+# is registered for jdx/packslip's release-plz.yml, so the release job mints
+# a short-lived token through OIDC and needs no stored credential.
+publish = true
 # A binary crate: its library API is not a compatibility promise.
 semver_check = false
 # release-plz ignores cliff.toml unless told about it.
 changelog_config = "cliff.toml"
-
-# Measure releases against git tags, not crates.io, which does not have
-# the crate yet.
-git_only = true
