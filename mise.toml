@@ -2,3 +2,28 @@
 # Keep release-note generation reproducible. `latest` is resolved by mise.lock;
 # update the lock deliberately with `mise lock`.
 communique = "latest"
+hugo = "0.165.0"
+usage = "6.6.1"
+
+[tasks.build]
+run = "cargo build"
+
+[tasks.render]
+description = "Generate the usage spec and CLI reference"
+depends = ["build"]
+run = [
+  "target/debug/packslip usage > packslip.usage.kdl",
+  "rm -rf content/cli && mkdir -p content/cli",
+  "usage generate markdown --multi --file packslip.usage.kdl --out-dir content/cli --url-prefix /cli --html-encode",
+  "mv content/cli/index.md content/cli/_index.md",
+]
+
+[tasks.docs]
+description = "Serve the generated documentation locally"
+depends = ["render"]
+run = "hugo server"
+
+[tasks."docs:build"]
+description = "Build the generated documentation"
+depends = ["render"]
+run = "hugo --gc --minify"

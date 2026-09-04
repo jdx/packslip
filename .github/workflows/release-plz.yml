@@ -25,9 +25,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          persist-credentials: false
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
-      - uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131
+      - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
+        with:
+          cache: false
+      - id: release-plz
+        uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131
         with:
           command: release-pr
         env:
@@ -35,6 +39,21 @@ jobs:
           # built-in token starts no workflow, so CI would never run on
           # the release PR and release.yml would never build the binaries.
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+      - name: Regenerate CLI documentation in the release PR
+        if: steps.release-plz.outputs.prs_created == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          RELEASE_PR: ${{ steps.release-plz.outputs.pr }}
+        run: |
+          set -euo pipefail
+          pr_number=$(jq -r '.number' <<<"$RELEASE_PR")
+          gh pr checkout "$pr_number"
+          mise run render
+          git add packslip.usage.kdl content/cli
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: regenerate CLI documentation"
+            git push
+          fi
 
   # Publishes to crates.io and pushes the tag once a release PR has been
   # merged. Gated on a repository variable so that enabling this workflow

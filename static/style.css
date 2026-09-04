@@ -372,10 +372,13 @@ footer a { color: var(--muted); }
 .doc { display: grid; grid-template-columns: 14rem minmax(0, 1fr); gap: 3rem; padding: 3rem 0 4rem; }
 .toc { position: sticky; top: 1.5rem; align-self: start; font-size: 0.92rem; }
 .toc ol { list-style: none; padding: 0; margin: 0; }
+.toc ul { list-style: none; padding: 0; margin: 0; }
 .toc li { margin: 0.35rem 0; }
 .toc a { color: var(--ink-2); text-decoration: none; }
 .toc a:hover { color: var(--accent); }
 .toc .toc-title { font-family: var(--mono); font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 0.6rem; }
+.toc .toc-group + .toc-group { margin-top: 1.5rem; }
+.toc .active { color: var(--accent); font-weight: 600; }
 
 .doc article, .step, .split > div, .cols > div { min-width: 0; }
 

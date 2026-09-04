@@ -93,10 +93,13 @@ GUI type, since the entries say which a release is.
 - `src/`, `tests/` — the `packslip` crate: schema, generator, verifier.
 - `action.yml` — the composite GitHub Action.
 - `docs/spec/packslip.md` — the specification's canonical text.
+- `packslip.usage.kdl`, `content/cli/` — the generated usage spec and CLI reference.
 - `content/`, `layouts/`, `static/` — the Hugo source for packslip.dev, served by GitHub Pages.
 
-Run `mise x hugo@0.165.0 -- hugo server` to preview the site locally. The
-Pages workflow fetches the current GitHub star count into `data/github.json`
-before building, so visitors receive it in the rendered HTML.
+Run `mise run render` after changing CLI arguments or help text, and commit the
+updated spec and pages. Run `mise run docs` to regenerate them and preview the
+site locally; `mise run docs:build` performs the production build. The Pages
+workflow fetches the current GitHub star count into `data/github.json` before
+building, so visitors receive it in the rendered HTML.
 
 MIT licensed. Copyright (c) 2026 Jeff Dickey (@jdx).
