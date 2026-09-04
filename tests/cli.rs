@@ -649,6 +649,31 @@ fn resources_and_assets() {
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("6 resource(s))"), "{out}");
 
+    // An asset the artifact glob also matched is the asset, once.
+    let (code, out, err) = packslip(
+        d,
+        &[
+            "create",
+            "--project",
+            "tool.example.com",
+            "--version",
+            "1.0.0",
+            "--key",
+            "k.key",
+            "--no-log",
+            "--out",
+            "swept",
+            "--bin",
+            "tool",
+            "--resource",
+            "skill/tool=asset:tool-skill.tar.gz",
+            "tool-linux-x64.tar.gz",
+            "tool-skill.tar.gz",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("(1 artifact(s), 1 resource(s)"), "{out}");
+
     // An exec that is not a declared executable, a cli-spec for an
     // unknown bin, and a malformed spec are refused.
     let (code, _, err) = create(&["--resource", "man=exec:other man"]);

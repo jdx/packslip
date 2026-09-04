@@ -470,7 +470,8 @@ Action.
   executable defaults to the sole `--bin`; otherwise
   `cli-spec/usage/NAME`), `skill/NAME=repo:skills/tool`,
   `skill/NAME=asset:dist/tool-skill.tar.gz` (a local file, digested into
-  the subject), `desktop=archive:...`, `icon=archive:...`,
+  the subject; a file given as both an artifact and an asset is the
+  asset), `desktop=archive:...`, `icon=archive:...`,
   `app=archive:Tool.app`. Add `--key release.key` to sign with a key;
   `--no-log` skips Rekor.
 - `packslip keygen -o release.key` writes an Ed25519 secret seed (mode

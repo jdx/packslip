@@ -215,15 +215,22 @@ fn windows_exe(value: &str) -> String {
 
 /// Build and validate the release statement.
 pub fn create(request: &Request<'_>) -> Result<Created, Error> {
+    let file_name = |path: &Path| {
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+    // A file named as an asset is an asset, not a platform artifact, even
+    // when an artifact glob such as `dist/*` swept it up as well.
+    let asset_names: Vec<String> = request.assets.iter().map(|a| file_name(a.path)).collect();
     let mut subject = Vec::new();
     let mut artifacts: Vec<Artifact> = Vec::new();
     for input in &request.artifacts {
-        let name = input
-            .path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_default()
-            .to_string();
+        let name = file_name(input.path);
+        if asset_names.contains(&name) {
+            continue;
+        }
         let digests = crate::digest_file_all(input.path).map_err(|source| Error::Io {
             path: input.path.display().to_string(),
             source,
@@ -306,12 +313,10 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
     }
     let mut asset_urls = std::collections::BTreeMap::new();
     for asset in &request.assets {
-        let name = asset
-            .path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_default()
-            .to_string();
+        let name = file_name(asset.path);
+        if asset_urls.contains_key(&name) {
+            continue;
+        }
         let digests = crate::digest_file_all(asset.path).map_err(|source| Error::Io {
             path: asset.path.display().to_string(),
             source,
@@ -619,6 +624,37 @@ mod tests {
             created.statement.predicate.resources[1].url.as_deref(),
             Some("https://cdn.example.com/skill.tar.gz")
         );
+
+        // A file given as both an artifact and an asset is the asset, once.
+        let swept = create(&Request {
+            artifacts: vec![
+                ArtifactInput {
+                    bin: vec![Bin::new("tool")],
+                    ..ArtifactInput::new(&a)
+                },
+                ArtifactInput::new(&skill),
+            ],
+            assets: vec![
+                AssetInput {
+                    path: &skill,
+                    url: None,
+                },
+                AssetInput {
+                    path: &skill,
+                    url: None,
+                },
+            ],
+            resources: vec![Resource {
+                name: Some("tool".into()),
+                asset: Some("tool-skill.tar.gz".into()),
+                ..Resource::new("skill")
+            }],
+            ..Request::new("tool.example.com", "1.0.0", key_identity(&key))
+        })
+        .unwrap();
+        assert_eq!(swept.statement.predicate.artifacts.len(), 1);
+        assert_eq!(swept.statement.subject.len(), 2);
+        assert_eq!(swept.statement.subject[1].name, "tool-skill.tar.gz");
 
         // The asset digest is checked like an artifact's, and a resource
         // whose asset was not given is refused.

@@ -393,9 +393,14 @@ fn parse_resource(spec: &str, default_bin: Option<&str>) -> Result<ResourceSpec>
     let mut resource = Resource::new(kind);
     match (kind, qualifiers.as_slice()) {
         ("completion", [shell]) if shell.contains(',') => {
-            resource.shells = shell.split(',').map(str::to_string).collect();
+            resource.shells = shell
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect();
         }
-        ("completion", [shell]) => resource.shell = Some(shell.to_string()),
+        ("completion", [shell]) => resource.shell = Some(shell.trim().to_string()),
         ("completion", _) => bail!("--resource {spec:?}: completion wants completion/SHELL"),
         ("cli-spec", [format]) => {
             resource.format = Some(format.to_string());
@@ -1036,6 +1041,12 @@ mod tests {
         .unwrap();
         assert_eq!(r.resource.shells, ["bash", "zsh", "fish"]);
         assert_eq!(r.resource.exec, ["tool", "completion", "{shell}"]);
+        let r = parse_resource(
+            "completion/bash, zsh,,fish =exec:tool completion {shell}",
+            None,
+        )
+        .unwrap();
+        assert_eq!(r.resource.shells, ["bash", "zsh", "fish"]);
         let r = parse_resource("cli-spec/usage=exec:tool usage", Some("tool")).unwrap();
         assert_eq!(r.resource.format.as_deref(), Some("usage"));
         assert_eq!(r.resource.bin.as_deref(), Some("tool"));

@@ -391,6 +391,14 @@ impl Resource {
     }
 }
 
+/// A shell name is a plain lowercase word: `bash`, `zsh`, `powershell`.
+fn valid_shell(shell: &str) -> bool {
+    !shell.is_empty()
+        && shell
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+}
+
 /// A path inside an archive or a repository: relative, with no empty or
 /// `..` segments.
 fn valid_relative_path(path: &str) -> bool {
@@ -549,6 +557,8 @@ pub enum InvalidDocument {
         "completion {0:?} lists shells, so its source must be exec with a {{shell}} placeholder"
     )]
     CompletionShells(String),
+    #[error("completion {0:?} names shell {1:?}; a shell is a lowercase word such as zsh")]
+    Shell(String, String),
     #[error("cli-spec {0:?} needs format and bin")]
     CliSpec(String),
     #[error("cli-spec {0:?} describes {1:?}, which is not a bin name of any artifact")]
@@ -720,6 +730,14 @@ impl Statement {
                 "completion" => {
                     if resource.shell.is_some() == !resource.shells.is_empty() {
                         return Err(InvalidDocument::CompletionShell(label));
+                    }
+                    if let Some(bad) = resource
+                        .shell
+                        .iter()
+                        .chain(&resource.shells)
+                        .find(|s| !valid_shell(s))
+                    {
+                        return Err(InvalidDocument::Shell(label, bad.clone()));
                     }
                     if !resource.shells.is_empty()
                         && (source != ResourceSource::Exec
@@ -1252,6 +1270,21 @@ mod tests {
                     ..archive("completion", "_mise")
                 },
                 |e| matches!(e, InvalidDocument::CompletionShells(_)),
+            ),
+            (
+                Resource {
+                    shell: Some(" zsh".into()),
+                    ..archive("completion", "_mise")
+                },
+                |e| matches!(e, InvalidDocument::Shell(_, _)),
+            ),
+            (
+                Resource {
+                    shells: vec!["bash".into(), "".into()],
+                    exec: vec!["mise".into(), "completion".into(), "{shell}".into()],
+                    ..Resource::new("completion")
+                },
+                |e| matches!(e, InvalidDocument::Shell(_, _)),
             ),
             (
                 Resource {

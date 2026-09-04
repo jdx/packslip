@@ -50,7 +50,8 @@ inputs:
       completion/zsh=archive:share/zsh/site-functions/_tool,
       man=archive:share/man/man1/tool.1, cli-spec/usage=exec:tool usage,
       skill/tool=repo:skills/tool, or skill/tool=asset:dist/tool-skill.tar.gz
-      (a file digested alongside the artifacts).
+      (a file digested alongside the artifacts; one the artifacts glob also
+      matched is treated as the asset, not an artifact).
     required: false
     default: ""
   prerelease:
