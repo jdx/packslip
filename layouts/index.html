@@ -6,7 +6,7 @@
 <title>packslip — a signed release manifest</title>
 <meta name="description" content="packslip: one signed file per release that says what shipped and how to verify it. Signed from CI with no key to manage, verified against the repository name.">
 <meta property="og:title" content="packslip — a signed release manifest">
-<meta property="og:description" content="One signed file per release. No key to manage, no registry to join. Checksums, platforms, executables, and provenance links in a standard sigstore bundle.">
+<meta property="og:description" content="One signed file per release. No key to manage, no registry to join. Checksums, platforms, executables, completions, skills, and provenance links in a standard sigstore bundle.">
 <meta property="og:url" content="https://packslip.dev/">
 <meta property="og:type" content="website">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -24,7 +24,7 @@
   <div>
     <span class="eyebrow">Version 1 · draft</span>
     <h1>One signed manifest per release.</h1>
-    <p class="lede">It ships next to the artifacts and is signed from CI with no key to manage. Anyone installing the release verifies it against the repository name and learns what each file is, which platform it is for, what goes on PATH, and where the build provenance lives.</p>
+    <p class="lede">It ships next to the artifacts and is signed from CI with no key to manage. Anyone installing the release verifies it against the repository name and learns what each file is, which platform it is for, what goes on PATH, where the build provenance lives, and what ships alongside: completions, a man page, a skill, a desktop entry.</p>
     <div class="actions">
       <a class="btn primary" href="#vendors">Add it to a release job</a>
       <a class="btn" href="/release/v1/">Read the spec</a>
@@ -79,12 +79,12 @@
       <p>Most tools download a <code>SHASUMS256.txt</code> from the same place as the binary. If the release page is hijacked, the checksums are hijacked with it. The digest matches and the malware installs.</p>
     </div>
     <div>
-      <h3>Registries make vendors do the work</h3>
-      <p>Package managers keep a central pile of YAML describing how each vendor names its assets, where its checksums live, and which file is the binary. Vendors have to add themselves, and every entry rots.</p>
+      <h3>Registries take the release out of the vendor's hands</h3>
+      <p>Package managers keep a central pile of YAML describing how each vendor names its assets, where its checksums live, and which file is the binary. The vendor has no say in it, and every entry rots. A manifest the vendor signs keeps the vendor in charge of its own tool: an installer reads the release directly, and a package manager like <a href="https://pacvamp.com">pacvamp</a> can still repackage it with the vendor's provenance intact.</p>
     </div>
     <div>
       <h3>Build provenance says how, not what</h3>
-      <p>SLSA provenance proves an artifact came out of a given build. It does not say which artifact is for which platform, what to put on PATH, or what else shipped in the release. That gap is what a manifest fills.</p>
+      <p>SLSA provenance proves an artifact came out of a given build. It does not say which artifact is for which platform, what to put on PATH, or what else shipped in the release: the shell completions, the man page, the agent skill, the desktop entry or app bundle for a GUI. That gap is what a manifest fills.</p>
     </div>
   </div>
 </section>
@@ -142,7 +142,7 @@
   <div class="cols">
     <div>
       <h3>A verified packslip</h3>
-      <p>The named signer published exactly this list of artifacts, with these digests and platforms, at a time the transparency log recorded. A hijacked release page cannot change it, and a release that was rolled back or quietly removed shows up as such.</p>
+      <p>The named signer published exactly this list of artifacts, with these digests, platforms, and bundled resources, at a time the transparency log recorded. A hijacked release page cannot change it, and a release that was rolled back or quietly removed shows up as such.</p>
     </div>
     <div>
       <h3>Linked provenance</h3>
