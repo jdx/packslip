@@ -161,13 +161,25 @@ pub type Platform = (
 /// a manifest or `--format` settles any case the name leaves open.
 pub fn infer_platform(name: &str) -> Platform {
     let lower = name.to_ascii_lowercase();
-    // Android and iOS first: their triples also say `linux` and `apple`.
-    let os = if lower.contains("android") {
+    // Android and iOS are read from whole words, since `helios` is not
+    // iOS and `android-tools` is not an Android build. Their Rust triples
+    // also say `linux` and `apple` (`aarch64-linux-android`,
+    // `aarch64-apple-ios`), so the word wins when it follows that one, or
+    // when the name says nothing else.
+    let tokens: Vec<&str> = lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .collect();
+    let has = |word: &str| tokens.contains(&word);
+    let follows = |first: &str, second: &str| {
+        tokens
+            .windows(2)
+            .any(|pair| pair[0] == first && pair[1] == second)
+    };
+    let os = if follows("linux", "android") || (has("android") && !has("linux")) {
         Some("android")
-    } else if lower.contains("-ios")
-        || lower.contains("_ios")
-        || lower.contains("ios-")
-        || lower.contains("apple-ios")
+    } else if follows("apple", "ios")
+        || (has("ios") && !has("apple") && !has("darwin") && !has("macos"))
     {
         Some("ios")
     } else if lower.contains("linux")
@@ -692,6 +704,27 @@ mod tests {
         assert_eq!(
             infer_platform("tool-aarch64-apple-ios.zip"),
             (Some("ios"), Some("aarch64"), None, Some("zip"))
+        );
+        assert_eq!(
+            infer_platform("tool-android-arm64.tar.gz"),
+            (Some("android"), Some("aarch64"), None, Some("tar.gz"))
+        );
+        assert_eq!(
+            infer_platform("tool-ios-arm64.zip"),
+            (Some("ios"), Some("aarch64"), None, Some("zip"))
+        );
+        // Whole words only: a product name is not a platform.
+        assert_eq!(
+            infer_platform("helios-linux-amd64.tar.gz"),
+            (Some("linux"), Some("x86_64"), Some("gnu"), Some("tar.gz"))
+        );
+        assert_eq!(
+            infer_platform("android-tools_linux_amd64.tar.gz"),
+            (Some("linux"), Some("x86_64"), Some("gnu"), Some("tar.gz"))
+        );
+        assert_eq!(
+            infer_platform("studios-darwin-arm64.tar.gz"),
+            (Some("darwin"), Some("aarch64"), None, Some("tar.gz"))
         );
         assert_eq!(
             infer_platform("tool-netbsd-i386.tar.gz"),
