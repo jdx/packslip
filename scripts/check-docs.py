@@ -44,7 +44,7 @@ def check_links(site):
     pages = {path.resolve(): Page(path) for path in site.rglob("*.html")}
     required = ["index.html", "release/v1/index.html", "docs/index.html", "cli/index.html"]
     required += [f"docs/{name}/index.html" for name in (
-        "getting-started", "describing-releases", "resources", "host-requirements",
+        "release-workflow", "getting-started", "describing-releases", "resources", "host-requirements",
         "recipes", "publishing", "verifying", "release-lists", "mise",
     )]
     errors = [f"missing page: {name}" for name in required if not (site / name).is_file()]

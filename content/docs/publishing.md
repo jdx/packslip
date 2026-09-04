@@ -9,12 +9,19 @@ The `jdx/packslip` action signs a manifest with your workflow's identity
 and uploads the bundle to an existing GitHub release. No long-lived
 signing key is needed.
 
+## Prepare the files and release
+
+The action consumes final local files. In a build matrix, collect the artifacts
+into the signing job before running it. Complete any archive rewriting,
+platform signing, or notarization that changes the bytes first.
+
+Create the GitHub release and upload the artifacts through your existing
+workflow. Upload separate resource assets, such as SBOMs, too. The action
+uploads only the packslip bundle; a signed URL does not upload its target.
+
 ## Add the release step
 
-Use this fragment in your release job. The artifacts must already exist
-on the runner, and the GitHub release must exist before the upload step.
-Upload your binaries through your existing release workflow; this action
-uploads the packslip bundle only.
+Use this fragment after those preparation steps in your release job.
 
 ```yaml
 permissions:
@@ -118,8 +125,32 @@ The action passes project, version, source, and URL metadata as CLI flags,
 which take precedence over the corresponding manifest values. Change
 those values through action inputs where available.
 
-## Check the result
+## Check the published result {#check-the-result}
 
-Download the bundle and one release artifact, then follow
-[Verify a release](/docs/verifying/). Verification of the packslip does
-not verify the linked provenance; consumers must check that separately.
+The action verifies the local bundle before uploading it. Check the published
+release separately: download the bundle and an artifact from the URLs users
+will use, then [verify both](/docs/verifying/#verify-against-the-expected-repository)
+against your repository identity. This also catches a wrong upload, stale file,
+or URL that points at a different build.
+
+Inspect the statement with `packslip show` to confirm the project, normalized
+version, source tag, platforms, and executable paths. Inspection does not
+replace verification. Linked build provenance also needs its own verification;
+the packslip verification command does not fetch it.
+
+For a draft workflow trial, set `upload: false` to retain the bundle locally.
+This still signs the statement and, with the default `attest: true`, publishes
+provenance. Use the [local walkthrough](/docs/getting-started/) for an offline
+trial that does not contact signing services.
+
+## Troubleshoot publication
+
+| Symptom | What to check |
+| --- | --- |
+| No artifacts matched | Files must be present in this job's working directory. Download matrix outputs before the action, and check the glob. |
+| Version rejected | Pass a semver `version` explicitly for tags such as `mytool-v1.2.3` or `v4.1`. |
+| Executable missing or ambiguous | Check the archive contents and use an explicit path or `NAME=PATH` mapping. |
+| Bundle upload fails | The release named by `tag` must exist and the token must have `contents: write`. |
+| Signing cannot obtain a CI identity | Give the signing job `id-token: write`. |
+| A resource URL returns a missing file | Upload that separate asset; resource declarations only describe it. |
+| A download fails its digest check | Compare the published file with the final local file that was signed; do not disable verification. |

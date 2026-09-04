@@ -9,6 +9,13 @@ A packslip describes the files you already build. Start with artifact
 paths and executable names, then add explicit metadata wherever your
 filenames or archive layouts leave room for ambiguity.
 
+## Choose flags or a manifest
+
+Use CLI flags when all artifacts share executable names and resource layouts.
+Use `release.toml` when individual files need different paths, platforms,
+requirements, or formats. Both produce the same signed release statement;
+TOML is configuration for the generator, not a second interchange format.
+
 ## Select platforms and variants
 
 `create` infers OS, architecture, libc, and format from artifact names.
@@ -36,6 +43,18 @@ An absent platform field means no restriction on that dimension. A
 universal macOS binary has `os = "darwin"` with no `arch`; it does not run
 on every OS. Use `portable = true` only when all platform fields should
 be absent.
+
+### Check inferred metadata
+
+Inference reads filenames, not your build configuration. An ambiguous name
+can leave a platform field unrestricted or describe the wrong target.
+For Linux artifacts, the generator defaults libc to `gnu` unless overridden
+or declared portable. Inspect the generated statement and set explicit
+values for anything the filename does not establish.
+
+`os`, `arch`, and `libc` describe where a build runs. `variant` distinguishes
+builds a user chooses, such as `fips` or `debug`. A minimum OS or glibc version
+belongs in `requires`, checked after selection; it cannot break an artifact tie.
 
 ## Name the executables
 
@@ -94,6 +113,22 @@ packslip create --manifest release.toml --out dist
 For local key signing, add `--key release.key`. In the action, set
 `manifest: release.toml` and still supply the required `artifacts` input.
 
+### Paths in the input and output
+
+| Field | Interpreted relative to | Example |
+| --- | --- | --- |
+| Artifact `path` | The working directory running `create`. | `dist/mytool-linux-x64.tar.gz` |
+| Resource `asset` in TOML | The same working directory. | `dist/mytool.cdx.json` |
+| Executable path or resource `archive` | The true archive root, retaining its top-level directory. | `mytool-1.2.3/bin/mytool` |
+| Resource `repo` | The source repository at `source.commit`. | `skills/mytool` |
+| Resource `artifact` | An exact artifact filename in the statement, with no local directory. | `mytool-linux-x64.tar.gz` |
+
+In the output, an asset's local path becomes its filename in `subject`.
+Its URL tells the consumer where to download it. Do not put `dist/` in an
+`archive` path unless that directory is actually inside the archive.
+
+### Defaults and overrides
+
 Configuration follows these rules:
 
 - Local artifact and asset paths are relative to the **working directory**,
@@ -147,4 +182,3 @@ skills, SBOMs, and desktop files.
 
 See [Host requirements](/docs/host-requirements/) for shared-library
 scanning, required commands, and minimum OS versions.
-

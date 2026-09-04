@@ -26,6 +26,16 @@ mappings, and a signed recommendation. Other forges need the discovery
 mechanism described in the [specification](/release/v1/#discovery);
 a recognized signing issuer alone does not provide a release index.
 
+### GitHub lists supplement release discovery
+
+A GitHub list overrides the releases it names; it does not replace the
+repository's release index. An omitted version can still be discovered from
+its tag. To withdraw a release, keep it in the list with a yanked status.
+
+This differs from a project on its own domain, where the signed list supplies
+the release index. In both cases, consumers require a previously accepted
+signed list to remain available, valid, and current.
+
 ## Create the list
 
 Keep local copies of the released bundles. Each `--release` pairs the
@@ -106,3 +116,17 @@ the vendor's pin. A mirror or repackager that signs its own release
 manifest makes a different claim. See
 [lists from other publishers](/release/v1/#lists-from-other-publishers)
 and [repackager attestation](/release/v1/#repackager-attestation).
+
+## Diagnose a release that is not offered
+
+| Symptom | What to check |
+| --- | --- |
+| A domain project has no releases | Publish the signed list at the well-known path, including the project subpath. |
+| A GitHub tag is invisible | Check that it maps to a version for this project, or add an explicit version/tag mapping in the signed list. |
+| A release is found but refused | Verify its bundle and confirm the signed project, version, and bundle digest match discovery metadata. |
+| A withdrawn version reappears | Keep its yanked entry; omission from a supplementary GitHub list does not withdraw it. |
+| The list expires without a new release | Re-sign the retained entries with a later expiry and increased sequence. |
+| `latest` selects another version | Check whether the recommendation is eligible under withdrawal, prerelease, age, stamping, and host policy. |
+
+These are consumer discovery checks. `packslip verify` alone does not fetch
+an index, enforce its expiry, or remember its previously accepted sequence.

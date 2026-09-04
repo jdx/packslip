@@ -13,6 +13,9 @@ A GitHub release job can sign with its workflow identity. Publishers
 outside supported CI can use an Ed25519 key. Both produce an in-toto
 statement in a sigstore bundle.
 
+[Follow the release workflow](/docs/release-workflow/) to see how local
+configuration becomes a signed bundle and how consumers find it.
+
 ## Inside a packslip
 
 Here is the release statement for a small portable tool, shortened to

@@ -4,23 +4,38 @@ description: Guides and reference for publishing and verifying packslip release 
 ---
 # Documentation
 
-Start with a working example, then add the metadata your release needs.
-The guides explain the workflow; the specification defines the format
-and the rules consumers must follow.
+Choose a path based on whether you publish software, install it, or build
+an integration. For the relationship between configuration, signing, and
+discovery, read [How packslip fits a release](/docs/release-workflow/).
 
-## Guides
+## Try packslip {#guides}
 
-| I want to… | Read |
-| --- | --- |
-| Create and verify my first packslip | [Getting started](/docs/getting-started/) |
-| Add packslip to a GitHub release job | [Publish with GitHub Actions](/docs/publishing/) |
-| Configure platforms and executable paths | [Artifact configuration](/docs/describing-releases/) |
-| Ship completions, skills, or desktop files | [Resources](/docs/resources/) |
-| Declare dependencies and minimum OS versions | [Host requirements](/docs/host-requirements/) |
-| Adapt a common release layout | [Release recipes](/docs/recipes/) |
-| Verify downloads or build a consumer | [Verify a release](/docs/verifying/) |
-| Use packslip with mise | [Using packslip with mise](/docs/mise/) |
-| Publish a release index or withdraw a version | [Manage release lists](/docs/release-lists/) |
+[Getting started](/docs/getting-started/) creates and verifies a small local
+release. It needs no CI account or connection to the signing services once
+the CLI is installed.
+
+## Publish software
+
+Follow these guides in the order your release needs them:
+
+1. [Artifact configuration](/docs/describing-releases/): describe platforms,
+   executable paths, and variants, using flags or a TOML manifest.
+2. [Resources](/docs/resources/) and [host requirements](/docs/host-requirements/):
+   describe additional files and what the host must provide.
+3. [Release recipes](/docs/recipes/): adapt a Rust, Go, monorepo, or desktop layout.
+4. [Publish with GitHub Actions](/docs/publishing/): sign and upload the bundle
+   from your release job.
+5. [Manage release lists](/docs/release-lists/): publish discovery metadata,
+   withdraw versions, and recommend a default release.
+
+## Install software or build a consumer
+
+- [Using packslip with mise](/docs/mise/) shows artifact installation,
+  completions, skills, and trust continuity in a consumer.
+- [Verify a release](/docs/verifying/) explains trusted identities, file
+  verification, and the additional policy an installer must enforce.
+- [Consumer rules](/release/v1/#consumer-rules) define the complete contract.
+  A successful CLI verification alone does not implement that contract.
 
 ## Reference
 

@@ -15,6 +15,10 @@ and find executables, resources, and build provenance.
 
 ## Start here
 
+[How packslip fits a release](https://packslip.dev/docs/release-workflow/)
+explains the path from local build files to signed metadata and installation,
+including which parts belong to the publisher, CLI, and consumer.
+
 - **Try it locally:** [Getting started](https://packslip.dev/docs/getting-started/)
   walks through creating and verifying a manifest without a CI account.
 - **Publish a release:** [GitHub Actions](https://packslip.dev/docs/publishing/)
