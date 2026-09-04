@@ -3,7 +3,9 @@
 
 - **Usage:** `packslip schema [--releases]`
 
-Print the JSON schema of the release statement, or of the release list
+Print the JSON schema for a decoded release statement
+
+Use --releases for the release-list statement schema. These schemas describe the in-toto payload, not the enclosing sigstore bundle.
 
 ## Flags
 - **`--releases`** — The releases/v1 list instead of the release/v1 statement

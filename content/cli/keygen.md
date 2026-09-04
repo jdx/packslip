@@ -5,7 +5,7 @@
 
 Generate an Ed25519 key pair for the sigstore-key scheme
 
-Only needed outside a CI job: with an OIDC identity, `create` signs keylessly and needs no key. Writes the secret seed to the given path (mode 0600) and a minisign-format public key beside it with a .pub extension.
+Writes a secret seed to --out (mode 0600 on Unix) and a minisign-format public key beside it with a .pub extension. Refuses to overwrite either file. Keep the secret private; distribute the public key to consumers. A supported CI OIDC identity can sign without a long-lived key.
 
 ## Flags
 - **`-o --out <OUT>`** — Where to write the secret key
