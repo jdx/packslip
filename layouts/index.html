@@ -18,7 +18,7 @@
 
 <main class="wrap">
 
-<p class="notice"><strong>Work in progress.</strong> packslip is a draft, not a standard. mise ships experimental support for it, but the format and the tooling still change between releases, so use it for testing and nothing you depend on. Expect breaking changes until it is declared stable.</p>
+<p class="notice"><strong>Work in progress.</strong> packslip is a draft, not a standard. <a href="https://mise.jdx.dev">mise</a> ships experimental support for it, but the format and the tooling still change between releases, so use it for testing and nothing you depend on. Expect breaking changes until it is declared stable.</p>
 
 <div class="hero">
   <div>
@@ -113,7 +113,7 @@
     </div>
   </div>
   <div class="prose" style="margin-top:2rem">
-    <p>packslip invents as little as it can. The document is an <a href="https://github.com/in-toto/attestation">in-toto statement</a> inside a <a href="https://docs.sigstore.dev/">sigstore</a> bundle, the same shape GitHub artifact attestations, npm provenance, and Homebrew bottles already use, so the tools that read those read this too. Identity comes from sigstore's certificate authority and transparency log. The only new part is the payload: the release manifest that would otherwise live in a registry entry.</p>
+    <p>packslip invents as little as it can. The document is an <a href="https://github.com/in-toto/attestation">in-toto statement</a> inside a <a href="https://docs.sigstore.dev/">sigstore</a> bundle, the same shape GitHub artifact attestations and npm provenance already use, so the tools that read those read this too. Identity comes from sigstore's certificate authority and transparency log. The only new part is the payload: the release manifest that would otherwise live in a registry entry.</p>
   </div>
 </section>
 
@@ -232,12 +232,12 @@ packslip releases --project mytool.example.com \
       <p><a href="https://github.com/jdx/pacvamp">pacvamp</a> is a trust-focused package manager for pacman-based distributions. It is meant to build vendor packages from the vendor's packslip instead of hand-edited checksum lines, re-verify against the project's identity, enforce a minimum release age and no-downgrade, and ship the packslip beside the package so a client can chain the repository's signature back to the vendor offline.</p>
     </div>
     <div>
-      <h3>mise</h3>
+      <h3><a href="https://mise.jdx.dev">mise</a></h3>
       <p>mise has experimental support. Its <code>github</code> and <code>http</code> backends verify a packslip when a release ships one and record the result in <code>mise.lock</code>, so such a tool needs no registry entry. mise's own release workflow is meant to be the reference publisher. Until the spec is stable, treat all of this as something to test with, not to depend on.</p>
     </div>
     <div>
       <h3>Everyone else</h3>
-      <p>Nothing in the format is specific to a distro or a vendor. aqua, Homebrew, a corporate mirror, or a one-off install script can all verify the same file against the same name.</p>
+      <p>Nothing in the format is specific to a distro or a vendor. A corporate mirror or a one-off install script can verify the same file against the same name.</p>
     </div>
   </div>
 </section>
