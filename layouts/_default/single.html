@@ -63,7 +63,7 @@
   <p>The bundle carries the statement, so the signed bytes are exactly the payload bytes and a consumer needs no canonicalization step. <code>packslip show</code> prints them; so does <code>jq -r .dsseEnvelope.payload | base64 -d</code>. <code>cosign</code> and <code>gh attestation</code> understand the bundle as-is.</p>
 
   <h2 id="document">The release statement</h2>
-<pre><code>{
+{{ highlight `{
   "_type": "https://in-toto.io/Statement/v1",
   "subject": [
     { "name": "mise-v2026.9.1-linux-x64.tar.xz",
@@ -101,7 +101,7 @@
     "notes_url": "https://github.com/jdx/mise/releases/tag/v2026.9.1",
     "sbom": "https://.../sbom.cdx.json"
   }
-}</code></pre>
+}` "json" "" }}
   <p>Rules:</p>
   <ul>
     <li><code>subject</code> lists every artifact by file name with its digests, plus any separate file a resource comes from. <code>artifacts</code> carries the same names with platform, size, download URL, format, executables, requirements, and provenance links. Every artifact is a subject, every subject is an artifact or a resource's <code>asset</code>, and neither list contains a duplicate. At least one artifact is required. <code>sha256</code> is required and is 64 lowercase hex characters; <code>sha512</code> is optional and 128.</li>
@@ -193,11 +193,11 @@
 
   <h2 id="repackager">Repackager attestation</h2>
   <p>A repository or mirror that redistributes a vendor's artifacts, and whose vendor publishes no packslip, may sign one itself with <code>"attested_by": "repackager"</code>. The <code>project</code> still names the vendor's project and the artifacts are still the vendor's files, but <code>identity</code> is the repackager's, and <code>evidence</code> says what it checked before signing:</p>
-<pre><code>"attested_by": "repackager",
+{{ highlight `"attested_by": "repackager",
 "evidence": [
   { "kind": "apt-release-gpg", "detail": "3FEF9748469ADBE15DA7CA80AC2D62742012EA22" },
   { "kind": "pkgbuild-checksums" }
-]</code></pre>
+]` "json" "" }}
   <p>Documented kinds: <code>pkgbuild-checksums</code> (digests matched the packaging the repackager maintains), <code>checksum-file-over-tls</code> (the vendor's checksum file, unsigned), <code>apt-release-gpg</code> (an apt index signed with the given key), <code>vendor-signature</code> (a detached signature the vendor publishes), <code>github-attestation</code> (GitHub artifact attestations verified), <code>none</code>.</p>
   <p>A repackager document proves that the repackager published exactly these digests and checked the listed evidence. It does not prove anything the vendor did not sign. Consumers rank it below a vendor document, and a consumer that already holds a vendor document for a project refuses to replace it with a repackager one without a human's say-so.</p>
 
@@ -218,7 +218,7 @@
     <li>Any other project publishes a signed list at <code>https://&lt;host&gt;/.well-known/packslip/&lt;path&gt;.json</code>, where <code>&lt;path&gt;</code> is the project name after the host, or <code>packslip.json</code> directly under <code>.well-known</code> when the name is a bare host.</li>
   </ul>
   <p>The list is required: a consumer that finds none refuses the project rather than guessing at URLs. It is a bundle of the same shape as a packslip, with the <code>releases/v1</code> predicate:</p>
-<pre><code>{
+{{ highlight `{
   "_type": "https://in-toto.io/Statement/v1",
   "subject": [
     { "name": "https://dl.example.com/2026.9.1/packslip.sigstore.json",
@@ -242,7 +242,7 @@
         "status": "yanked", "status_reason": "CVE-2026-1234" }
     ]
   }
-}</code></pre>
+}` "json" "" }}
   <p>Each subject is a listed packslip's URL with the digest of that file, so the list pins the exact documents it points at. <code>expires_at</code> and <code>sequence</code> are borrowed from TUF's timestamp role: a consumer refuses a list that has expired, or whose sequence is lower than one it has already accepted, so a mirror cannot freeze or roll back the vendor's view.</p>
   <p>Each entry may carry <code>status: "yanked"</code> with a <code>status_reason</code> when the vendor withdrew the release, and <code>security: true</code> when it fixes a vulnerability. A consumer never selects a yanked release, warns when it holds one, and may shorten its minimum release age for a security release. Nothing else about a release lives on the list: its version says the rest.</p>
   <p><code>packslip releases</code> produces the list from local copies of the released bundles. The list separates the name from where the bytes live: the identity is anchored to the domain, and the artifacts can be anywhere.</p>
