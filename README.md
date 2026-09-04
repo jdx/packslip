@@ -5,12 +5,12 @@
   </picture>
 </p>
 
-> **Work-in-progress proposal.** packslip is a draft, not an adopted
-> standard: it is far from certain that mise or Omarchy will adopt it, and
-> nothing depends on it yet. The format is a version 1 draft that still
-> changes between releases, and the tooling is young and lightly deployed.
-> Expect breaking changes until it is declared stable. Feedback is welcome
-> in [issues](https://github.com/jdx/packslip/issues).
+> **Work in progress.** packslip is a draft, not a standard. mise ships
+> experimental support for it, but the format and the tooling still change
+> between releases, so use it for testing and nothing you depend on.
+> Whether Omarchy adopts it is undecided. Expect breaking changes until it
+> is declared stable. Feedback is welcome in
+> [issues](https://github.com/jdx/packslip/issues).
 
 A signed release manifest for vendor binaries. One file per release,
 `packslip.sigstore.json`, says what shipped and how to verify it; any

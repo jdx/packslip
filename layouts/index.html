@@ -18,7 +18,7 @@
 
 <main class="wrap">
 
-<p class="notice"><strong>Work in progress.</strong> packslip is a draft, not a standard. Nothing depends on it yet, and it is not certain that mise or Omarchy ever will. The format and the tooling still change between releases, so expect breaking changes until it is declared stable.</p>
+<p class="notice"><strong>Work in progress.</strong> packslip is a draft, not a standard. mise ships experimental support for it, but the format and the tooling still change between releases, so use it for testing and nothing you depend on. Whether Omarchy adopts it is undecided. Expect breaking changes until it is declared stable.</p>
 
 <div class="hero">
   <div>
@@ -233,7 +233,7 @@ packslip releases --project mytool.example.com \
     </div>
     <div>
       <h3>mise</h3>
-      <p>mise's own release workflow is meant to be the first publisher and the reference. Its <code>github</code> and <code>http</code> backends would verify a packslip when a release has one and record the result in <code>mise.lock</code>, so a tool that ships a packslip needs no registry entry.</p>
+      <p>mise has experimental support. Its <code>github</code> and <code>http</code> backends verify a packslip when a release ships one and record the result in <code>mise.lock</code>, so such a tool needs no registry entry. mise's own release workflow is meant to be the reference publisher. Until the spec is stable, treat all of this as something to test with, not to depend on.</p>
     </div>
     <div>
       <h3>Everyone else</h3>
