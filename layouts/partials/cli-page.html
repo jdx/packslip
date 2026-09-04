@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+{{ $pageTitle := "packslip CLI reference" }}
+{{ $description := "Command-line reference for packslip." }}
+{{ if not .IsSection }}
+  {{ $pageTitle = printf "packslip %s — CLI reference" .File.ContentBaseName }}
+  {{ $description = printf "Command-line reference for packslip %s." .File.ContentBaseName }}
+{{ end }}
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ $pageTitle }}</title>
+<meta name="description" content="{{ $description }}">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+{{ partial "header.html" . }}
+
+<main class="wrap doc">
+  <aside class="toc">
+    <div class="toc-group">
+      <div class="toc-title">CLI reference</div>
+      <ul>
+        {{ $current := .RelPermalink }}
+        {{ with site.GetPage "/cli" }}
+          <li><a{{ if eq $current .RelPermalink }} class="active"{{ end }} href="{{ .RelPermalink }}">Overview</a></li>
+          {{ range .RegularPagesRecursive }}
+            <li><a{{ if eq $current .RelPermalink }} class="active"{{ end }} href="{{ .RelPermalink }}">packslip {{ .File.ContentBaseName }}</a></li>
+          {{ end }}
+        {{ end }}
+      </ul>
+    </div>
+    {{ if .TableOfContents }}
+      <div class="toc-group">
+        <div class="toc-title">On this page</div>
+        {{ .TableOfContents }}
+      </div>
+    {{ end }}
+  </aside>
+
+  <article class="prose" style="max-width:none">
+    {{ .Content }}
+  </article>
+</main>
+
+<footer class="wrap">
+  <span>packslip · version 1, draft · MIT licensed · by <a href="https://github.com/jdx">Jeff Dickey (@jdx)</a></span>
+  <nav>
+    <a href="/">Overview</a>
+    <a href="/release/v1/">Spec</a>
+    <a href="https://github.com/jdx/packslip">GitHub</a>
+  </nav>
+</footer>
+
+</body>
+</html>

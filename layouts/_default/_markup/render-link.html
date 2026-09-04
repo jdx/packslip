@@ -1,0 +1,5 @@
+{{- $destination := .Destination -}}
+{{- if and (hasPrefix $destination "/cli/") (hasSuffix $destination ".md") -}}
+  {{- $destination = printf "%s/" (strings.TrimSuffix ".md" $destination) -}}
+{{- end -}}
+<a href="{{ $destination | safeURL }}"{{ with .Title }} title="{{ . }}"{{ end }}>{{ .Text | safeHTML }}</a>
