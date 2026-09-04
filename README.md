@@ -86,6 +86,10 @@ GUI type, since the entries say which a release is.
 - `src/`, `tests/` — the `packslip` crate: schema, generator, verifier.
 - `action.yml` — the composite GitHub Action.
 - `docs/spec/packslip.md` — the specification's canonical text.
-- `site/` — packslip.dev, served by GitHub Pages.
+- `content/`, `layouts/`, `static/` — the Hugo source for packslip.dev, served by GitHub Pages.
+
+Run `mise x hugo@0.165.0 -- hugo server` to preview the site locally. The
+Pages workflow fetches the current GitHub star count into `data/github.json`
+before building, so visitors receive it in the rendered HTML.
 
 MIT licensed.
