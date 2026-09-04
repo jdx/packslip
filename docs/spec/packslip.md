@@ -3,6 +3,8 @@
 Version 1, draft. Predicate types `https://packslip.dev/release/v1` and
 `https://packslip.dev/releases/v1`.
 
+Author: Jeff Dickey ([@jdx](https://github.com/jdx)).
+
 ## Goal
 
 A vendor publishes one signed, machine-readable document per release that
