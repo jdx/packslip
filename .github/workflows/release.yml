@@ -287,7 +287,9 @@ jobs:
   list:
     needs: release
     uses: ./.github/workflows/packslip-releases.yml
-    secrets: inherit
+    secrets:
+      CLOUDFLARE_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_ACCESS_KEY_ID }}
+      CLOUDFLARE_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_SECRET_ACCESS_KEY }}
     permissions:
       contents: read
       id-token: write
@@ -338,7 +340,9 @@ jobs:
   backfill-list:
     needs: backfill
     uses: ./.github/workflows/packslip-releases.yml
-    secrets: inherit
+    secrets:
+      CLOUDFLARE_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_ACCESS_KEY_ID }}
+      CLOUDFLARE_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_SECRET_ACCESS_KEY }}
     permissions:
       contents: read
       id-token: write

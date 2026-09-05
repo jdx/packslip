@@ -7,6 +7,11 @@ name: packslip-releases
 # withdraws a release or marks one a security fix.
 on:
   workflow_call:
+    secrets:
+      CLOUDFLARE_ACCESS_KEY_ID:
+        required: true
+      CLOUDFLARE_SECRET_ACCESS_KEY:
+        required: true
   schedule:
     - cron: "0 6 * * 1"
   workflow_dispatch:
