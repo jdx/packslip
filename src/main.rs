@@ -37,6 +37,7 @@ pub fn bundle_name(project: &str) -> String {
 /// document listing every artifact. Consumers verify it with `packslip
 /// verify` against a pinned identity or key. See https://packslip.dev.
 #[derive(usage_rs::Cli)]
+#[usage(completion = true)]
 #[usage(
     name = "packslip",
     bin = "packslip",
@@ -52,6 +53,7 @@ struct Cli {
 #[derive(usage_rs::Subcommands)]
 #[usage(run_with)]
 enum Commands {
+    Completion(Completion),
     Create(Box<Create>),
     Keygen(Keygen),
     Releases(Box<Releases>),
@@ -61,6 +63,25 @@ enum Commands {
     Usage(Usage),
     Verify(Verify),
     Version(Version),
+}
+
+/// Generate a self-contained shell completion script
+#[derive(Debug, usage_rs::Args)]
+struct Completion {
+    /// Shell: bash, zsh, fish, or powershell
+    #[usage(arg)]
+    shell: String,
+}
+
+impl RunWith<BinInfo> for Completion {
+    type Output = Result<()>;
+
+    fn run_with(self, _: BinInfo) -> Self::Output {
+        let shell = usage_rs::complete::Shell::from_name(&self.shell)
+            .ok_or_else(|| eyre::eyre!("unsupported shell: {}", self.shell))?;
+        print!("{}", Cli::completion_script(shell));
+        Ok(())
+    }
 }
 
 /// Generate a usage spec for the CLI
@@ -1289,6 +1310,10 @@ impl RunWith<BinInfo> for Verify {
 fn main() -> Result<()> {
     color_eyre::install()?;
     let args: Vec<_> = std::env::args_os().collect();
+    if let Some(answer) = Cli::completion_request(&args[1..]) {
+        print!("{answer}");
+        return Ok(());
+    }
     let argv = packslip::cli::argv(&args);
     let cli = packslip::cli::unwrap_or_exit(Cli::spec(), &argv, Cli::parse_from_argv(&argv));
     match cli.command {

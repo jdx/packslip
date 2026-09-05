@@ -219,8 +219,19 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: Include the CLI specification
-        run: cp packslip.usage.kdl dist/packslip.usage.kdl
+      - name: Generate the CLI specification and completions
+        run: |
+          set -euo pipefail
+          mkdir -p bin
+          tar -xJf "dist/packslip-${GITHUB_REF_NAME}-linux-x64.tar.xz" --strip-components=1 -C bin
+          bin/packslip usage > dist/packslip.usage.kdl
+          for shell in bash zsh fish powershell; do
+            bin/packslip completion "$shell" > "dist/packslip.$shell"
+            test -s "dist/packslip.$shell"
+            grep -Fq '__complete_word__' "dist/packslip.$shell"
+            bin/packslip __complete_word__ --shell "$shell" --line 'packslip ver' | grep -Fq -- 'verify'
+          done
+          bash -n dist/packslip.bash
       - name: Attest the release files
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:

@@ -33,6 +33,14 @@ for f in dist/*; do
   digest=$(sha256sum "$f" | cut -d' ' -f1)
   args+=(--provenance "${f##*/}=${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/attestations/sha256:${digest}")
 done
+# Older releases being backfilled may have only the CLI specification.
+completion_artifacts=()
+for shell in bash zsh fish powershell; do
+  if [ -f "dist/packslip.$shell" ]; then
+    args+=(--resource "completion/$shell=asset:dist/packslip.$shell")
+    completion_artifacts+=(--artifact "dist/packslip.$shell")
+  fi
+done
 packslip create \
   --project "$host" \
   --version "$version" \
@@ -50,7 +58,8 @@ packslip verify packslip/packslip.sigstore.json \
   --identity-prefix "https://github.com/${GITHUB_REPOSITORY}/" \
   --issuer https://token.actions.githubusercontent.com \
   --artifact "dist/packslip-v${version}-linux-x64.tar.xz" \
-  --artifact dist/packslip.usage.kdl
+  --artifact dist/packslip.usage.kdl \
+  "${completion_artifacts[@]}"
 
 # The files first and the bundle last: a release is only discoverable once
 # its list names the bundle, and the bundle only lands when everything it
