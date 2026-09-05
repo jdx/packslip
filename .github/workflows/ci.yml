@@ -159,3 +159,48 @@ jobs:
           test "$COUNT" = 1
           ./target/release/packslip show "$LIST" \
             | jq -e '.predicate.project == "ci.packslip.invalid" and (.predicate.releases | length == 1)' >/dev/null
+
+  # Aggregator that required-status-checks can target. If any upstream job
+  # failed, was cancelled, or was unexpectedly skipped, this step exits non-zero
+  # so the PR is blocked. Lets the branch-protection rule depend on one name
+  # instead of N.
+  final:
+    needs:
+      - signing
+      - test
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    # Run on success or upstream failure but skip when the workflow is cancelled
+    # — `always()` would override `cancel-in-progress` and waste a runner.
+    if: ${{ !cancelled() }}
+    steps:
+      - name: Gate on upstream job results
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          # `signing` only runs on a push, where id-token is available; being
+          # skipped on a pull request is expected, not a failure.
+          ALLOW_SKIPPED = {"signing"}
+
+          needs = json.loads(os.environ["NEEDS_JSON"])
+          failed = False
+          for name, data in sorted(needs.items()):
+              result = data.get("result", "unknown")
+              if result == "success" or (result == "skipped" and name in ALLOW_SKIPPED):
+                  print(f"::notice::{name}: {result}")
+              else:
+                  print(f"::error::{name}: {result}")
+                  failed = True
+
+          if failed:
+              print("One or more upstream jobs did not complete successfully.")
+              sys.exit(1)
+
+          print("All CI jobs completed successfully.")
+          PY
