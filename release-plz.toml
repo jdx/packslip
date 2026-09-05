@@ -9,7 +9,11 @@ git_tag_name = "v{{ version }}"
 # is registered for jdx/packslip's release-plz.yml, so the release job mints
 # a short-lived token through OIDC and needs no stored credential.
 publish = true
-# A binary crate: its library API is not a compatibility promise.
-semver_check = false
+# Not only a binary crate any more: a consumer that just verifies takes
+# the library with `default-features = false`. From 1.0.0 the Rust API is
+# covered by the crate's version, so cargo-semver-checks gates the bump.
+# The format's own version is fixed at 1 and is not this number; see the
+# specification's Stability section.
+semver_check = true
 # release-plz ignores cliff.toml unless told about it.
 changelog_config = "cliff.toml"

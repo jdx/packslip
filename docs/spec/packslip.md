@@ -1,6 +1,6 @@
 # packslip: a signed release manifest
 
-Version 1, draft. Predicate types `https://packslip.dev/release/v1` and
+Version 1. Predicate types `https://packslip.dev/release/v1` and
 `https://packslip.dev/releases/v1`.
 
 Author: Jeff Dickey ([@jdx](https://github.com/jdx)).
@@ -20,6 +20,7 @@ for readability; those placeholders are not valid release data.
 - [Release data](#the-release-statement): artifacts, resources, and requirements.
 - [Discovery](#discovery) and [versions](#versions): finding and selecting releases.
 - [Consumer rules](#consumer-rules): verification, remembered trust, and installation.
+- [Stability](#stability): what version 1 fixes and what a revision may add.
 - [Tooling](#tooling): the reference implementation and task guides.
 
 ## Goal
@@ -1019,6 +1020,51 @@ continuity, no-downgrade policy, and release-list sequences across installs.
    resource you cannot fetch is reported, not fatal; one whose digest is
    not the one the document signed fails the install.
 
+## Stability
+
+This document is final for version 1. The predicate types
+`https://packslip.dev/release/v1` and `https://packslip.dev/releases/v1`
+name it, and a document that verifies under them today keeps verifying
+under them for as long as its signing material holds.
+
+Version 1 fixes:
+
+- The meaning of every field defined here. A field is never redefined,
+  narrowed, or given a different default.
+- Field names and types, and the vocabularies that constrain them.
+- The rules that decide which release and which artifact a consumer
+  installs: [Versions](#versions), [Discovery](#discovery),
+  [Selecting an artifact](#selecting-an-artifact), [Resources](#resources),
+  [Host requirements](#host-requirements), and
+  [Consumer rules](#consumer-rules).
+- That this specification assigns no meaning to anything under
+  [`extensions`](#extensions), and never will.
+
+A later revision of version 1 may:
+
+- Add an optional field at any level. Consumers ignore fields they do not
+  know, so an older consumer reads a newer document correctly and a newer
+  consumer reads an older one.
+- Add a member to a vocabulary — a resource kind, an evidence kind, a
+  format, an OS or architecture token. A consumer ignores a member it does
+  not know, except where a rule here says otherwise.
+- Settle wording that was ambiguous, where implementations already agreed
+  on the reading, and add examples or guidance.
+
+Anything outside those bounds is version 2: removing a field, making an
+optional field required, or changing what a rule selects. Version 2 gets
+its own predicate type, published beside this one, and a consumer may
+accept both. No revision of this document invalidates a release already
+signed under `release/v1`, and nothing obliges a vendor to move.
+
+Two versions are in play and they are not the same number. The format is
+version 1, as the predicate types say. The reference implementation is a
+crate, a CLI, and an action that share one semver version of their own;
+that version may reach 2 while the format stays at 1. The
+[conformance vectors](https://github.com/jdx/packslip/tree/main/tests/conformance)
+are the executable form of the rules above: an implementation that
+disagrees with a vector disagrees with this specification.
+
 ## Tooling
 
 The [packslip repository](https://github.com/jdx/packslip) contains the
@@ -1036,6 +1082,7 @@ persistent policy around those operations.
 | Generate an Ed25519 key | [Getting started](https://packslip.dev/docs/getting-started/#create-a-sample-release) | [keygen](https://packslip.dev/cli/keygen/) |
 | Publish discovery metadata | [Release lists](https://packslip.dev/docs/release-lists/) | [releases](https://packslip.dev/cli/releases/) |
 | Export JSON schemas | [Documentation](https://packslip.dev/docs/#reference) | [schema](https://packslip.dev/cli/schema/) |
+| Check another implementation | [Conformance vectors](https://github.com/jdx/packslip/tree/main/tests/conformance) | — |
 
 The CLI reference is generated from command help. The specification page
 is generated from this file; see

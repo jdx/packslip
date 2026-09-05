@@ -504,6 +504,7 @@
       "type": "object"
     }
   },
+  "$id": "https://packslip.dev/schema/release-v1.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "An in-toto statement carrying predicate `P`.",
   "properties": {

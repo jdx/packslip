@@ -75,4 +75,5 @@ predicates, signing schemes, and consumer rules. The
 
 packslip is developed by [Jeff Dickey](https://github.com/jdx), author of
 [mise](https://mise.jdx.dev) and [usage](https://usage.jdx.dev).
-[Feedback on the draft](https://github.com/jdx/packslip/issues) is welcome.
+The format is stable at [version 1](/release/v1/#stability).
+[Feedback](https://github.com/jdx/packslip/issues) is welcome.
