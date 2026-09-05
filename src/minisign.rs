@@ -143,6 +143,7 @@ impl PublicKey {
 
 impl SecretKey {
     /// A fresh random key.
+    #[cfg(feature = "sign")]
     pub fn generate() -> SecretKey {
         let mut seed = [0u8; 32];
         getrandom::fill(&mut seed).expect("the OS provides randomness");

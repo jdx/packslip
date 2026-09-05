@@ -29,6 +29,10 @@ jobs:
       - run: cargo clippy --all-features --all-targets -- -D warnings
       - run: cargo build --all-features
       - run: cargo test --all-features
+      # A consumer that only verifies takes the crate with no default
+      # features; keep that build compiling and its tests passing.
+      - run: cargo clippy --no-default-features --all-targets -- -D warnings
+      - run: cargo test --no-default-features
       - run: mise run render
       - run: usage lint packslip.usage.kdl
       - run: mise run docs:check

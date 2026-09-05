@@ -9,20 +9,31 @@
 //! Ed25519 key, and either way logged to Rekor ([`sigstore`]). The same
 //! shape carries a project's release list. This crate holds the schema,
 //! the verifier, and the generator. See <https://packslip.dev/release/v1/>.
+//!
+//! Everything is on by default. A consumer that only verifies takes the
+//! crate with `default-features = false`, which keeps [`model`], [`verify`],
+//! and [`sigstore`] and drops the archive readers, the executable decoder,
+//! the signing path, and the CLI.
 
 #![forbid(unsafe_code)]
 
+#[cfg(feature = "archive")]
 pub mod archive;
+#[cfg(feature = "cli")]
 pub mod cli;
+#[cfg(feature = "create")]
 pub mod create;
 pub mod dsse;
+#[cfg(feature = "linkage")]
 pub mod linkage;
+#[cfg(feature = "manifest")]
 pub mod manifest;
 pub mod minisign;
 pub mod model;
 pub mod sigstore;
 pub mod verify;
 
+#[cfg(feature = "manifest")]
 pub use manifest::Manifest;
 pub use model::{
     Artifact, Attestor, Bin, Evidence, Host, Identity, Predicate, ReleaseList,
@@ -30,7 +41,9 @@ pub use model::{
     ResourceSource, Scheme, Selection, Source, Statement, Subject, command_name, github_list_path,
     list_url, select_artifact, select_resources, tag_version,
 };
-pub use sigstore::{Policy, Signer, Trust};
+#[cfg(feature = "sign")]
+pub use sigstore::Signer;
+pub use sigstore::{Policy, Trust};
 pub use verify::{Options, Verified, VerifiedList, verify, verify_release_list};
 
 /// The sha256 of a file, lowercase hex, and its size.

@@ -2,6 +2,7 @@
 //! release shipped (`release/v1`) and which releases a project has
 //! (`releases/v1`). See `docs/spec/packslip.md`.
 
+#[cfg(feature = "schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -17,7 +18,8 @@ pub const RELEASES_PREDICATE_TYPE: &str = "https://packslip.dev/releases/v1";
 pub type Extensions = serde_json::Map<String, serde_json::Value>;
 
 /// An in-toto statement carrying predicate `P`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct Envelope<P> {
     #[serde(rename = "_type")]
     pub kind: String,
@@ -34,21 +36,23 @@ pub type Statement = Envelope<Predicate>;
 /// A project's recent releases, for discovery.
 pub type ReleaseListStatement = Envelope<ReleaseList>;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct Subject {
     pub name: String,
     pub digest: Digest,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct Digest {
     /// Lowercase hex.
-    #[schemars(regex(pattern = r"^[0-9a-f]{64}$"))]
+    #[cfg_attr(feature = "schema", schemars(regex(pattern = r"^[0-9a-f]{64}$")))]
     pub sha256: String,
     /// Lowercase hex, for consumers that want it (electron-updater,
     /// Balrog, Scoop).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(regex(pattern = r"^[0-9a-f]{128}$"))]
+    #[cfg_attr(feature = "schema", schemars(regex(pattern = r"^[0-9a-f]{128}$")))]
     pub sha512: Option<String>,
 }
 
@@ -125,7 +129,8 @@ pub fn valid_token(value: &str) -> bool {
         })
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct Predicate {
     /// The project's name: a host path such as `github.com/jdx/mise` or
     /// `mise.jdx.dev`. The host is where a
@@ -137,10 +142,10 @@ pub struct Predicate {
     /// part, if any, marks a prerelease, and the first identifier of that
     /// part names the channel: see [`channel`]. On a forge, the release
     /// tag names this version: see [`tag_version`].
-    #[schemars(regex(pattern = SEMVER_PATTERN))]
+    #[cfg_attr(feature = "schema", schemars(regex(pattern = SEMVER_PATTERN)))]
     pub version: String,
     /// RFC 3339 UTC.
-    #[schemars(extend("format" = "date-time"))]
+    #[cfg_attr(feature = "schema", schemars(extend("format" = "date-time")))]
     pub published_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<Source>,
@@ -167,7 +172,8 @@ pub struct Predicate {
 }
 
 /// Who signed the claim.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub enum Attestor {
     /// The project's own publisher.
@@ -457,7 +463,8 @@ pub fn select_artifact<'a>(
 /// Documented kinds: `pkgbuild-checksums`, `checksum-file-over-tls`,
 /// `apt-release-gpg`, `vendor-signature`, `vendor-packslip`,
 /// `github-attestation`, `provenance-verified`, `scan`, `none`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct Evidence {
     pub kind: String,
     /// A key id, URL, or note that lets a reader check the claim: the
@@ -466,7 +473,8 @@ pub struct Evidence {
     pub detail: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct Source {
     pub repo: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -475,31 +483,32 @@ pub struct Source {
     pub tag: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct Artifact {
     pub name: String,
     /// `linux`, `darwin`, `windows`, `freebsd`, `netbsd`, `openbsd`,
     /// `illumos`, `android`, `ios`. Absent when the artifact runs on any
     /// OS.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(regex(pattern = TOKEN_PATTERN))]
+    #[cfg_attr(feature = "schema", schemars(regex(pattern = TOKEN_PATTERN)))]
     pub os: Option<String>,
     /// `x86_64`, `aarch64`, `armv7`, `armv6`, `riscv64`, `i686`,
     /// `powerpc64le`, `s390x`, `loongarch64`. Absent when the artifact
     /// runs on any architecture.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(regex(pattern = TOKEN_PATTERN))]
+    #[cfg_attr(feature = "schema", schemars(regex(pattern = TOKEN_PATTERN)))]
     pub arch: Option<String>,
     /// `gnu` or `musl`, for a Linux build. Absent when the artifact does
     /// not depend on one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(regex(pattern = TOKEN_PATTERN))]
+    #[cfg_attr(feature = "schema", schemars(regex(pattern = TOKEN_PATTERN)))]
     pub libc: Option<String>,
     /// Tells apart builds that share os, arch, and libc: `fips`,
     /// `baseline`, `debug`, `installer`, `source`. A consumer selects only
     /// artifacts without a variant unless asked for one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(regex(pattern = TOKEN_PATTERN))]
+    #[cfg_attr(feature = "schema", schemars(regex(pattern = TOKEN_PATTERN)))]
     pub variant: Option<String>,
     pub size: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -511,7 +520,7 @@ pub struct Artifact {
     /// artifacts that differ only in format carry the same build, and a
     /// consumer takes whichever it prefers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(regex(pattern = TOKEN_PATTERN))]
+    #[cfg_attr(feature = "schema", schemars(regex(pattern = TOKEN_PATTERN)))]
     pub format: Option<String>,
     /// Executables inside the artifact, as paths relative to the archive
     /// root, or the artifact's own name (minus any compression suffix)
@@ -533,7 +542,8 @@ pub struct Artifact {
 
 /// An executable inside an artifact. Serialises as the bare path when the
 /// PATH name is the file's own name, else as `{ "path", "name" }`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(from = "BinRepr", into = "BinRepr")]
 pub struct Bin {
     /// Path inside the archive, relative to its root.
@@ -580,7 +590,8 @@ pub fn command_name(name: &str) -> &str {
     }
 }
 
-#[derive(Serialize, Deserialize, JsonSchema)]
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(untagged)]
 enum BinRepr {
     Path(String),
@@ -614,7 +625,8 @@ impl From<Bin> for BinRepr {
 /// defines, so a consumer can check before installing. Nothing here names
 /// another project or where to get it; see the specification's Host
 /// requirements section.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct Requires {
     /// Minimum OS version, in the OS's own terms: `12` for macOS Monterey,
     /// `10.0.17763` for Windows.
@@ -672,7 +684,8 @@ impl Requires {
 }
 
 /// A command an executable needs on PATH.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct RequiredBin {
     /// The name as the executable invokes it, bare: `java`, `python3`,
     /// `git`. No directory and no `.exe`.
@@ -737,7 +750,8 @@ fn valid_min_version(min: &str) -> bool {
 /// `repo`, and `exec` says where it comes from. Documented kinds:
 /// `completion`, `man`, `cli-spec`, `skill`, `desktop`, `icon`, `app`,
 /// `sbom`. Consumers ignore kinds they do not know.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct Resource {
     pub kind: String,
     /// Exact artifact name. More specific than any platform-only scope.
@@ -746,15 +760,15 @@ pub struct Resource {
     /// Limits the entry to artifacts of this `os`, when layouts differ by
     /// platform. Absent means any artifact. See [`resource_fits`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(regex(pattern = TOKEN_PATTERN))]
+    #[cfg_attr(feature = "schema", schemars(regex(pattern = TOKEN_PATTERN)))]
     pub os: Option<String>,
     /// Likewise for `arch`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(regex(pattern = TOKEN_PATTERN))]
+    #[cfg_attr(feature = "schema", schemars(regex(pattern = TOKEN_PATTERN)))]
     pub arch: Option<String>,
     /// Likewise for `libc`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(regex(pattern = TOKEN_PATTERN))]
+    #[cfg_attr(feature = "schema", schemars(regex(pattern = TOKEN_PATTERN)))]
     pub libc: Option<String>,
     /// For `completion` with a static source: the shell, such as `bash`,
     /// `zsh`, `fish`, `powershell`, `nushell`, `elvish`.
@@ -982,7 +996,8 @@ fn valid_relative_path(path: &str) -> bool {
 
 /// How the document is signed, so a consumer can check what it pinned
 /// against what it received.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct Identity {
     pub scheme: Scheme,
     /// For `sigstore-oidc`, the certificate's subject identity: the
@@ -995,7 +1010,8 @@ pub struct Identity {
     pub issuer: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub enum Scheme {
     /// A sigstore bundle signed keylessly with a workload or human OIDC
@@ -1018,7 +1034,8 @@ impl std::fmt::Display for Scheme {
 /// The `releases/v1` predicate: which releases a project has, so a
 /// consumer can find them without a registry, and cannot be shown a stale
 /// or truncated view without noticing.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct ReleaseList {
     pub project: String,
     /// When the list was produced, RFC 3339 UTC.
@@ -1032,7 +1049,7 @@ pub struct ReleaseList {
     /// The vendor's recommended default: an exact version in `releases`.
     /// Consumers still apply all eligibility checks before selecting it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(regex(pattern = SEMVER_PATTERN))]
+    #[cfg_attr(feature = "schema", schemars(regex(pattern = SEMVER_PATTERN)))]
     pub latest: Option<String>,
     /// In any order; consumers rank by semver precedence.
     pub releases: Vec<ReleaseRef>,
@@ -1042,16 +1059,17 @@ pub struct ReleaseList {
     pub extensions: Extensions,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct ReleaseRef {
-    #[schemars(regex(pattern = SEMVER_PATTERN))]
+    #[cfg_attr(feature = "schema", schemars(regex(pattern = SEMVER_PATTERN)))]
     pub version: String,
     /// The vendor's own spelling of the release, copied from the packslip's
     /// `source.tag`, so a consumer can accept a request in either form.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tag: Option<String>,
     /// RFC 3339 UTC, copied from the release's packslip.
-    #[schemars(extend("format" = "date-time"))]
+    #[cfg_attr(feature = "schema", schemars(extend("format" = "date-time")))]
     pub published_at: String,
     /// URL of the release's `packslip.sigstore.json`. The statement's
     /// subject of the same name carries that file's digest.
@@ -1077,7 +1095,8 @@ pub struct ReleaseRef {
     pub evidence: Vec<Evidence>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub enum ReleaseStatus {
     Yanked,
@@ -1613,6 +1632,7 @@ impl Statement {
     }
 
     /// The JSON schema for the document.
+    #[cfg(feature = "schema")]
     pub fn schema() -> serde_json::Value {
         serde_json::to_value(schemars::schema_for!(Statement)).expect("schema serialises")
     }
@@ -1668,6 +1688,7 @@ impl ReleaseListStatement {
     }
 
     /// The JSON schema for the document.
+    #[cfg(feature = "schema")]
     pub fn schema() -> serde_json::Value {
         serde_json::to_value(schemars::schema_for!(ReleaseListStatement))
             .expect("schema serialises")
@@ -2436,8 +2457,11 @@ mod tests {
         let mut bad = sample_list();
         bad.predicate.releases.clear();
         assert_eq!(bad.validate(), Err(InvalidDocument::NoReleases));
-        let schema = ReleaseListStatement::schema();
-        assert!(schema["properties"]["predicate"].is_object());
+        #[cfg(feature = "schema")]
+        {
+            let schema = ReleaseListStatement::schema();
+            assert!(schema["properties"]["predicate"].is_object());
+        }
     }
 
     #[test]
@@ -3235,6 +3259,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "schema")]
     fn schema_has_the_required_fields() {
         let schema = Statement::schema();
         let required = schema["required"].as_array().unwrap();

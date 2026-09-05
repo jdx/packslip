@@ -8,20 +8,26 @@ use std::borrow::Cow;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD as BASE64, URL_SAFE_NO_PAD};
+#[cfg(feature = "sign")]
 use ed25519_dalek::Signer as _;
 use sha2::Digest as _;
+#[cfg(feature = "sign")]
 use sigstore_bundle::{BundleV03, TlogEntryBuilder, VerificationMaterialV03};
+#[cfg(feature = "sign")]
 use sigstore_oidc::IdentityToken;
+#[cfg(feature = "sign")]
 use sigstore_rekor::{DsseEntry, RekorClient};
+#[cfg(feature = "sign")]
 use sigstore_sign::SigningContext;
 use sigstore_trust_root::{SIGSTORE_PRODUCTION_TRUSTED_ROOT, TrustedRoot};
-use sigstore_types::{
-    Artifact, Bundle, DerPublicKey, DsseEnvelope, DsseSignature, KeyId, PayloadBytes, Sha256Hash,
-    SignatureBytes, SignatureContent,
-};
+use sigstore_types::{Artifact, Bundle, DerPublicKey, Sha256Hash, SignatureContent};
+#[cfg(feature = "sign")]
+use sigstore_types::{DsseEnvelope, DsseSignature, KeyId, PayloadBytes, SignatureBytes};
 use sigstore_verify::VerificationPolicy;
 
-use crate::minisign::{PublicKey, SecretKey, key_id_hex};
+#[cfg(feature = "sign")]
+use crate::minisign::SecretKey;
+use crate::minisign::{PublicKey, key_id_hex};
 
 pub const GITHUB_ISSUER: &str = "https://token.actions.githubusercontent.com";
 pub const GITLAB_ISSUER: &str = "https://gitlab.com";
@@ -71,6 +77,7 @@ pub enum Error {
     NoPolicy(String),
 }
 
+#[cfg(feature = "sign")]
 fn runtime() -> Result<tokio::runtime::Runtime, Error> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -80,6 +87,7 @@ fn runtime() -> Result<tokio::runtime::Runtime, Error> {
 
 /// An OIDC identity ready to sign with, and what Fulcio will put in the
 /// certificate for it.
+#[cfg(feature = "sign")]
 pub struct OidcIdentity {
     token: IdentityToken,
     /// The certificate subject identity: a workflow URI for CI, an email
@@ -88,6 +96,7 @@ pub struct OidcIdentity {
     pub issuer: String,
 }
 
+#[cfg(feature = "sign")]
 impl std::fmt::Debug for OidcIdentity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OidcIdentity")
@@ -97,6 +106,7 @@ impl std::fmt::Debug for OidcIdentity {
     }
 }
 
+#[cfg(feature = "sign")]
 impl OidcIdentity {
     fn from_token(token: IdentityToken) -> Result<OidcIdentity, Error> {
         let identity = certificate_identity(token.raw())?;
@@ -110,6 +120,7 @@ impl OidcIdentity {
 
 /// The identity from `SIGSTORE_ID_TOKEN`, or the ambient CI credential
 /// (GitHub Actions, GitLab CI, Buildkite, and the others sigstore knows).
+#[cfg(feature = "sign")]
 pub fn ambient_identity() -> Result<OidcIdentity, Error> {
     if let Ok(raw) = std::env::var(TOKEN_ENV)
         && !raw.trim().is_empty()
@@ -163,6 +174,7 @@ pub fn certificate_identity(jwt: &str) -> Result<String, Error> {
 }
 
 /// Who signs.
+#[cfg(feature = "sign")]
 pub enum Signer {
     /// Keyless, with an OIDC identity.
     Oidc(OidcIdentity),
@@ -172,6 +184,7 @@ pub enum Signer {
     Key { key: SecretKey, log: bool },
 }
 
+#[cfg(feature = "sign")]
 impl Signer {
     /// The `identity` block a document signed by this signer declares.
     pub fn identity(&self) -> crate::model::Identity {
@@ -201,6 +214,7 @@ pub fn spki_der(key: &PublicKey) -> Vec<u8> {
     der
 }
 
+#[cfg(feature = "sign")]
 fn spki_pem(key: &PublicKey) -> String {
     let b64 = BASE64.encode(spki_der(key));
     let mut pem = String::from("-----BEGIN PUBLIC KEY-----\n");
@@ -220,6 +234,7 @@ pub fn key_hint(key: &PublicKey) -> String {
 
 /// Sign `statement` (the payload bytes) into a sigstore bundle, returned
 /// as JSON.
+#[cfg(feature = "sign")]
 pub fn sign(signer: Signer, statement: &[u8]) -> Result<String, Error> {
     let rt = runtime()?;
     let bundle = match signer {
@@ -575,6 +590,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "sign")]
     fn key_signed_bundles_round_trip_unlogged() {
         let root = trusted_root(None).unwrap();
         let key = SecretKey::from_seed([7u8; 32]);
@@ -618,6 +634,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "sign")]
     fn spki_and_hint_are_stable() {
         let key = SecretKey::from_seed([1u8; 32]).public_key();
         let der = spki_der(&key);
