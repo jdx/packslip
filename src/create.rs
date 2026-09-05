@@ -285,6 +285,21 @@ pub fn infer_platform(name: &str) -> Platform {
     (os, arch, libc, format)
 }
 
+/// Whether a file name ends in something that reads as an extension: a
+/// short alphanumeric tail after the last dot with a letter in it. A
+/// dotted version leaves a tail of its own, so `tool-1.2.3-linux-x64` is
+/// a bare executable rather than a file of type `3-linux-x64`, and
+/// `tool-linux-x64-1.2.3` is not one of type `3`. Every documented format
+/// clears the bar: the longest is `appimage`, and `7z` is the only one
+/// that starts with a digit.
+fn has_extension(name: &str) -> bool {
+    name.rsplit_once('.').is_some_and(|(_, ext)| {
+        ext.len() <= 9
+            && ext.chars().all(|c| c.is_ascii_alphanumeric())
+            && ext.chars().any(|c| c.is_ascii_alphabetic())
+    })
+}
+
 /// Add `.exe` to a Windows executable name that has no extension.
 fn windows_exe(value: &str) -> String {
     let last = value.rsplit('/').next().unwrap_or(value);
@@ -338,16 +353,17 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
         };
         // A file with no archive or installer extension is the executable
         // itself, when the name says which host it is for or the vendor
-        // said it runs anywhere.
+        // said it runs anywhere. The tail after the last dot only counts
+        // as an extension when it looks like one: a released binary is
+        // often named for a dotted version, and `mise-v2026.9.1-linux-x64`
+        // ends in `1-linux-x64`, which is a platform, not a format.
         let format = input
             .format
             .clone()
             .or_else(|| inferred_format.map(str::to_string))
             .or_else(|| {
-                let has_extension = name
-                    .rsplit_once('.')
-                    .is_some_and(|(_, ext)| !ext.is_empty());
-                (!has_extension && (os.is_some() || input.portable)).then(|| "raw".to_string())
+                (!has_extension(&name) && (os.is_some() || input.portable))
+                    .then(|| "raw".to_string())
             });
         let bare = format
             .as_deref()
@@ -1152,6 +1168,34 @@ mod tests {
         assert_eq!(arts[0].bin, [Bin::named("tool-universal", "tool")]);
         assert_eq!(arts[1].format.as_deref(), Some("raw"));
         assert_eq!(arts[1].bin, [Bin::named("tool-windows-x64", "tool.exe")]);
+
+        // A dotted version leaves a tail after the last dot that is not an
+        // extension, so a bare executable named for one is still `raw`.
+        let dotted = dir.path().join("tool-v1.2.3-linux-x64");
+        std::fs::write(&dotted, b"elf").unwrap();
+        let versioned = create(&request(
+            vec![input(&dotted, None, &["tool"], &[])],
+            None,
+            None,
+        ))
+        .unwrap();
+        let arts = &versioned.statement.predicate.artifacts;
+        assert_eq!(arts[0].format.as_deref(), Some("raw"));
+        assert_eq!(arts[0].bin, [Bin::named("tool-v1.2.3-linux-x64", "tool")]);
+
+        // The same when the version comes last and the tail is a bare
+        // number: `3` is no more an extension than `3-linux-x64` was.
+        let trailing = dir.path().join("tool-linux-x64-v1.2.3");
+        std::fs::write(&trailing, b"elf").unwrap();
+        let trailing = create(&request(
+            vec![input(&trailing, None, &["tool"], &[])],
+            None,
+            None,
+        ))
+        .unwrap();
+        let arts = &trailing.statement.predicate.artifacts;
+        assert_eq!(arts[0].format.as_deref(), Some("raw"));
+        assert_eq!(arts[0].bin, [Bin::named("tool-linux-x64-v1.2.3", "tool")]);
         // Two portable artifacts of one format are as ambiguous as two
         // builds for one platform.
         let other_script = dir.path().join("tool-anywhere");
