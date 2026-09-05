@@ -296,6 +296,16 @@ a package manager that installs into its own directory does not unpack
 them. A `.exe` that is the program itself is `raw`; `exe` means a
 Windows installer.
 
+Every artifact carries a `format`. Selecting an artifact keeps only the
+formats the consumer handles, and no consumer handles an absent one, so
+an artifact without it could never be selected: it would claim a place
+in the release while being unusable. A vendor whose file name says
+nothing states the format outright, and a file that is not an artifact
+at all -- a shared library, a header, a checksum sidecar -- is left out
+of `artifacts` rather than published as one. The value is not a closed
+set; a vendor may name a type this specification does not, and consumers
+skip what they cannot open.
+
 ### Field reference
 
 Required fields inside an optional object are required when that object is
@@ -325,7 +335,7 @@ include `repo`. Resource entries must choose exactly one source field.
 | `artifacts[].variant` | string | optional | Distinguishes builds sharing os, arch, and libc: `fips`, `baseline`, `debug`, `installer`, `source`. |
 | `artifacts[].size` | integer | required | File size in bytes. Verified alongside the digest. |
 | `artifacts[].url` | string | optional | Download URL. |
-| `artifacts[].format` | string | optional | Archive, compression, or installer type, or `raw` for a bare executable. |
+| `artifacts[].format` | string | required | Archive, compression, or installer type, or `raw` for a bare executable. |
 | `artifacts[].bin[]` | array of string or object | optional | Executables inside the artifact: a path from the archive root, or `{ path, name }` when the PATH name differs. A name is the command as typed, without `.exe`. |
 | `artifacts[].requires` | object | optional | What the host must provide. See Host requirements. |
 | `requires.os_min` | string | optional | Minimum OS version in the OS's own terms. |

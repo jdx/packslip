@@ -162,6 +162,10 @@ pub enum Error {
         b: String,
         platform: String,
     },
+    #[error(
+        "artifact {name:?}: nothing in the name says what kind of file it is; give it a format, or leave it out of the artifacts if it is not one"
+    )]
+    UnknownFormat { name: String },
 }
 
 /// The `(os, arch, libc, format)` a file name implies.
@@ -365,6 +369,14 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
                 (!has_extension(&name) && (os.is_some() || input.portable))
                     .then(|| "raw".to_string())
             });
+        // An artifact with no format is dead weight: rule 3 of Selecting
+        // an artifact keeps a consumer from ever choosing one, so it
+        // would ship a digest and a platform that nothing can act on.
+        // A library or a header swept up by a glob lands here.
+        let Some(format) = format else {
+            return Err(Error::UnknownFormat { name });
+        };
+        let format = Some(format);
         let bare = format
             .as_deref()
             .filter(|f| crate::model::is_bare_format(f))
@@ -1127,6 +1139,7 @@ mod tests {
                 },
                 ArtifactInput {
                     portable: true,
+                    format: Some("jar".into()),
                     ..ArtifactInput::new(&jar)
                 },
             ],
@@ -1141,7 +1154,29 @@ mod tests {
             (&arts[1].os, &arts[1].arch, &arts[1].libc),
             (&None, &None, &None)
         );
-        assert_eq!(arts[1].format, None);
+        assert_eq!(arts[1].format.as_deref(), Some("jar"));
+
+        // `.jar` is no format the name inference knows, and running it is
+        // not something a consumer could guess, so without that override
+        // the file is refused rather than published unusable. A header or
+        // a shared library swept up by an artifacts glob lands here too.
+        let header = dir.path().join("tool.h");
+        std::fs::write(&header, b"#pragma once").unwrap();
+        for path in [&jar, &header] {
+            let err = create(&request(
+                vec![ArtifactInput {
+                    portable: true,
+                    ..ArtifactInput::new(path)
+                }],
+                None,
+                None,
+            ))
+            .unwrap_err();
+            assert!(
+                matches!(err, Error::UnknownFormat { .. }),
+                "{path:?}: {err}"
+            );
+        }
 
         // A portable file with no extension is still a bare executable, and
         // a bare Windows file without .exe keeps its exact name as the path.

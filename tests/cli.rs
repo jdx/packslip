@@ -79,6 +79,10 @@ fn keygen_create_verify_show_and_list() {
             "2026-09-01T00:00:00Z",
             "--bin",
             "tool",
+            // Nothing in `weird.bin` says what kind of file it is, so the
+            // vendor says.
+            "--format",
+            "weird.bin=raw",
             "tool-v1.2.3-linux-x64.tar.xz",
             "tool-v1.2.3-darwin-arm64.tar.xz",
             "weird.bin:freebsd/riscv64",

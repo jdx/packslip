@@ -26,6 +26,7 @@ Examples and configuration: https://packslip.dev/docs/describing-releases/
   **Default:** `.`
 - **`--url-base <URL_BASE>`** — Download URL prefix for the artifacts
 - **`--url <URL>`** — Download URL for one artifact or resource asset, as FILENAME=URL (repeatable)
+- **`--format <FORMAT>`** — Format of one artifact whose name does not say, as FILENAME=FORMAT: an archive (tar.xz, tar.gz, tar.zst, tar.bz2, tgz, tar, zip, 7z), a single compressed executable (gz, xz, zst, bz2), an installer (deb, rpm, dmg, pkg, msi, msix, exe, appimage), raw for a bare executable, or a type of your own (repeatable)
 - **`--source-repo <SOURCE_REPO>`** — Source repository URL
 - **`--commit <COMMIT>`** — Source commit
 - **`--tag <TAG>`** — Source tag

@@ -55,6 +55,14 @@ inputs:
       whitespace separated (tool-fips-linux-x64.tar.gz=fips).
     required: false
     default: ""
+  formats:
+    description: >
+      The format of an artifact whose name does not say, as FILENAME=FORMAT,
+      whitespace separated (tool-linux-x64.bin=raw). Every artifact needs
+      one; the name gives it for the usual archive, installer, and bare
+      executable spellings, and this is for the rest.
+    required: false
+    default: ""
   resources:
     description: >
       What ships besides the executables, one per line, each a `packslip
@@ -246,6 +254,7 @@ runs:
         IN_BIN: ${{ inputs.bin }}
         IN_MANIFEST: ${{ inputs.manifest }}
         IN_VARIANTS: ${{ inputs.variants }}
+        IN_FORMATS: ${{ inputs.formats }}
         IN_RESOURCES: ${{ inputs.resources }}
         IN_REQUIRE: ${{ inputs.require }}
         IN_NOTES_URL: ${{ inputs.notes-url }}
@@ -301,6 +310,10 @@ runs:
             args+=(--provenance "${f##*/}=${API}/repos/${REPO}/attestations/sha256:${digest}")
           done
         fi
+        # A file name the format inference cannot read is given one.
+        for spec in $IN_FORMATS; do
+          args+=(--format "$spec")
+        done
         # Artifacts sharing a platform carry the variant given for them.
         declare -A variants=()
         for spec in $IN_VARIANTS; do

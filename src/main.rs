@@ -316,6 +316,13 @@ struct Create {
     /// Download URL for one artifact or resource asset, as FILENAME=URL (repeatable)
     #[usage(long)]
     url: Vec<String>,
+    /// Format of one artifact whose name does not say, as FILENAME=FORMAT:
+    /// an archive (tar.xz, tar.gz, tar.zst, tar.bz2, tgz, tar, zip, 7z), a
+    /// single compressed executable (gz, xz, zst, bz2), an installer (deb,
+    /// rpm, dmg, pkg, msi, msix, exe, appimage), raw for a bare
+    /// executable, or a type of your own (repeatable)
+    #[usage(long)]
+    format: Vec<String>,
     /// Source repository URL
     #[usage(long)]
     source_repo: Option<String>,
@@ -616,6 +623,16 @@ impl RunWith<BinInfo> for Create {
             };
             urls.insert(name.to_string(), url.to_string());
         }
+        let mut formats = std::collections::BTreeMap::new();
+        for spec in &self.format {
+            let Some((name, format)) = spec.split_once('=') else {
+                bail!("--format wants FILENAME=FORMAT, got {spec:?}");
+            };
+            if format.is_empty() {
+                bail!("--format {spec:?} has an empty format");
+            }
+            formats.insert(name.to_string(), format.to_string());
+        }
         // The manifest's extensions first; a flag naming the same key wins.
         let mut extensions = manifest.extensions.clone();
         let mut from_flags = Extensions::new();
@@ -689,7 +706,7 @@ impl RunWith<BinInfo> for Create {
                 portable: entry.portable,
                 variant: entry.variant.clone(),
                 url: entry.url.clone().or_else(|| urls.get(name).cloned()),
-                format: entry.format.clone(),
+                format: entry.format.clone().or_else(|| formats.get(name).cloned()),
                 bin: entry.bins(&default_bins).to_vec(),
                 requires: entry.requirements(manifest.requires.as_ref()),
                 provenance: provenance_of(name, &entry.provenance),
@@ -713,7 +730,7 @@ impl RunWith<BinInfo> for Create {
                 portable: arg.portable,
                 variant: arg.variant.clone(),
                 url: urls.get(name).cloned(),
-                format: None,
+                format: formats.get(name).cloned(),
                 bin: default_bins.clone(),
                 requires: manifest.requires.clone(),
                 provenance: provenance_of(name, &[]),
@@ -764,6 +781,11 @@ impl RunWith<BinInfo> for Create {
                 && !asset_paths.iter().any(|p| file_name_of(p) == name)
             {
                 bail!("--url names {name:?}, which is not among the artifacts or assets");
+            }
+        }
+        for name in formats.keys() {
+            if !artifacts.iter().any(|a| file_name_of(a.path) == name) {
+                bail!("--format names {name:?}, which is not among the artifacts");
             }
         }
         let source = source_repo.map(|repo| Source {

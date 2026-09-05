@@ -23,12 +23,9 @@
           "type": "object"
         },
         "format": {
-          "description": "The archive type (`tar.xz`, `tar.gz`, `tar.zst`, `tar.bz2`, `tgz`,\n`tar`, `zip`, `7z`), a single compressed executable (`gz`, `xz`,\n`zst`, `bz2`), an installer (`deb`, `rpm`, `dmg`, `pkg`, `msi`,\n`msix`, `exe`, `appimage`), or `raw` for a bare executable. Two\nartifacts that differ only in format carry the same build, and a\nconsumer takes whichever it prefers.",
+          "description": "The archive type (`tar.xz`, `tar.gz`, `tar.zst`, `tar.bz2`, `tgz`,\n`tar`, `zip`, `7z`), a single compressed executable (`gz`, `xz`,\n`zst`, `bz2`), an installer (`deb`, `rpm`, `dmg`, `pkg`, `msi`,\n`msix`, `exe`, `appimage`), or `raw` for a bare executable. Two\nartifacts that differ only in format carry the same build, and a\nconsumer takes whichever it prefers. Required: an artifact whose\nformat is unknown is one no consumer can select.\n\n`Option` so that a document leaving it out still parses and is\nthen refused by `validate`, which can name the artifact. The field\nis not optional: no `serde(default)`, so the schema demands it.",
           "pattern": "^[a-z0-9][a-z0-9_.-]*$",
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": "string"
         },
         "libc": {
           "description": "`gnu` or `musl`, for a Linux build. Absent when the artifact does\nnot depend on one.",
@@ -89,7 +86,8 @@
       },
       "required": [
         "name",
-        "size"
+        "size",
+        "format"
       ],
       "type": "object"
     },
