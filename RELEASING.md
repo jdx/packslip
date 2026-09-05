@@ -7,10 +7,14 @@ enabled as described below.
 
 ## Release sequence
 
-1. A push to `main` runs `release-plz release-pr`, updating the
-   `chore: release vX.Y.Z` PR with a `Cargo.toml` version bump and a
-   changelog generated from conventional commits through `cliff.toml`.
-   The workflow also regenerates the CLI documentation in that PR.
+1. A push to `main` runs `release-plz update`, which writes a
+   `Cargo.toml` version bump and a changelog generated from conventional
+   commits through `cliff.toml`. The workflow then regenerates the CLI
+   documentation against that version and pushes all of it as one commit
+   to the `release-plz` branch, creating or updating the
+   `chore: release vX.Y.Z` PR. The PR never exists in a state without the
+   regenerated documentation, so merging it at any moment ships a CLI
+   reference that matches the version.
 2. A maintainer reviews and merges the PR.
 3. If `RELEASE_PLZ_RELEASE` is `true`, the release job publishes the crate
    to crates.io and then creates the `vX.Y.Z` tag.
