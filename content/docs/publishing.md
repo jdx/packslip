@@ -52,6 +52,8 @@ The action and CLI share a version: `@v0` follows CLI 0.x releases, and
 `@v0.2.0` pins both to 0.2.0. By default, the action installs the CLI
 version from its own commit's `Cargo.toml`. Set `packslip-version` to
 explicitly override that selection.
+`packslip-path` runs a CLI the job already has instead of downloading
+one; see [Build the CLI on the runner](#build-the-cli-on-the-runner).
 
 ## Add resources and requirements
 
@@ -93,6 +95,56 @@ in the filename: `tools/mytool` becomes `packslip.tools-mytool.sigstore.json`.
 The signer is still pinned to the repository. Consumers match the signed
 `project` field, not the bundle filename.
 
+## Build the CLI on the runner
+
+The action downloads the release archive for the runner's platform. Where
+that archive does not exist or cannot be used, `packslip-path` points the
+action at an executable the job already has: a path, or a name to look up
+on PATH. The action runs it as `packslip` for the rest of the steps and
+skips the download.
+
+macOS releases are arm64 only, so an x64 macOS job builds the CLI with
+cargo first:
+
+```yaml
+jobs:
+  release:
+    runs-on: macos-15-intel
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      # Build the archives and create the release before these steps.
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install packslip --version 0.2.0 --locked --root "$RUNNER_TEMP/packslip"
+      - uses: jdx/packslip@v0.2.0
+        with:
+          packslip-path: ${{ runner.temp }}/packslip/bin/packslip
+          artifacts: dist/*.tar.xz
+          bin: mytool
+```
+
+Build on the runner that will run the binary; the action executes it
+rather than cross-compiling for anything. Install the version the action
+ref pins, since the action and CLI are released together, and prefer
+`--locked` so the build uses the dependency versions that release was
+tested with. The same approach covers a platform packslip does not ship,
+a self-hosted or network-restricted runner, and a job that would rather
+build from source than download.
+
+A matrix that needs this on only some runners can leave the input empty
+elsewhere; an empty `packslip-path` downloads as usual:
+
+```yaml
+packslip-path: ${{ runner.os == 'macOS' && runner.arch == 'X64' && format('{0}/packslip/bin/packslip', runner.temp) || '' }}
+```
+
+`packslip-path` takes precedence over `packslip-version`, which the action
+warns about when both are set. A downloaded archive is checked against
+jdx/packslip's build provenance before it runs; a binary supplied this way
+is not checked at all, so the job vouches for where it came from.
+
 ## Action inputs
 
 | Input | Purpose and default |
@@ -113,6 +165,7 @@ The signer is still pinned to the repository. Consumers match the signed
 | `out` | Bundle output directory; defaults to `packslip`. |
 | `upload` | Defaults to `true`. Set to `false` to keep the bundle local. |
 | `packslip-version` | CLI version; defaults to the version in the action's `Cargo.toml`. |
+| `packslip-path` | An existing packslip executable to run instead of downloading a release: a path, or a name on PATH. Takes precedence over `packslip-version`. |
 | `token` | Download/upload token; defaults to `github.token`. |
 
 The provenance step covers files matched by `artifacts`. Files supplied
