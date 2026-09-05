@@ -1,0 +1,26 @@
+// packslip.dev: the Hugo site as static assets, and the project's releases
+// from R2 through cloudflare/worker.js. Deployed by .github/workflows/site.yml.
+{
+  "$schema": "https://developers.cloudflare.com/schemas/wrangler.json",
+  "name": "packslip-dev",
+  "main": "cloudflare/worker.js",
+  "compatibility_date": "2026-09-01",
+  "account_id": "6e243906ff257b965bcae8025c2fc344",
+  "workers_dev": false,
+  // packslip.dev is attached to this Worker as a custom domain, set up once
+  // by hand in the dashboard. Declaring it here instead would make every
+  // deploy need a token with Zone:Read and DNS:Edit on the zone, which is
+  // more than a release job should hold; the attachment outlives deploys.
+  "assets": {
+    "directory": "public",
+    "binding": "ASSETS",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page",
+    // The release paths reach the script even for a browser navigation,
+    // which the platform would otherwise answer with the 404 page itself.
+    "run_worker_first": ["/v*", "/.well-known/packslip.json"]
+  },
+  "r2_buckets": [{ "binding": "RELEASES", "bucket_name": "jdx-releases" }],
+  "analytics_engine_datasets": [{ "binding": "DOWNLOADS", "dataset": "jdx_downloads" }],
+  "vars": { "TOOL": "packslip" }
+}

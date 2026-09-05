@@ -27,6 +27,8 @@ Follow these guides in the order your release needs them:
    from your release job.
 5. [Manage release lists](/docs/release-lists/): publish discovery metadata,
    withdraw versions, and recommend a default release.
+6. [Host releases on your own domain](/docs/self-hosting/): name a project
+   after its download host and publish its releases and list there.
 
 ## Install software or build a consumer
 

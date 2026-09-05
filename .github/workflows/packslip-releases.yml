@@ -1,0 +1,68 @@
+name: packslip-releases
+
+# packslip.dev is a project on its own domain, so its release list is the
+# release index: consumers see the releases it names and nothing else, and
+# refuse it once it expires. release.yml calls this after each release; the
+# schedule re-signs it before the 30-day validity runs out; a dispatch
+# withdraws a release or marks one a security fix.
+on:
+  workflow_call:
+    secrets:
+      CLOUDFLARE_ACCESS_KEY_ID:
+        required: true
+      CLOUDFLARE_SECRET_ACCESS_KEY:
+        required: true
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      yank:
+        description: "Releases to withdraw, one per line, as TAG=REASON"
+        required: false
+        default: ""
+      security:
+        description: "Releases that fix a vulnerability, one tag per line"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: packslip-releases
+
+jobs:
+  list:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_SECRET_ACCESS_KEY }}
+      AWS_REGION: auto
+      AWS_ENDPOINT_URL: https://6e243906ff257b965bcae8025c2fc344.r2.cloudflarestorage.com
+    steps:
+      - uses: actions/checkout@v5
+      - name: Fetch the published bundles
+        run: |
+          set -euo pipefail
+          aws s3 sync s3://jdx-releases/packslip/ lists/ --exclude '*' --include '*/packslip.sigstore.json'
+          ls lists
+      - uses: ./releases
+        id: list
+        with:
+          project: packslip.dev
+          dir: lists
+          url-base: https://packslip.dev
+          yank: ${{ inputs.yank }}
+          security: ${{ inputs.security }}
+      - name: Publish the list
+        env:
+          LIST: ${{ steps.list.outputs.list }}
+          COUNT: ${{ steps.list.outputs.count }}
+        run: |
+          set -euo pipefail
+          aws s3 cp "$LIST" s3://jdx-releases/packslip/.well-known/packslip.json \
+            --content-type application/json --cache-control "public, max-age=300"
+          echo "published a list of $COUNT release(s) at https://packslip.dev/.well-known/packslip.json"

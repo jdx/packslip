@@ -63,7 +63,10 @@ Upload the output to the well-known location; `releases` writes a local
 file and does not publish it.
 
 The key should be the one consumers pin for the project. In supported CI,
-omit `--key` to sign with the job's OIDC identity.
+omit `--key` to sign with the job's OIDC identity. On GitHub Actions, the
+`jdx/packslip/releases` action builds and signs the list from a directory
+of the published bundles; see
+[Host releases on your own domain](/docs/self-hosting/#build-and-publish-the-list).
 
 ## Refresh or withdraw releases
 
