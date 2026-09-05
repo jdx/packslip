@@ -28,8 +28,12 @@ export default {
     const cache = caches.default;
     let response = isList ? undefined : await cache.match(request);
     if (!response) {
+      // Only hand R2 the headers as a range when one was actually asked
+      // for: given a plain GET it still reports a range covering the whole
+      // object, which turned every download into a 206.
+      const wantsRange = request.headers.has("range");
       const object = await env.RELEASES.get(`${env.TOOL}${path}`, {
-        range: request.headers,
+        ...(wantsRange ? { range: request.headers } : {}),
         onlyIf: request.headers,
       });
       if (!object) {
@@ -43,7 +47,17 @@ export default {
       if (isList) {
         headers.set("content-type", "application/json");
       }
-      const status = object.body === undefined ? 304 : object.range ? 206 : 200;
+      const partial = wantsRange && object.range !== undefined;
+      if (partial) {
+        // A 206 without content-range is malformed, and R2 gives the range
+        // back either as an offset and length or as a suffix length.
+        const size = object.size;
+        const suffix = "suffix" in object.range;
+        const offset = suffix ? size - object.range.suffix : object.range.offset ?? 0;
+        const length = suffix ? object.range.suffix : object.range.length ?? size - offset;
+        headers.set("content-range", `bytes ${offset}-${offset + length - 1}/${size}`);
+      }
+      const status = object.body === undefined ? 304 : partial ? 206 : 200;
       response = new Response(
         request.method === "HEAD" || status === 304 ? null : object.body,
         { status, headers },

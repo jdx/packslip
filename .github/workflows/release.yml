@@ -270,16 +270,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          for attempt in 1 2 3; do
-            git tag -f "$MAJOR_TAG" "$GITHUB_SHA"
-            if git push -f origin "refs/tags/$MAJOR_TAG"; then
-              break
-            fi
-            git fetch origin "refs/tags/$MAJOR_TAG:refs/tags/$MAJOR_TAG" -f || true
-            [ "$attempt" -lt 3 ] || exit 1
-          done
+          # Moved through the refs API rather than `git push -f`. A push
+          # sends the tag's tree, and GitHub refuses one from the built-in
+          # token when that tree touches .github/workflows -- which any
+          # release since the last major-tag move may well do, and there is
+          # no `workflows` key in a job's permissions to grant. The commit
+          # is already on the default branch, so updating the ref pushes no
+          # objects and the check does not apply.
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${MAJOR_TAG}" >/dev/null 2>&1; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${MAJOR_TAG}" \
+              -f sha="$GITHUB_SHA" -F force=true >/dev/null
+            echo "moved $MAJOR_TAG to $GITHUB_SHA"
+          else
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="refs/tags/${MAJOR_TAG}" -f sha="$GITHUB_SHA" >/dev/null
+            echo "created $MAJOR_TAG at $GITHUB_SHA"
+          fi
 
   # The release index at https://packslip.dev/.well-known/packslip.json,
   # rebuilt once the release above is public so the action can install the
