@@ -97,8 +97,8 @@ behind the "cannot be verified" dialog.
 | Variable `RELEASE_PLZ_RELEASE=true` | Enables the release job. Without it, merging the release PR does not publish a release. |
 | Secrets `CERTIFICATES_P12`, `CERTIFICATES_P12_PASS` | The base64-encoded Developer ID Application certificate and its export password, the same pair the other jdx.dev CLIs use. The macOS build fails at signing without them. |
 | Secrets `APPLE_API_KEY_P8`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID` | A base64-encoded App Store Connect API key and its key and issuer IDs. The macOS job fails early and by name when any is missing, rather than shipping an unnotarized binary. |
-| Secrets `CLOUDFLARE_ACCESS_KEY_ID`, `CLOUDFLARE_SECRET_ACCESS_KEY` | S3 credentials for the `jdx-releases` R2 bucket, shared across the jdx.dev CLIs as organization secrets. The release job and `packslip-releases.yml` write the release files, bundles, and list under `packslip/`. |
-| Secret `CLOUDFLARE_TOKEN` | An API token that can deploy Workers and their custom domains. `site.yml` deploys packslip.dev with it. |
+| Secrets `CLOUDFLARE_ACCESS_KEY_ID`, `CLOUDFLARE_SECRET_ACCESS_KEY` | S3 credentials for the `jdx-releases` R2 bucket, from an R2 token scoped to that bucket alone. The release job and `packslip-releases.yml` write the release files, bundles, and list under `packslip/`. |
+| Secret `CLOUDFLARE_TOKEN` | An API token with account `Workers Scripts:Edit` and read on the `jdx-releases` bucket, and no zone access at all. `site.yml` deploys packslip.dev with it. The custom domain is attached to the Worker by hand rather than by wrangler, so deploys never need `DNS:Edit`. |
 
 Communiqué's context and tone are configured in `communique.toml`.
 Its version is declared in `mise.toml` and resolved in `mise.lock`;

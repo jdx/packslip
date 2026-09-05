@@ -7,7 +7,10 @@
   "compatibility_date": "2026-09-01",
   "account_id": "6e243906ff257b965bcae8025c2fc344",
   "workers_dev": false,
-  "routes": [{ "pattern": "packslip.dev", "custom_domain": true }],
+  // packslip.dev is attached to this Worker as a custom domain, set up once
+  // by hand in the dashboard. Declaring it here instead would make every
+  // deploy need a token with Zone:Read and DNS:Edit on the zone, which is
+  // more than a release job should hold; the attachment outlives deploys.
   "assets": {
     "directory": "public",
     "binding": "ASSETS",
