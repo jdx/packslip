@@ -218,6 +218,7 @@ runs:
         "$dir/packslip$exe" version
 
     - name: Download release assets
+      id: download
       if: inputs.download != ''
       shell: bash
       env:
@@ -229,18 +230,27 @@ runs:
         REPO: ${{ github.repository }}
       run: |
         set -euo pipefail
+        # IN_DOWNLOAD holds asset-name globs for `gh release download
+        # --pattern`, not paths to expand against this job's working
+        # directory -- turn off pathname expansion so a pattern like *.zip
+        # is never quietly replaced by whatever it happens to match here.
+        set -f
         tag="${IN_TAG:-$REF_NAME}"
         if [ -z "$IN_TAG" ] && [ "$REF_TYPE" != tag ]; then
           echo "download is set but not running on a tag; pass the tag input" >&2
           exit 1
         fi
-        dir="${RUNNER_TEMP}/packslip-download"
-        mkdir -p "$dir"
+        # A fresh directory per invocation, not a fixed name: the monorepo
+        # flow calls this action once per tool in the same job, and a fixed
+        # name would still hold the previous tool's files when this step is
+        # skipped for one of them.
+        dir="$(mktemp -d "${RUNNER_TEMP}/packslip-download.XXXXXX")"
         args=(--repo "$REPO" --dir "$dir" --clobber)
         for pattern in $IN_DOWNLOAD; do
           args+=(--pattern "$pattern")
         done
         gh release download "$tag" "${args[@]}"
+        echo "dir=$dir" >> "$GITHUB_OUTPUT"
 
     - name: Collect artifacts
       id: files
@@ -248,17 +258,24 @@ runs:
       env:
         IN_ARTIFACTS: ${{ inputs.artifacts }}
         IN_DOWNLOAD: ${{ inputs.download }}
+        IN_DOWNLOAD_DIR: ${{ steps.download.outputs.dir }}
       run: |
         set -euo pipefail
         shopt -s nullglob
-        patterns="$IN_ARTIFACTS"
-        [ -n "$IN_DOWNLOAD" ] && patterns="$patterns ${RUNNER_TEMP}/packslip-download/*"
         files=()
-        for pattern in $patterns; do
+        for pattern in $IN_ARTIFACTS; do
           for f in $pattern; do [ -f "$f" ] && files+=("$f"); done
         done
+        if [ -n "$IN_DOWNLOAD_DIR" ]; then
+          # Listed, not glob-matched: on a Windows runner RUNNER_TEMP is a
+          # backslash path, which bash's pathname expansion would otherwise
+          # read as glob escapes and match nothing.
+          while IFS= read -r -d '' f; do
+            files+=("$f")
+          done < <(find "$IN_DOWNLOAD_DIR" -maxdepth 1 -type f -print0)
+        fi
         if [ "${#files[@]}" -eq 0 ]; then
-          echo "no artifacts matched: $patterns" >&2
+          echo "no artifacts matched: artifacts=[$IN_ARTIFACTS] download=[$IN_DOWNLOAD]" >&2
           exit 1
         fi
         printf '%s\n' "${files[@]}" > "${RUNNER_TEMP}/packslip-files"
