@@ -74,6 +74,22 @@ jobs:
             | jq -r '.packages[] | select(.name == "packslip") | .version')
           echo "bump=true" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+      # A clean tree means every packaged change is already released or
+      # already in a merged release commit, so an open release PR can only
+      # be a stray: one that a run holding a pre-merge checkout pushed
+      # after the real one merged.
+      - name: Close a stray release PR
+        if: steps.update.outputs.bump == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: |
+          set -euo pipefail
+          pr=$(gh pr list --head "$RELEASE_BRANCH" --base main --state open \
+            --json number --jq '.[0].number // empty')
+          if [ -n "$pr" ]; then
+            gh pr close "$pr" --delete-branch \
+              --comment "Nothing is left to release from main, so this PR is stale."
+          fi
       - name: Regenerate the CLI documentation
         if: steps.update.outputs.bump == 'true'
         run: mise run render
@@ -93,6 +109,15 @@ jobs:
             -c user.name="release-plz[bot]" \
             -c user.email="release-plz+bot@users.noreply.github.com" \
             commit -m "$title"
+          # A run that started before a release PR merged still holds the
+          # pre-merge checkout, and its push would resurrect the version
+          # that just shipped. The run queued for the merge commit owns the
+          # release branch from here on.
+          git fetch --quiet origin main
+          if [ "$(git rev-parse origin/main)" != "$GITHUB_SHA" ]; then
+            echo "main moved past $GITHUB_SHA; leaving the release PR to the newer run."
+            exit 0
+          fi
           git push --force origin "HEAD:refs/heads/$RELEASE_BRANCH"
           pr=$(gh pr list --head "$RELEASE_BRANCH" --base main --state open \
             --json number --jq '.[0].number // empty')
