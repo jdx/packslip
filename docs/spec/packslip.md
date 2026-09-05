@@ -298,7 +298,11 @@ Windows installer.
 
 ### Field reference
 
-| Field | Type | | Meaning |
+Required fields inside an optional object are required when that object is
+present. For example, `source` is optional, but a supplied `source` must
+include `repo`. Resource entries must choose exactly one source field.
+
+| Field | Type | Presence | Meaning |
 |---|---|---|---|
 | `_type` | string | required | Always `https://in-toto.io/Statement/v1`. |
 | `subject[]` | array | required | One entry per artifact and per resource asset. |
@@ -357,8 +361,11 @@ Windows installer.
 `resources` describes files and generated content associated with the
 release: completions, man pages, CLI specifications, agent skills, SBOMs,
 and desktop integration files. Each entry has a `kind` and exactly one
-source. After applying scope and specificity, consumers prefer sources
-in this order:
+source.
+
+### Source types
+
+After applying scope and specificity, consumers prefer sources in this order:
 
 - `archive`: a path inside the artifact the consumer selected, from the
   true archive root. The artifact's digest already covers it.
@@ -375,6 +382,8 @@ in this order:
   case: cobra, clap, oclif, and usage generate completions from the
   binary and ship no file. What matters is when it runs, and Running an
   exec entry says so. A vendor with a static file lists it first.
+
+### Scope and identity
 
 Layouts differ by platform more often than by file, so an entry may carry
 `os`, `arch`, or `libc` to say which artifacts it describes; an entry
@@ -412,7 +421,7 @@ two equally scoped `repo` entries for one skill try the first directory,
 then the second only if the first is unavailable. A verification failure
 still refuses the release; it is not a reason to try an alternative.
 
-Documented kinds:
+### Resource kinds
 
 - `completion`: a shell completion script. With a static source, `shell`
   names the shell: `bash`, `zsh`, `fish`, `powershell`, `nushell`,
@@ -456,6 +465,8 @@ Documented kinds:
   gives its size.
 - `app`: a macOS application bundle inside a `dmg` or `zip`, by its path
   in the archive, which a consumer copies to Applications. Archive only.
+
+### Fallback and verification
 
 For any one need, a consumer takes the first source it can use in the
 order above: an `archive` or `asset` entry, then `repo`, then one derived

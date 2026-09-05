@@ -83,10 +83,9 @@ for platform-specific resources. Use `artifact = "FILENAME"` for a
 resource that belongs to a particular archive format or variant, as in the example below.
 
 For the same resource, exact artifact scope wins over platform scope.
-Consumers then prefer the most specific platform scope, followed by the
-source order: archive, asset, repo, exec. Different commands, shells,
-and named skills remain separate resources.
-
+Consumers then prefer the most specific platform scope before considering
+the source type. Different commands, shells, and named skills remain
+separate resources.
 
 ```toml
 [[resource]]
@@ -98,3 +97,44 @@ archive = "mytool-1.2.3/share/man/man1/mytool.1"
 This man page belongs only to the named archive, not to another format or
 variant for the same platform. For complete configurations, see the
 [release recipes](/docs/recipes/).
+
+## Provide fallbacks deliberately
+
+Consumers group entries by resource identity before selecting a source.
+For completions that identity is the executable and shell; for a CLI spec,
+it is the executable and format; for a skill, it is the skill name. A bash
+completion and a zsh completion are separate needs, not fallback choices.
+
+Within one identity, selection proceeds in this order:
+
+1. Keep entries that apply to the selected artifact.
+2. Prefer exact artifact scope, then the most specific platform scope.
+3. Prefer `archive`, then `asset`, then `repo` sources. For a need a static
+   CLI spec can generate, try that before running an `exec` resource.
+4. Break ties within the same scope and source type by declaration order.
+   Stop once a usable entry satisfies the need.
+
+For example, these equally scoped entries try the current skill directory
+first and the older location only if the first is unavailable. The release
+must also declare `source.repo` and `source.commit`.
+
+```toml
+[[resource]]
+kind = "skill"
+name = "mytool"
+repo = "skills/mytool"
+
+[[resource]]
+kind = "skill"
+name = "mytool"
+repo = ".agents/skills/mytool"
+```
+
+Do not use fallback to hide an incorrectly scoped path: less specific entries
+have already been removed before sources are tried. Scope an archive resource
+to its artifact when other artifacts do not contain that path.
+
+An unavailable optional resource is reported and may leave the installation
+without that resource. A digest or source-commit mismatch fails the installation;
+it never permits trying a different source. See the full
+[resource selection rules](/release/v1/#resources).
