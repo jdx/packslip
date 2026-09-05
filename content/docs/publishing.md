@@ -11,13 +11,18 @@ signing key is needed.
 
 ## Prepare the files and release
 
-The action consumes final local files. In a build matrix, collect the artifacts
-into the signing job before running it. Complete any archive rewriting,
+The action consumes final local files. Complete any archive rewriting,
 platform signing, or notarization that changes the bytes first.
 
 Create the GitHub release and upload the artifacts through your existing
 workflow. Upload separate resource assets, such as SBOMs, too. The action
 uploads only the packslip bundle; a signed URL does not upload its target.
+
+Once those files are on the release, either bring them into the signing
+job yourself (a build matrix typically stages them with
+`actions/download-artifact` before this step) or let `download` fetch
+them straight from the release — see
+[Download from the release](#download-from-the-release) below.
 
 ## Add the release step
 
@@ -75,6 +80,27 @@ Use paths from the actual archive root, including any top-level directory.
 Only include resources and commands your release really provides or needs.
 Use a [TOML manifest](/docs/describing-releases/#use-a-toml-manifest) when
 paths or requirements differ between artifacts.
+
+## Download from the release
+
+A signing job that runs after the release already has its archives
+uploaded — a separate job in the same workflow run, or a re-run against
+an existing tag — can skip staging them itself:
+
+```yaml
+- uses: jdx/packslip@v1
+  with:
+    download: mytool-*.tar.xz mytool-*.zip
+    bin: mytool
+```
+
+This replaces a `gh release download` step and a second copy of the same
+glob for `artifacts`: `download` fetches matching assets from the release
+named by `tag` (the triggering tag by default) into a working directory
+and folds them into the same file set `artifacts` collects. Set both
+inputs to combine files already on disk with files pulled from the
+release. `token` must be able to read that release — the default
+`github.token` already can, including for a release still in draft.
 
 ## Release several tools from one repository
 
@@ -149,7 +175,8 @@ is not checked at all, so the job vouches for where it came from.
 
 | Input | Purpose and default |
 | --- | --- |
-| `artifacts` | Required. Whitespace-separated local files or globs; at least one file must match. |
+| `artifacts` | Whitespace-separated local files or globs. Between this and `download`, at least one file must match. |
+| `download` | Whitespace-separated release asset name patterns to fetch before collecting artifacts; joins `artifacts`. See [Download from the release](#download-from-the-release). |
 | `bin` | Whitespace-separated executable names or `NAME=PATH` entries. |
 | `project` | Project name; defaults to `github.com/<owner>/<repo>`. |
 | `version` | Semver version; defaults to the tag without its leading `v`. |
@@ -209,7 +236,7 @@ trial that does not contact signing services.
 
 | Symptom | What to check |
 | --- | --- |
-| No artifacts matched | Files must be present in this job's working directory. Download matrix outputs before the action, and check the glob. |
+| No artifacts matched | Files must be present in this job's working directory, or matched by `download` from the release named by `tag`. Download matrix outputs before the action (or set `download`), and check the glob. |
 | Version rejected | Pass a semver `version` explicitly for tags such as `mytool-v1.2.3` or `v4.1`. |
 | Executable missing or ambiguous | Check the archive contents and use an explicit path or `NAME=PATH` mapping. |
 | Bundle upload fails | The release named by `tag` must exist and the token must have `contents: write`. |
