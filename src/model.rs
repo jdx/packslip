@@ -9,6 +9,11 @@ use serde::{Deserialize, Serialize};
 pub const STATEMENT_TYPE: &str = "https://in-toto.io/Statement/v1";
 pub const PREDICATE_TYPE: &str = "https://packslip.dev/release/v1";
 pub const RELEASES_PREDICATE_TYPE: &str = "https://packslip.dev/releases/v1";
+/// Where the JSON schema for [`Statement`] is published. It is the
+/// schema's `$id`, so a document that references it resolves.
+pub const SCHEMA_URL: &str = "https://packslip.dev/schema/release-v1.json";
+/// Where the JSON schema for [`ReleaseListStatement`] is published.
+pub const RELEASES_SCHEMA_URL: &str = "https://packslip.dev/schema/releases-v1.json";
 
 /// What the specification has no field for, keyed by who defines it: a
 /// consumer by its name (`mise`), a vendor by a domain it controls
@@ -1672,10 +1677,14 @@ impl Statement {
             .all(|a| !a.provenance.is_empty())
     }
 
-    /// The JSON schema for the document.
+    /// The JSON schema for the document, identified by where it is
+    /// published.
     #[cfg(feature = "schema")]
     pub fn schema() -> serde_json::Value {
-        serde_json::to_value(schemars::schema_for!(Statement)).expect("schema serialises")
+        let mut schema =
+            serde_json::to_value(schemars::schema_for!(Statement)).expect("schema serialises");
+        set_schema_id(&mut schema, SCHEMA_URL);
+        schema
     }
 }
 
@@ -1728,11 +1737,23 @@ impl ReleaseListStatement {
             .is_ok_and(|expires| now < expires)
     }
 
-    /// The JSON schema for the document.
+    /// The JSON schema for the document, identified by where it is
+    /// published.
     #[cfg(feature = "schema")]
     pub fn schema() -> serde_json::Value {
-        serde_json::to_value(schemars::schema_for!(ReleaseListStatement))
-            .expect("schema serialises")
+        let mut schema = serde_json::to_value(schemars::schema_for!(ReleaseListStatement))
+            .expect("schema serialises");
+        set_schema_id(&mut schema, RELEASES_SCHEMA_URL);
+        schema
+    }
+}
+
+/// Name a generated schema by the URL it is published at, so a
+/// `$ref` or a validator that fetches it resolves to this document.
+#[cfg(feature = "schema")]
+fn set_schema_id(schema: &mut serde_json::Value, id: &str) {
+    if let Some(object) = schema.as_object_mut() {
+        object.insert("$id".into(), id.into());
     }
 }
 

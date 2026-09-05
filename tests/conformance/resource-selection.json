@@ -1,0 +1,393 @@
+{
+  "rule": "https://packslip.dev/release/v1/#resources",
+  "description": "Which resource entries apply once an artifact is selected. For each thing the entries describe, a consumer keeps those that fit the artifact and, of them, the most specific; entries for different things never hide one another. `expect` lists the surviving entries by their zero-based position in `predicate.resources`, in document order. Entries that survive together are alternatives, tried in the source order the Resources section gives; these vectors cover which entries survive, not which source is tried first.",
+  "cases": [
+    {
+      "name": "an entry scoped to another OS drops out; the unscoped one stays",
+      "artifact": "tool-linux-x64.tar.xz",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          },
+          {
+            "name": "tool-windows-x64.zip",
+            "digest": {
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "github.com/example/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "size": 1,
+              "format": "tar.xz",
+              "bin": [
+                "tool"
+              ]
+            },
+            {
+              "name": "tool-windows-x64.zip",
+              "os": "windows",
+              "arch": "x86_64",
+              "size": 1,
+              "format": "zip",
+              "bin": [
+                "tool.exe"
+              ]
+            }
+          ],
+          "resources": [
+            {
+              "kind": "man",
+              "bin": "tool",
+              "archive": "share/man/man1/tool.1"
+            },
+            {
+              "kind": "man",
+              "bin": "tool",
+              "os": "windows",
+              "archive": "share/man/tool.1"
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-key",
+            "key_id": "5a0a0b8b9c6d7e1f"
+          }
+        }
+      },
+      "expect": [
+        0
+      ]
+    },
+    {
+      "name": "the most specific entry for a thing wins: a platform scope beats none",
+      "artifact": "tool-windows-x64.zip",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          },
+          {
+            "name": "tool-windows-x64.zip",
+            "digest": {
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "github.com/example/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "size": 1,
+              "format": "tar.xz",
+              "bin": [
+                "tool"
+              ]
+            },
+            {
+              "name": "tool-windows-x64.zip",
+              "os": "windows",
+              "arch": "x86_64",
+              "size": 1,
+              "format": "zip",
+              "bin": [
+                "tool.exe"
+              ]
+            }
+          ],
+          "resources": [
+            {
+              "kind": "man",
+              "bin": "tool",
+              "archive": "share/man/man1/tool.1"
+            },
+            {
+              "kind": "man",
+              "bin": "tool",
+              "os": "windows",
+              "archive": "share/man/tool.1"
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-key",
+            "key_id": "5a0a0b8b9c6d7e1f"
+          }
+        }
+      },
+      "expect": [
+        1
+      ]
+    },
+    {
+      "name": "an exact artifact selector is more specific than any platform scope",
+      "artifact": "tool-linux-x64.tar.xz",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "github.com/example/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "size": 1,
+              "format": "tar.xz",
+              "bin": [
+                "tool"
+              ]
+            }
+          ],
+          "resources": [
+            {
+              "kind": "completion",
+              "shell": "zsh",
+              "bin": "tool",
+              "os": "linux",
+              "archive": "share/zsh/site-functions/_tool"
+            },
+            {
+              "kind": "completion",
+              "shell": "zsh",
+              "bin": "tool",
+              "artifact": "tool-linux-x64.tar.xz",
+              "archive": "completions/_tool"
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-key",
+            "key_id": "5a0a0b8b9c6d7e1f"
+          }
+        }
+      },
+      "expect": [
+        1
+      ]
+    },
+    {
+      "name": "entries for different things never hide one another",
+      "artifact": "tool-linux-x64.tar.xz",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "github.com/example/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "size": 1,
+              "format": "tar.xz",
+              "bin": [
+                "tool"
+              ]
+            }
+          ],
+          "resources": [
+            {
+              "kind": "completion",
+              "shell": "zsh",
+              "bin": "tool",
+              "archive": "share/zsh/site-functions/_tool"
+            },
+            {
+              "kind": "completion",
+              "shell": "bash",
+              "bin": "tool",
+              "archive": "share/bash-completion/completions/tool"
+            },
+            {
+              "kind": "man",
+              "bin": "tool",
+              "archive": "share/man/man1/tool.1"
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-key",
+            "key_id": "5a0a0b8b9c6d7e1f"
+          }
+        }
+      },
+      "expect": [
+        0,
+        1,
+        2
+      ]
+    },
+    {
+      "name": "equally scoped entries for the same thing are alternatives and both survive",
+      "artifact": "tool-linux-x64.tar.xz",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "github.com/example/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "size": 1,
+              "format": "tar.xz",
+              "bin": [
+                "tool"
+              ]
+            }
+          ],
+          "resources": [
+            {
+              "kind": "completion",
+              "shell": "zsh",
+              "bin": "tool",
+              "archive": "share/zsh/site-functions/_tool"
+            },
+            {
+              "kind": "completion",
+              "shells": [
+                "zsh"
+              ],
+              "bin": "tool",
+              "exec": [
+                "tool",
+                "completion",
+                "{shell}"
+              ]
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-key",
+            "key_id": "5a0a0b8b9c6d7e1f"
+          }
+        }
+      },
+      "expect": [
+        0,
+        1
+      ]
+    },
+    {
+      "name": "entries whose files are named differently describe different things",
+      "artifact": "tool-windows-x64.zip",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          },
+          {
+            "name": "tool-windows-x64.zip",
+            "digest": {
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "github.com/example/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "size": 1,
+              "format": "tar.xz",
+              "bin": [
+                "tool"
+              ]
+            },
+            {
+              "name": "tool-windows-x64.zip",
+              "os": "windows",
+              "arch": "x86_64",
+              "size": 1,
+              "format": "zip",
+              "bin": [
+                "tool.exe"
+              ]
+            }
+          ],
+          "resources": [
+            {
+              "kind": "man",
+              "bin": "tool",
+              "archive": "share/man/man1/tool.1"
+            },
+            {
+              "kind": "man",
+              "bin": "tool",
+              "os": "windows",
+              "archive": "docs/tool.txt"
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-key",
+            "key_id": "5a0a0b8b9c6d7e1f"
+          }
+        }
+      },
+      "expect": [
+        0,
+        1
+      ],
+      "comment": "A resource's identity includes the name of the file it points at, so a Windows text file is not a scoped alternative to a roff man page: both survive and the consumer installs each. Naming the file the same way is what makes one entry override the other, as the preceding case shows."
+    }
+  ]
+}

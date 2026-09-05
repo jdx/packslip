@@ -16,7 +16,8 @@ run = [
   "target/debug/packslip schema > static/schema/release-v1.json",
   "target/debug/packslip schema --releases > static/schema/releases-v1.json",
   # The site renders the spec from its canonical text.
-  "{ printf -- '---\ntitle: packslip release/v1 specification\nurl: /release/v1/\n---\n'; cat docs/spec/packslip.md; } > content/spec.md",
+  # Both predicate types must resolve: the list predicate is /releases/v1.
+  "{ printf -- '---\ntitle: packslip release/v1 specification\nurl: /release/v1/\naliases:\n  - /releases/v1/\n---\n'; cat docs/spec/packslip.md; } > content/spec.md",
   "rm -rf content/cli && mkdir -p content/cli",
   "usage generate markdown --multi --file packslip.usage.kdl --out-dir content/cli --url-prefix /cli --html-encode",
   "mv content/cli/index.md content/cli/_index.md",

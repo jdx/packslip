@@ -21,6 +21,29 @@ enabled as described below.
    packslip, publishes the GitHub release, and moves the action's matching
    major tag (`v0` for 0.x releases, `v1` for 1.x releases, and so on).
 
+## Cutting a major version
+
+release-plz derives the next version from conventional commits, and on a
+0.x version a breaking change is a minor bump: it proposes 0.4.0, never
+1.0.0. There is no configuration that overrides that, and the `release`
+job publishes any version on `main` that crates.io does not have yet — so
+a bare version bump would publish with a changelog that stops at the
+previous release.
+
+A major version is therefore cut by hand, in one pull request that carries
+all three of:
+
+1. `version` in `Cargo.toml`, and `Cargo.lock` updated with
+   `cargo update -p packslip`.
+2. The `CHANGELOG.md` entry for the new version, in the shape `cliff.toml`
+   renders: the compare link, the date, and one line per change.
+3. Whatever makes the release a major one.
+
+Merging that PR publishes the version and pushes its tag, with no release
+PR in between. Check afterwards that release-plz did not leave a stray
+release PR behind from the same push, and close it if it did. 1.0.0 was
+cut this way.
+
 The action reads its default CLI version from its own `Cargo.toml`, so
 the release PR's version bump also updates that default. The action and CLI
 share one version, including for action-only changes. `action.yml` is
@@ -95,9 +118,10 @@ than against the last Git tag.
   `release.yml` moves the matching tag after publishing the binaries.
   Major tags are excluded from the release trigger and changelog.
 
-The former `v1` alias for 0.x releases is no longer advanced. Users of
-that alias should switch to `v0` or an exact release tag; `v1` is reserved
-for CLI 1.x releases.
+`v1` was briefly an alias for 0.x releases. From 1.0.0 it means what it
+says, and `release.yml` moves it with each 1.x release. `v0` stops
+advancing at 0.3.1: a workflow pinned to `@v0` keeps working and stops
+receiving updates until it moves to `@v1`.
 
 After publication, check the workflow result, the platform assets, and
 the release's packslip. Use the [verification guide](https://packslip.dev/docs/verifying/)

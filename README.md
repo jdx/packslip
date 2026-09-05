@@ -10,9 +10,6 @@ installers, or executables. Publish `packslip.sigstore.json` beside your
 release files so consumers can verify their digests, select a platform,
 and find executables, resources, and build provenance.
 
-> **Experimental.** The format and tooling are still changing. Use packslip
-> for testing until the specification is declared stable.
-
 ## Start here
 
 [How packslip fits a release](https://packslip.dev/docs/release-workflow/)
@@ -47,7 +44,7 @@ permissions:
 
 steps:
   # Build the archives and create the release before this step.
-  - uses: jdx/packslip@v0
+  - uses: jdx/packslip@v1
     with:
       artifacts: dist/*.tar.xz dist/*.zip
       bin: mytool
@@ -58,8 +55,8 @@ manifest with the workflow's identity, verifies the bundle, and uploads
 it to the existing release. It does not upload your binaries. Consumers
 can pin the repository's identity without managing a signing key.
 
-The action and CLI share a version: `@v0` follows CLI 0.x releases, and
-`@v0.2.0` pins both to 0.2.0. By default, the action installs the CLI
+The action and CLI share a version: `@v1` follows CLI 1.x releases, and
+`@v1.0.0` pins both to 1.0.0. By default, the action installs the CLI
 version from its own commit's `Cargo.toml`. Set `packslip-version` to
 explicitly override that selection.
 
@@ -74,8 +71,8 @@ CLI first and points the action at it:
 runs-on: macos-15-intel
 steps:
   - uses: dtolnay/rust-toolchain@stable
-  - run: cargo install packslip --version 0.2.0 --locked --root "$RUNNER_TEMP/packslip"
-  - uses: jdx/packslip@v0.2.0
+  - run: cargo install packslip --version 1.0.0 --locked --root "$RUNNER_TEMP/packslip"
+  - uses: jdx/packslip@v1.0.0
     with:
       packslip-path: ${{ runner.temp }}/packslip/bin/packslip
       artifacts: dist/*.tar.xz
@@ -93,7 +90,10 @@ the action did not download is not verified, so the job vouches for it.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, checks, and documentation
 sources, and [RELEASING.md](RELEASING.md) for the maintainer release process.
-Feedback on the draft belongs in [issues](https://github.com/jdx/packslip/issues).
+The format is stable at version 1; see
+[Stability](https://packslip.dev/release/v1/#stability) for what that
+fixes and what a revision may add. Bug reports and format feedback
+belong in [issues](https://github.com/jdx/packslip/issues).
 
 Created by [Jeff Dickey (@jdx)](https://github.com/jdx), author of
 [mise](https://mise.jdx.dev) and [usage](https://usage.jdx.dev).

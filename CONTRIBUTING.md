@@ -1,9 +1,12 @@
 # Contributing
 
-packslip is an experimental format and a Rust reference implementation.
-For format feedback or a bug report, open an
+packslip is a stable format at version 1 and a Rust reference
+implementation of it. For a bug report or format feedback, open an
 [issue](https://github.com/jdx/packslip/issues) with the use case and,
-where possible, a small release layout that demonstrates it.
+where possible, a small release layout that demonstrates it. A proposal
+that changes what version 1 fixes is a version 2 proposal; the
+specification's [Stability](https://packslip.dev/release/v1/#stability)
+section says where that line falls.
 
 ## Set up the repository
 
@@ -27,6 +30,7 @@ toolchain, for example `RUSTUP_TOOLCHAIN=1.95.0 mise run docs`.
 | Format rules | `docs/spec/packslip.md` (canonical specification) |
 | CLI help | Command and argument documentation in `src/main.rs` and `src/cli.rs` |
 | Schema and validation | `src/model.rs` |
+| Conformance vectors | `tests/conformance/` (see its README) |
 | Creation and verification | `src/create.rs`, `src/verify.rs`, `src/sigstore.rs` |
 | GitHub Action | `action.yml` |
 | Site layout and styling | `layouts/`, `static/style.css` |
@@ -35,6 +39,13 @@ toolchain, for example `RUSTUP_TOOLCHAIN=1.95.0 mise run docs`.
 `content/spec.md`, `content/cli/`, `packslip.usage.kdl`, and
 `static/schema/` are generated. Edit their source and regenerate them;
 direct edits will be overwritten.
+
+A change to a rule the [conformance vectors](tests/conformance/README.md)
+cover changes the vectors too, in the same pull request. They are the
+specification in executable form, so a vector that has to be edited to
+keep the tests passing is a signal: either the change is a specification
+change, or the vector was describing behaviour the specification does not
+require. Say which in the pull request.
 
 ## Preview and build the docs
 

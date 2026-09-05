@@ -24,10 +24,15 @@ class Page(HTMLParser):
         self.references = []
         self.duplicates = []
         self.headings = 0
+        # An alias page is a redirect stub: a canonical link and a meta
+        # refresh, with no content of its own to check.
+        self.redirect = False
         self.feed(path.read_text())
 
     def handle_starttag(self, tag, attributes):
         attrs = dict(attributes)
+        if tag == "meta" and attrs.get("http-equiv", "").lower() == "refresh":
+            self.redirect = True
         if "id" in attrs:
             if attrs["id"] in self.ids:
                 self.duplicates.append(attrs["id"])
@@ -42,7 +47,10 @@ class Page(HTMLParser):
 def check_links(site):
     site = site.resolve()
     pages = {path.resolve(): Page(path) for path in site.rglob("*.html")}
-    required = ["index.html", "release/v1/index.html", "docs/index.html", "cli/index.html"]
+    # Both predicate types are published URLs and must resolve;
+    # releases/v1 is an alias onto the specification page.
+    required = ["index.html", "release/v1/index.html", "releases/v1/index.html",
+                "docs/index.html", "cli/index.html"]
     required += [f"docs/{name}/index.html" for name in (
         "release-workflow", "getting-started", "describing-releases", "resources", "host-requirements",
         "recipes", "publishing", "verifying", "release-lists", "mise",
@@ -50,7 +58,7 @@ def check_links(site):
     errors = [f"missing page: {name}" for name in required if not (site / name).is_file()]
     count = 0
     for path, page in pages.items():
-        if page.headings != 1:
+        if page.headings != 1 and not page.redirect:
             errors.append(f"{path}: expected one H1, found {page.headings}")
         for identifier in page.duplicates:
             errors.append(f"{path}: duplicate id {identifier}")
