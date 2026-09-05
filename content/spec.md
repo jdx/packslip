@@ -372,7 +372,9 @@ source.
 After applying scope and specificity, consumers prefer sources in this order:
 
 - `archive`: a path inside the artifact the consumer selected, from the
-  true archive root. The artifact's digest already covers it.
+  true archive root. The artifact's digest already covers it. Only for an
+  artifact that has paths inside it, which a bare format does not; see
+  Scope and identity.
 - `asset`: a separate release file. It is listed in `subject` with its
   digest and the entry carries its download `url`, so it verifies exactly
   as an artifact does. A skill directory ships this way as an archive of
@@ -398,10 +400,20 @@ the same platform have different layouts or a resource belongs to one
 variant. That artifact must exist and match any platform scope on the
 entry. An artifact-specific entry outranks every platform-only entry for
 the same resource; among equally scoped entries the platform specificity
-and source ordering below apply. For example, a man page inside
-`tool-linux-x64.tar.xz` can name that artifact without claiming the bare
-`tool-linux-x64` executable holds a man page. A TOML manifest spells this
-as `artifact = "tool-linux-x64.tar.xz"` inside `[[resource]]`.
+and source ordering below apply. For example, a man page that a `fips`
+variant keeps at a different path from the ordinary `tool-linux-x64.tar.xz`
+can name each archive rather than claiming one layout for the platform. A
+TOML manifest spells this as `artifact = "tool-linux-x64.tar.xz"` inside
+`[[resource]]`.
+
+An `archive` entry never applies to an artifact whose `format` is bare:
+`raw`, `gz`, `xz`, `zst`, or `bz2`. Such an artifact is the executable
+itself, so it holds no path for the entry to name. A vendor that publishes
+`tool-linux-x64.tar.xz` beside a bare `tool-linux-x64` therefore needs no
+scope to keep an archive entry off the bare one; the entry's source
+already says which artifacts it can describe. This bears on the source and
+not on the resource, so the same man page may still reach a bare artifact
+through an `asset` or `repo` entry.
 
 Entries compete only with entries for the same thing. Two entries are for
 the same thing when they share a `kind` and an identity: `bin` and
