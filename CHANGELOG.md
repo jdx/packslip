@@ -1,5 +1,57 @@
 # Changelog
 
+## [0.3.0](https://github.com/jdx/packslip/compare/v0.2.0..v0.3.0) - 2026-09-05
+
+### 🚀 Features
+
+- **(action)** run a caller-supplied packslip CLI by [@jdx](https://github.com/jdx) in [#55](https://github.com/jdx/packslip/pull/55)
+- **(docs)** generate CLI reference from usage-rs by [@jdx](https://github.com/jdx) in [#15](https://github.com/jdx/packslip/pull/15)
+- **(releases)** support a vendor-selected latest version by [@jdx](https://github.com/jdx) in [#46](https://github.com/jdx/packslip/pull/46)
+- **(resources)** scope a resource to one release artifact by [@jdx](https://github.com/jdx) in [#43](https://github.com/jdx/packslip/pull/43)
+- declare version ordering and require a release list by [@jdx](https://github.com/jdx) in [ec657a1](https://github.com/jdx/packslip/commit/ec657a16639d43cc0354742b01c9f4cbd8a4a4ba)
+- declare resources beyond executables, with GUI kinds and usage specs by [@jdx](https://github.com/jdx) in [#5](https://github.com/jdx/packslip/pull/5)
+- add the packslip logo by [@jdx](https://github.com/jdx) in [#11](https://github.com/jdx/packslip/pull/11)
+- **breaking** drop the supersedes field by [@jdx](https://github.com/jdx) in [#16](https://github.com/jdx/packslip/pull/16)
+- **breaking** require semver and derive prerelease and channel from the version by [@jdx](https://github.com/jdx) in [#18](https://github.com/jdx/packslip/pull/18)
+- reserve extensions for vendor- and consumer-defined data by [@jdx](https://github.com/jdx) in [#26](https://github.com/jdx/packslip/pull/26)
+- **breaking** tag discovery, in-repo release lists, artifact selection, manifests, and format fixes by [@jdx](https://github.com/jdx) in [#27](https://github.com/jdx/packslip/pull/27)
+- record shared libraries and required commands as host requirements by [@jdx](https://github.com/jdx) in [#32](https://github.com/jdx/packslip/pull/32)
+
+### 🐛 Bug Fixes
+
+- **(create)** androideabi triples are Android too by [@jdx](https://github.com/jdx) in [#31](https://github.com/jdx/packslip/pull/31)
+- **(release)** version the action and CLI in lockstep by [@jdx](https://github.com/jdx) in [#49](https://github.com/jdx/packslip/pull/49)
+- refuse two different assets that share a file name by [@jdx](https://github.com/jdx) in [#17](https://github.com/jdx/packslip/pull/17)
+
+### 📚 Documentation
+
+- **(readme)** **breaking** monorepo names, variants, named executables, repackager attestation by [@jdx](https://github.com/jdx) in [c64eb44](https://github.com/jdx/packslip/commit/c64eb4436bda83fd9d5927c1f490c1b370e2a378)
+- **(site)** tighten the prose and note mise's experimental support by [@jdx](https://github.com/jdx) in [#14](https://github.com/jdx/packslip/pull/14)
+- **(spec)** define artifacts in the goal by [@jdx](https://github.com/jdx) in [#22](https://github.com/jdx/packslip/pull/22)
+- **(spec)** clarify requirements and release list continuity by [@jdx](https://github.com/jdx) in [#44](https://github.com/jdx/packslip/pull/44)
+- **(spec)** define resource fallback tie order by [@jdx](https://github.com/jdx) in [#52](https://github.com/jdx/packslip/pull/52)
+- say the format and tooling are under heavy development by [@jdx](https://github.com/jdx) in [37ac74f](https://github.com/jdx/packslip/commit/37ac74f7c79956ad2699dd5a4ef9422f8896edb3)
+- say packslip is a proposal that mise and Omarchy may not adopt by [@jdx](https://github.com/jdx) in [18cc18e](https://github.com/jdx/packslip/commit/18cc18ef462686f48756408f827d25e8026244bd)
+- build site with Hugo and add GitHub star counter by [@jdx](https://github.com/jdx) in [#7](https://github.com/jdx/packslip/pull/7)
+- credit Jeff Dickey (@jdx) as author on the README, spec, and site by [@jdx](https://github.com/jdx) in [#8](https://github.com/jdx/packslip/pull/8)
+- reorganize guides and improve the documentation experience by [@jdx](https://github.com/jdx) in [#51](https://github.com/jdx/packslip/pull/51)
+- explain release workflow and clarify publishing guides by [@jdx](https://github.com/jdx) in [#53](https://github.com/jdx/packslip/pull/53)
+
+### 🔍 Other Changes
+
+- Variants, monorepo names, repackager attestation, release-plz by [@jdx](https://github.com/jdx) in [28b6ac9](https://github.com/jdx/packslip/commit/28b6ac90faff3e40fe359652b2bf8ec17003cb4a)
+- Configure Renovate by [@renovate[bot]](https://github.com/renovate[bot]) in [#1](https://github.com/jdx/packslip/pull/1)
+- configure Entire search by [@jdx](https://github.com/jdx) in [#4](https://github.com/jdx/packslip/pull/4)
+- generate release notes with communique by [@jdx](https://github.com/jdx) in [#6](https://github.com/jdx/packslip/pull/6)
+- exec completions run on demand; resources may set env by [@jdx](https://github.com/jdx) in [#41](https://github.com/jdx/packslip/pull/41)
+- a structured resource identity, and selection over the statement by [@jdx](https://github.com/jdx) in [#33](https://github.com/jdx/packslip/pull/33)
+- where SKILL.md sits in each skill source, and when a skill counts as present by [@jdx](https://github.com/jdx) in [#37](https://github.com/jdx/packslip/pull/37)
+- what a consumer does with a host requirement the host does not meet by [@jdx](https://github.com/jdx) in [#38](https://github.com/jdx/packslip/pull/38)
+- list_url and github_list_path give where a release list lives by [@jdx](https://github.com/jdx) in [#39](https://github.com/jdx/packslip/pull/39)
+- codex/mise msrv by [@jdx](https://github.com/jdx) in [#48](https://github.com/jdx/packslip/pull/48)
+
+<!-- generated by git-cliff -->
+
 ## [0.2.0](https://github.com/jdx/packslip/compare/v0.1.0..v0.2.0) - 2026-09-03
 
 ### 🚀 Features
