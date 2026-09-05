@@ -291,15 +291,20 @@ pub fn normalize_version(text: &str) -> Option<String> {
 }
 
 /// Whether a resource applies to an artifact: each of the resource's
-/// `os`, `arch`, and `libc` is absent or equal to the artifact's, and
-/// an `artifact` selector names it. A
+/// `os`, `arch`, and `libc` is absent or equal to the artifact's, an
+/// `artifact` selector names it, and an `archive` source is not being
+/// claimed of a bare-format artifact, which is the executable itself and
+/// holds no paths to name. A
 /// consumer choosing among entries for the same thing takes the one
 /// naming the most of those fields; [`select_resources`] does that.
 pub fn resource_fits(resource: &Resource, artifact: &Artifact) -> bool {
-    resource
-        .artifact
-        .as_ref()
-        .is_none_or(|name| name == &artifact.name)
+    let inside_a_bare_artifact =
+        resource.archive.is_some() && artifact.format.as_deref().is_some_and(is_bare_format);
+    !inside_a_bare_artifact
+        && resource
+            .artifact
+            .as_ref()
+            .is_none_or(|name| name == &artifact.name)
         && [
             (&resource.os, &artifact.os),
             (&resource.arch, &artifact.arch),
@@ -1188,6 +1193,10 @@ pub enum InvalidDocument {
     ResourceKind,
     #[error("resource {0:?} names artifact {1:?}, which is absent or outside its platform scope")]
     ResourceArtifact(String, String),
+    #[error(
+        "resource {0:?} names a path inside artifact {1:?}, which is a bare {2} executable and holds no paths"
+    )]
+    ResourceArchiveInBareArtifact(String, String, String),
     #[error("resource {0:?} must have exactly one of archive, asset, repo, exec")]
     ResourceSource(String),
     #[error("resource {0:?}: {1} path must be relative with no empty or .. segments")]
@@ -1464,6 +1473,23 @@ impl Statement {
                 return Err(InvalidDocument::ResourceKind);
             }
             check_extensions(&format!("resource {label:?}"), &resource.extensions)?;
+            // Said before the scope check below, which would otherwise
+            // report this as a platform mismatch.
+            if resource.archive.is_some()
+                && let Some(name) = &resource.artifact
+                && let Some(format) = p
+                    .artifacts
+                    .iter()
+                    .find(|a| &a.name == name)
+                    .and_then(|a| a.format.as_deref())
+                && is_bare_format(format)
+            {
+                return Err(InvalidDocument::ResourceArchiveInBareArtifact(
+                    label,
+                    name.clone(),
+                    format.to_string(),
+                ));
+            }
             if let Some(name) = &resource.artifact
                 && !p.artifacts.iter().any(|a| resource_fits(resource, a))
             {
@@ -2854,7 +2880,6 @@ mod tests {
         for (name, format, variant) in [
             ("mise.zip", "zip", None),
             ("mise-fips.tar.xz", "tar.xz", Some("fips")),
-            ("mise", "raw", None),
         ] {
             let other = Artifact {
                 name: name.into(),
@@ -2868,6 +2893,41 @@ mod tests {
                 vec![&s.predicate.resources[0]]
             );
         }
+        // A bare executable holds no paths, so neither archive entry
+        // reaches it, scope or no scope.
+        let bare = Artifact {
+            name: "mise".into(),
+            format: Some("raw".into()),
+            ..target.clone()
+        };
+        assert!(!resource_fits(&exact, &bare));
+        assert!(!resource_fits(&fallback, &bare));
+        assert!(select_resources(&s, &bare).is_empty());
+        // The same completion reaches it from an asset.
+        let asset = Resource {
+            archive: None,
+            asset: Some("mise-completions.tar.gz".into()),
+            url: Some("https://example.com/mise-completions.tar.gz".into()),
+            ..fallback.clone()
+        };
+        assert!(resource_fits(&asset, &bare));
+        // Naming a bare artifact from an archive entry is refused outright,
+        // rather than read as a platform mismatch.
+        let mut wrong = sample();
+        let bare_name = wrong.predicate.artifacts[0].name.clone();
+        wrong.predicate.artifacts[0].format = Some("raw".into());
+        // A bare artifact's executable is the artifact itself.
+        wrong.predicate.artifacts[0].bin = vec![Bin::named(bare_name.clone(), "mise")];
+        wrong.predicate.resources = vec![Resource {
+            artifact: Some(bare_name),
+            archive: Some("share/_mise".into()),
+            shell: Some("zsh".into()),
+            ..Resource::new("completion")
+        }];
+        assert!(matches!(
+            wrong.validate(),
+            Err(InvalidDocument::ResourceArchiveInBareArtifact(_, _, _))
+        ));
         s.predicate.resources[1].artifact = Some("missing.tar.xz".into());
         assert!(matches!(
             s.validate(),
