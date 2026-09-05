@@ -406,11 +406,14 @@ runs:
         BUNDLE: ${{ steps.create.outputs.bundle }}
       run: packslip verify "$BUNDLE"
 
+    # `--repo` is not optional here: without it `gh` asks git which repository
+    # it is in, and a job that only downloads artifacts has no checkout to ask.
     - name: Upload to the release
       if: inputs.upload == 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
+        REPO: ${{ github.repository }}
         TAG: ${{ steps.create.outputs.tag }}
         BUNDLE: ${{ steps.create.outputs.bundle }}
-      run: gh release upload "$TAG" "$BUNDLE" --clobber
+      run: gh release upload "$TAG" "$BUNDLE" --repo "$REPO" --clobber
