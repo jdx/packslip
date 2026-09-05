@@ -1,8 +1,26 @@
-<meta property="og:image" content="{{ "og-image.png" | absURL }}">
+{{- $title := .Title | plainify | htmlUnescape -}}
+{{- if .IsHome -}}{{- $title = "A release manifest anyone can verify" -}}{{- end -}}
+{{- if eq .Section "cli" -}}
+  {{- $title = "CLI reference" -}}
+  {{- if not .IsSection -}}{{- $title = printf "packslip %s" .File.ContentBaseName -}}{{- end -}}
+{{- end -}}
+{{- $alt := printf "%s — packslip" $title -}}
+{{- $font := resources.Get "social/fonts/SpaceGrotesk.ttf" -}}
+{{- $size := 64 -}}
+{{- if gt (len $title) 60 -}}{{- $size = 48 -}}{{- end -}}
+{{- if gt (len $title) 100 -}}{{- $size = 32 -}}{{- end -}}
+{{- if gt (len $title) 180 -}}{{- $size = 24 -}}{{- end -}}
+{{- $card := resources.Get "social/background.png" -}}
+{{- $card = $card.Filter
+  (images.Text "packslip / docs" (dict "font" $font "size" 32 "color" "#b8321f" "x" 64 "y" 58))
+  (images.Text ($title | truncate 260) (dict "font" $font "size" $size "color" "#1d1a16" "x" 64 "y" 170 "linespacing" 14))
+  (images.Text "packslip.dev" (dict "font" $font "size" 28 "color" "#6f675b" "x" 64 "y" 555))
+-}}
+<meta property="og:image" content="{{ $card.Permalink }}">
 <meta property="og:image:type" content="image/png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="packslip — A release manifest anyone can verify. One signed file. What shipped. How to verify it.">
+<meta property="og:image:alt" content="{{ $alt }}">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:image" content="{{ "og-image.png" | absURL }}">
-<meta name="twitter:image:alt" content="packslip — A release manifest anyone can verify. One signed file. What shipped. How to verify it.">
+<meta name="twitter:image" content="{{ $card.Permalink }}">
+<meta name="twitter:image:alt" content="{{ $alt }}">

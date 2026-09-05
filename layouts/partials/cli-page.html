@@ -11,6 +11,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ $pageTitle }}</title>
 <meta name="description" content="{{ $description }}">
+<meta property="og:title" content="{{ $pageTitle }}">
+<meta property="og:description" content="{{ $description }}">
+<meta property="og:type" content="article">
+<meta property="og:url" content="{{ .Permalink }}">
+<meta name="twitter:title" content="{{ $pageTitle }}">
+<meta name="twitter:description" content="{{ $description }}">
 {{ partial "social-image.html" . }}
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/style.css">
