@@ -31,7 +31,7 @@ permissions:
 
 steps:
   # Your existing build and release steps go here.
-  - uses: jdx/packslip@v0
+  - uses: jdx/packslip@v1
     id: packslip
     with:
       artifacts: dist/*.tar.xz dist/*.zip
@@ -48,8 +48,8 @@ matched by `artifacts`, creates and signs the manifest, verifies the
 bundle, and uploads it. The output `${{ steps.packslip.outputs.bundle }}`
 is the local bundle path.
 
-The action and CLI share a version: `@v0` follows CLI 0.x releases, and
-`@v0.2.0` pins both to 0.2.0. By default, the action installs the CLI
+The action and CLI share a version: `@v1` follows CLI 1.x releases, and
+`@v1.0.0` pins both to 1.0.0. By default, the action installs the CLI
 version from its own commit's `Cargo.toml`. Set `packslip-version` to
 explicitly override that selection.
 `packslip-path` runs a CLI the job already has instead of downloading
@@ -58,7 +58,7 @@ one; see [Build the CLI on the runner](#build-the-cli-on-the-runner).
 ## Add resources and requirements
 
 ```yaml
-- uses: jdx/packslip@v0
+- uses: jdx/packslip@v1
   with:
     artifacts: dist/*.tar.xz
     bin: mytool
@@ -81,7 +81,7 @@ paths or requirements differ between artifacts.
 Run the action once per tool, selecting only that tool's artifacts:
 
 ```yaml
-- uses: jdx/packslip@v0
+- uses: jdx/packslip@v1
   with:
     project: github.com/owner/repo/mytool
     version: 1.2.3
@@ -117,8 +117,8 @@ jobs:
     steps:
       # Build the archives and create the release before these steps.
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo install packslip --version 0.2.0 --locked --root "$RUNNER_TEMP/packslip"
-      - uses: jdx/packslip@v0.2.0
+      - run: cargo install packslip --version 1.0.0 --locked --root "$RUNNER_TEMP/packslip"
+      - uses: jdx/packslip@v1.0.0
         with:
           packslip-path: ${{ runner.temp }}/packslip/bin/packslip
           artifacts: dist/*.tar.xz

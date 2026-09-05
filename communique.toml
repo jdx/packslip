@@ -3,15 +3,18 @@ packslip is a signed release-manifest format and CLI for vendor binaries. A mani
 what shipped and how to verify it, including checksums, target platforms, executables, and
 provenance links. Producers sign manifests with Sigstore or Ed25519, and consumers verify them
 against a pinned repository identity or public key without vendor-specific logic or a registry.
-The repository also provides the `jdx/packslip` GitHub Action and hosts the draft specification
+The repository also provides the `jdx/packslip` GitHub Action and hosts the specification
 at packslip.dev.
 """
 
 system_extra = """
-packslip is a work-in-progress proposal, not an adopted standard. Its version 1 format and CLI
-may still change incompatibly, and mise ships only experimental support for it. Match that
-status: do not imply broad adoption, production maturity, or guaranteed future compatibility.
-Describe what changed and why, and call out breaking changes plainly.
+The format is stable at version 1: field meanings, names, vocabularies, and the rules that
+decide what a consumer installs are fixed, a later revision of version 1 may only add optional
+fields and vocabulary members, and a break would be a version 2 with its own predicate type.
+The CLI, library, and Action share one semver version, which is not the format's version; do
+not conflate the two. Adoption is still early, so do not imply broad uptake or claim that any
+particular consumer ships support. Describe what changed and why, and call out breaking
+changes plainly.
 """
 
 [defaults]
