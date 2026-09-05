@@ -89,9 +89,13 @@ inputs:
     default: ""
   attest:
     description: >
-      Also attest SLSA build provenance for every artifact with
-      actions/attest-build-provenance and link it from the packslip. Needs
-      the attestations: write permission.
+      What to do about build provenance. `true` attests every artifact with
+      actions/attest-build-provenance and links the attestation from the
+      packslip, and needs the attestations: write permission. `link` only
+      links it, for a workflow whose build jobs already attested the files
+      as they produced them; it needs no extra permission, and an artifact
+      nothing attested leaves a URL that resolves to nothing. `false` does
+      neither.
     required: false
     default: "true"
   out:
@@ -213,6 +217,16 @@ runs:
           echo 'EOF'
         } >> "$GITHUB_OUTPUT"
 
+    - name: Check the provenance mode
+      shell: bash
+      env:
+        IN_ATTEST: ${{ inputs.attest }}
+      run: |
+        case "$IN_ATTEST" in
+          true | link | false) ;;
+          *) echo "attest must be true, link, or false, not \"$IN_ATTEST\"" >&2; exit 1 ;;
+        esac
+
     - name: Attest build provenance
       if: inputs.attest == 'true'
       uses: actions/attest-build-provenance@v2
@@ -276,9 +290,10 @@ runs:
           [ -n "$line" ] && args+=(--extension "$line")
         done <<< "$IN_EXTENSIONS"
         mapfile -t files < "${RUNNER_TEMP}/packslip-files"
-        if [ "$IN_ATTEST" = true ]; then
+        if [ "$IN_ATTEST" = true ] || [ "$IN_ATTEST" = link ]; then
           # GitHub serves each artifact's provenance at the attestations API
-          # by subject digest; link one per artifact, by file name.
+          # by subject digest, whoever attested it, so the link is the same
+          # whether this step attested the file or an earlier job did.
           for f in "${files[@]}"; do
             digest=$(sha256sum "$f" | cut -d' ' -f1)
             args+=(--provenance "${f##*/}=${API}/repos/${REPO}/attestations/sha256:${digest}")
