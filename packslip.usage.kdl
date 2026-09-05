@@ -12,6 +12,12 @@ A vendor runs `packslip create` in its release job to publish one signed documen
 arg_required_else_help #true
 flag "-h --help" help="Print help" action=help builtin=#true
 flag "-V --version" help="Print version" action=version builtin=#true
+cmd completion help="Generate a self-contained shell completion script" {
+    flag "-h --help" help="Print help" action=help builtin=#true
+    arg <SHELL> help="Shell to generate completions for" {
+        choices bash elvish zsh fish nu nushell powershell pwsh
+    }
+}
 cmd create help="Create and sign a packslip for a release" {
     long_help #"""
 Create and sign a packslip for a release

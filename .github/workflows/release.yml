@@ -219,8 +219,42 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: Include the CLI specification
-        run: cp packslip.usage.kdl dist/packslip.usage.kdl
+      - name: Install completion syntax checkers
+        timeout-minutes: 5
+        run: |
+          if [[ -f /etc/apt/apt-mirrors.txt ]]; then
+            sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 install -y zsh fish
+          # Hosted runners include PowerShell; Namespace images have its signed apt repository.
+          if ! command -v pwsh >/dev/null 2>&1; then
+            sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 install -y powershell
+          fi
+      - name: Generate the CLI specification and completions
+        run: |
+          set -euo pipefail
+          mkdir -p bin
+          tar -xJf "dist/packslip-${GITHUB_REF_NAME}-linux-x64.tar.xz" --strip-components=1 -C bin
+          bin/packslip usage > dist/packslip.usage.kdl
+          for shell in bash zsh fish powershell; do
+            bin/packslip completion "$shell" > "dist/packslip.$shell"
+            test -s "dist/packslip.$shell"
+            grep -Fq '__complete_word__' "dist/packslip.$shell"
+            bin/packslip __complete_word__ --shell "$shell" --line 'packslip ver' | grep -Fq -- 'verify'
+          done
+          bash -n dist/packslip.bash
+          zsh -n dist/packslip.zsh
+          fish --no-execute dist/packslip.fish
+          cat > completion-syntax-check.ps1 <<'POWERSHELL'
+          $ErrorActionPreference = 'Stop'
+          foreach ($script in Get-ChildItem -LiteralPath "dist" -Filter '*.powershell') {
+            $parseErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$null, [ref]$parseErrors)
+            if ($parseErrors.Count) { $parseErrors | Write-Error; exit 1 }
+          }
+          POWERSHELL
+          pwsh -NoProfile -NonInteractive -File completion-syntax-check.ps1
       - name: Attest the release files
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
