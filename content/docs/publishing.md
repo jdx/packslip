@@ -161,7 +161,7 @@ is not checked at all, so the job vouches for where it came from.
 | `extensions` | One `NAME=JSON` extension per line. |
 | `url-base` | Artifact download prefix; defaults to the release's download URL. |
 | `notes-url` | Defaults to the release page. |
-| `attest` | Defaults to `true`. Set to `false` to skip generating and linking provenance. |
+| `attest` | Defaults to `true`. Use `link` when the build jobs already attested the files, or `false` for neither. |
 | `out` | Bundle output directory; defaults to `packslip`. |
 | `upload` | Defaults to `true`. Set to `false` to keep the bundle local. |
 | `packslip-version` | CLI version; defaults to the version in the action's `Cargo.toml`. |
@@ -173,6 +173,14 @@ only through the manifest or a resource declaration are not automatically
 included in that step. Include them in `artifacts` if you want the action
 to attest them too. A file also declared as a resource asset is recorded
 as an asset rather than an installable artifact.
+
+A workflow whose build jobs attest each file as they produce it should set
+`attest: link`. GitHub serves an artifact's provenance by subject digest
+whoever attested it, so the packslip links the same URL either way, and the
+action does not add a second statement about digests already covered. It
+needs no `attestations: write` permission in that case. An artifact nothing
+attested leaves a link that resolves to nothing, so `link` belongs only in a
+workflow that really does attest every file it publishes.
 
 The action passes project, version, source, and URL metadata as CLI flags,
 which take precedence over the corresponding manifest values. Change
