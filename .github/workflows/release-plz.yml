@@ -1,4 +1,4 @@
-# Releases are manual: release-plz keeps a release PR open with the next
+# Releases are manual: this workflow keeps a release PR open with the next
 # version and changelog; merging it publishes the crate and pushes the
 # vX.Y.Z tag, which starts release.yml. See RELEASING.md.
 name: release-plz
@@ -15,45 +15,117 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The version bump, the changelog, and the regenerated CLI documentation
+  # land on the release branch in one push. `release-plz release-pr` used
+  # to open the PR first and a later step amended the documentation in;
+  # every push to main made release-plz replace the branch with a fresh
+  # commit that had no documentation, and the ~75s build that restored it
+  # was a window in which merging shipped a CLI reference for the previous
+  # version. That is how 1.0.2 shipped with the 1.0.1 reference: the PR
+  # was merged 18s after release-plz refreshed it. Driving `release-plz
+  # update` directly means the PR never has a state without the docs.
   release-pr:
     if: github.repository_owner == 'jdx'
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write
+    env:
+      # One fixed branch, force-pushed on each refresh, so a refresh never
+      # leaves a stale `release-plz-<timestamp>` branch behind and the PR
+      # keeps its number across refreshes.
+      RELEASE_BRANCH: release-plz
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          # A PAT, not the built-in token: a PR pushed with the built-in
+          # token starts no workflow, so CI would never run on the
+          # release PR.
           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
       - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
         with:
           cache: false
       # `mise run render` builds the CLI to regenerate the docs below.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - id: release-plz
-        uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131
+      # cargo-semver-checks backs `semver_check = true` in release-plz.toml.
+      - uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2.85.11
         with:
-          command: release-pr
+          tool: release-plz@0.3.160,cargo-semver-checks@0.48.0
+      - name: Bump the version and changelog
+        id: update
         env:
-          # A PAT, not the built-in token: a PR or tag pushed with the
-          # built-in token starts no workflow, so CI would never run on
-          # the release PR and release.yml would never build the binaries.
+          # The changelog links each entry to its PR and author, which
+          # git-cliff resolves through the GitHub API.
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
-      - name: Squash generated CLI documentation into the release PR
-        if: steps.release-plz.outputs.prs_created == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
-          RELEASE_PR: ${{ steps.release-plz.outputs.pr }}
         run: |
           set -euo pipefail
-          pr_number=$(jq -r '.number' <<<"$RELEASE_PR")
-          gh pr checkout "$pr_number"
-          mise run render
-          git add packslip.usage.kdl content/cli
-          if ! git diff --cached --quiet; then
-            git commit --amend --no-edit
-            git push --force-with-lease
+          release-plz update --git-token "$GITHUB_TOKEN"
+          # After the release PR merges, `update` finds the version already
+          # ahead of crates.io and the changelog already written, and
+          # leaves the tree clean. That is the signal that there is
+          # nothing to open a PR for.
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "Nothing to release."
+            echo "bump=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          version=$(cargo metadata --format-version 1 --no-deps \
+            | jq -r '.packages[] | select(.name == "packslip") | .version')
+          echo "bump=true" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      # A clean tree means every packaged change is already released or
+      # already in a merged release commit, so an open release PR can only
+      # be a stray: one that a run holding a pre-merge checkout pushed
+      # after the real one merged.
+      - name: Close a stray release PR
+        if: steps.update.outputs.bump == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: |
+          set -euo pipefail
+          pr=$(gh pr list --head "$RELEASE_BRANCH" --base main --state open \
+            --json number --jq '.[0].number // empty')
+          if [ -n "$pr" ]; then
+            gh pr close "$pr" --delete-branch \
+              --comment "Nothing is left to release from main, so this PR is stale."
+          fi
+      - name: Regenerate the CLI documentation
+        if: steps.update.outputs.bump == 'true'
+        run: mise run render
+      - name: Open or update the release PR
+        if: steps.update.outputs.bump == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          VERSION: ${{ steps.update.outputs.version }}
+        run: |
+          set -euo pipefail
+          title="chore: release v$VERSION"
+          # The PR body is this version's section of the changelog.
+          body=$(awk -v v="$VERSION" '/^## \[/ { p = index($0, "[" v "]") == 4 } p && !/generated by git-cliff/' CHANGELOG.md)
+          git add -A
+          git status --short
+          git \
+            -c user.name="release-plz[bot]" \
+            -c user.email="release-plz+bot@users.noreply.github.com" \
+            commit -m "$title"
+          # A run that started before a release PR merged still holds the
+          # pre-merge checkout, and its push would resurrect the version
+          # that just shipped. The run queued for the merge commit owns the
+          # release branch from here on.
+          git fetch --quiet origin main
+          if [ "$(git rev-parse origin/main)" != "$GITHUB_SHA" ]; then
+            echo "main moved past $GITHUB_SHA; leaving the release PR to the newer run."
+            exit 0
+          fi
+          git push --force origin "HEAD:refs/heads/$RELEASE_BRANCH"
+          pr=$(gh pr list --head "$RELEASE_BRANCH" --base main --state open \
+            --json number --jq '.[0].number // empty')
+          if [ -z "$pr" ]; then
+            gh pr create --head "$RELEASE_BRANCH" --base main \
+              --title "$title" --body "$body"
+          else
+            gh pr edit "$pr" --title "$title" --body "$body"
           fi
 
   # Publishes to crates.io and pushes the tag once a release PR has been
