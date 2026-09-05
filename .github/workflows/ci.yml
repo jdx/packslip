@@ -33,6 +33,7 @@ jobs:
       # features; keep that build compiling and its tests passing.
       - run: cargo clippy --no-default-features --all-targets -- -D warnings
       - run: cargo test --no-default-features
+      - run: mise run lint
       - run: mise run render
       - run: usage lint packslip.usage.kdl
       - run: mise run docs:check
@@ -126,3 +127,35 @@ jobs:
             echo "verification accepted the wrong key" >&2
             exit 1
           fi
+      # The releases action, over a directory laid out the way a download
+      # host is: <tag>/packslip.sigstore.json, signed by this job.
+      - name: A bundle for the releases action
+        run: |
+          set -euo pipefail
+          mkdir -p lists/v0.0.0
+          ./target/release/packslip create \
+            --project ci.packslip.invalid \
+            --version 0.0.0 \
+            --out lists/v0.0.0 \
+            --url-base https://ci.packslip.invalid/v0.0.0 \
+            --source-repo "https://github.com/${GITHUB_REPOSITORY}" \
+            --tag v0.0.0 \
+            --commit "$GITHUB_SHA" \
+            dist/tool-v0.0.0-linux-x64.tar.xz
+      - uses: ./releases
+        id: list
+        with:
+          project: ci.packslip.invalid
+          dir: lists
+          url-base: https://ci.packslip.invalid
+          valid-for: 1d
+          packslip-path: target/release/packslip
+      - name: The list names that release
+        env:
+          COUNT: ${{ steps.list.outputs.count }}
+          LIST: ${{ steps.list.outputs.list }}
+        run: |
+          set -euo pipefail
+          test "$COUNT" = 1
+          ./target/release/packslip show "$LIST" \
+            | jq -e '.predicate.project == "ci.packslip.invalid" and (.predicate.releases | length == 1)' >/dev/null

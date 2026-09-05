@@ -121,6 +121,15 @@ in the filename: `tools/mytool` becomes `packslip.tools-mytool.sigstore.json`.
 The signer is still pinned to the repository. Consumers match the signed
 `project` field, not the bundle filename.
 
+## Publish outside GitHub releases
+
+The signed URLs are whatever `url-base` says, so a release whose files are
+served from a download host of your own sets it and uploads the files
+there itself; the action only uploads the bundle, to the GitHub release,
+and `upload: false` keeps even that local. A project named after that host
+rather than the repository also publishes a signed release list there.
+[Host releases on your own domain](/docs/self-hosting/) covers both.
+
 ## Build the CLI on the runner
 
 The action downloads the release archive for the runner's platform. Where
@@ -178,7 +187,7 @@ is not checked at all, so the job vouches for where it came from.
 | `artifacts` | Whitespace-separated local files or globs. Between this and `download`, at least one file must match. |
 | `download` | Whitespace-separated release asset name patterns to fetch before collecting artifacts; joins `artifacts`. See [Download from the release](#download-from-the-release). |
 | `bin` | Whitespace-separated executable names or `NAME=PATH` entries. |
-| `project` | Project name; defaults to `github.com/<owner>/<repo>`. |
+| `project` | Project name; defaults to `github.com/<owner>/<repo>`. A host such as `mytool.example.com` names a [project on its own domain](/docs/self-hosting/). |
 | `version` | Semver version; defaults to the tag without its leading `v`. |
 | `tag` | Existing release tag; defaults to the triggering tag. |
 | `manifest` | Path to a TOML manifest. Its artifact entries join the matched files. |
@@ -187,7 +196,7 @@ is not checked at all, so the job vouches for where it came from.
 | `resources` | One resource declaration per line. Add `@os[/arch[/libc]]` after the kind to scope one to a platform. |
 | `require` | One `bin:NAME[@MIN]` requirement per line. |
 | `extensions` | One `NAME=JSON` extension per line. |
-| `url-base` | Artifact download prefix; defaults to the release's download URL. |
+| `url-base` | Artifact download prefix; defaults to the release's download URL. Set it when the files are served from elsewhere. |
 | `notes-url` | Defaults to the release page. |
 | `attest` | Defaults to `true`. Use `link` when the build jobs already attested the files, or `false` for neither. |
 | `out` | Bundle output directory; defaults to `packslip`. |

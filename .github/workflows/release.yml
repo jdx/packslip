@@ -6,6 +6,13 @@ name: release
 on:
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  # A release that shipped before packslip.dev served its own can be
+  # described again under that name; see the backfill job.
+  workflow_dispatch:
+    inputs:
+      backfill-tag:
+        description: "An existing release tag to publish at packslip.dev"
+        required: true
 
 permissions:
   contents: read
@@ -15,6 +22,7 @@ env:
 
 jobs:
   version:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     outputs:
       major-tag: ${{ steps.version.outputs.major-tag }}
@@ -233,37 +241,22 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: communique generate "$GITHUB_REF_NAME" --github-release
       # Dogfood: the binary just built signs its own release manifest with
-      # this job's identity, then verifies it under the policy the project
-      # name github.com/jdx/packslip implies.
+      # this job's identity, as the project packslip.dev, and publishes the
+      # files and the bundle where that name says they are. The bundle is
+      # attached to the GitHub release too, for anyone reading it there.
       - name: Publish this release's packslip
         env:
+          TAG: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
           mkdir -p bin
-          tar -xJf "dist/packslip-v${version}-linux-x64.tar.xz" --strip-components=1 -C bin
-          args=()
-          for f in dist/*; do
-            digest=$(sha256sum "$f" | cut -d' ' -f1)
-            args+=(--provenance "${f##*/}=${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/attestations/sha256:${digest}")
-          done
-          bin/packslip create \
-            --project "github.com/${GITHUB_REPOSITORY}" \
-            --version "$version" \
-            --out packslip \
-            --url-base "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}" \
-            --source-repo "https://github.com/${GITHUB_REPOSITORY}" \
-            --tag "$GITHUB_REF_NAME" \
-            --commit "$GITHUB_SHA" \
-            --bin packslip \
-            --resource cli-spec/usage=asset:dist/packslip.usage.kdl \
-            "${args[@]}" \
-            dist/*
-          bin/packslip verify packslip/packslip.sigstore.json \
-            --artifact "dist/packslip-v${version}-linux-x64.tar.xz" \
-            --artifact dist/packslip.usage.kdl
-          gh release upload "$GITHUB_REF_NAME" packslip/packslip.sigstore.json --clobber
+          tar -xJf "dist/packslip-v${TAG#v}-linux-x64.tar.xz" --strip-components=1 -C bin
+          PATH="$PWD/bin:$PATH" scripts/describe-release.sh
+          gh release upload "$TAG" packslip/packslip.sigstore.json --clobber
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -287,3 +280,65 @@ jobs:
             git fetch origin "refs/tags/$MAJOR_TAG:refs/tags/$MAJOR_TAG" -f || true
             [ "$attempt" -lt 3 ] || exit 1
           done
+
+  # The release index at https://packslip.dev/.well-known/packslip.json,
+  # rebuilt once the release above is public so the action can install the
+  # CLI it was released with.
+  list:
+    needs: release
+    uses: ./.github/workflows/packslip-releases.yml
+    secrets: inherit
+    permissions:
+      contents: read
+      id-token: write
+
+  # Describe an earlier release as packslip.dev. It runs from this workflow
+  # file on purpose: a consumer remembers which workflow signed a project's
+  # bundles, and a backfilled release must not look like a different signer.
+  backfill:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TAG: ${{ inputs.backfill-tag }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The tag's commit is recorded in the bundle.
+          fetch-depth: 0
+      - name: Install packslip
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKSLIP_VERSION: ""
+          PACKSLIP_PATH: ""
+          PACKSLIP_ACTION_ROOT: .
+        run: bash scripts/install-packslip.sh
+      - name: Download the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -D dist
+          # The bundle that shipped with it names github.com/jdx/packslip;
+          # a new one is written for packslip.dev.
+          rm -f dist/packslip*.sigstore.json
+          ls -la dist
+          echo "published_at=$(gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json publishedAt -q .publishedAt)" >> "$GITHUB_ENV"
+          echo "commit=$(git rev-list -n1 "$TAG")" >> "$GITHUB_ENV"
+      - name: Publish the release's packslip
+        env:
+          COMMIT: ${{ env.commit }}
+          PUBLISHED_AT: ${{ env.published_at }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_SECRET_ACCESS_KEY }}
+        run: scripts/describe-release.sh
+
+  backfill-list:
+    needs: backfill
+    uses: ./.github/workflows/packslip-releases.yml
+    secrets: inherit
+    permissions:
+      contents: read
+      id-token: write

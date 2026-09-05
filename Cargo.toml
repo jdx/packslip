@@ -10,8 +10,9 @@ homepage = "https://packslip.dev"
 authors = ["Jeff Dickey <@jdx>"]
 keywords = ["sigstore", "in-toto", "release", "supply-chain", "minisign"]
 categories = ["command-line-utilities", "cryptography"]
-# Keep action.yml in the package so action-only changes trigger a shared release.
-exclude = ["content/", "data/", "layouts/", "static/", "hugo.toml", ".github/", "CHANGELOG.md", "RELEASING.md", "cliff.toml", "release-plz.toml"]
+# Keep the actions and the scripts they run in the package so action-only
+# changes trigger a shared release; the site's Worker is not the crate's.
+exclude = ["content/", "data/", "layouts/", "static/", "hugo.toml", "cloudflare/", "wrangler.jsonc", ".github/", "CHANGELOG.md", "RELEASING.md", "cliff.toml", "release-plz.toml"]
 
 [package.metadata.docs.rs]
 all-features = true

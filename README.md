@@ -25,7 +25,9 @@ including which parts belong to the publisher, CLI, and consumer.
 - **Consume a release:** [Verification](https://packslip.dev/docs/verifying/)
   explains trust pins and the checks an installer must perform.
 - **Host your own releases:** [Release lists](https://packslip.dev/docs/release-lists/)
-  covers discovery, withdrawals, and the recommended version.
+  covers discovery, withdrawals, and the recommended version, and
+  [Host releases on your own domain](https://packslip.dev/docs/self-hosting/)
+  publishes a project's releases and list from GitHub Actions to a host you run.
 
 For exact fields and rules, read the [specification](docs/spec/packslip.md),
 [CLI reference](https://packslip.dev/cli/), or
@@ -53,7 +55,9 @@ steps:
 The action attests the matched files, hashes the artifacts, signs the
 manifest with the workflow's identity, verifies the bundle, and uploads
 it to the existing release. It does not upload your binaries. Consumers
-can pin the repository's identity without managing a signing key.
+can pin the repository's identity without managing a signing key. A
+second action, `jdx/packslip/releases`, builds a project's signed release
+list from the bundles it has published.
 
 The action and CLI share a version: `@v1` follows CLI 1.x releases, and
 `@v1.0.0` pins both to 1.0.0. By default, the action installs the CLI

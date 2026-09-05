@@ -18,8 +18,12 @@ enabled as described below.
    `Cargo.toml`, builds five platform binaries, signs and notarizes the
    macOS one, attests them all, and creates a draft GitHub release. It
    generates narrative notes with Communiqué, publishes the release's
-   packslip, publishes the GitHub release, and moves the action's matching
-   major tag (`v0` for 0.x releases, `v1` for 1.x releases, and so on).
+   packslip as the project `packslip.dev` — the files and bundle to the R2
+   bucket behind that host, the bundle to the GitHub release too —
+   publishes the GitHub release, moves the action's matching major tag
+   (`v0` for 0.x releases, `v1` for 1.x releases, and so on), and rebuilds
+   the signed release list at `https://packslip.dev/.well-known/packslip.json`
+   through `packslip-releases.yml`, which also re-signs it weekly.
 
 ## Cutting a major version
 
@@ -44,10 +48,11 @@ PR in between. Check afterwards that release-plz did not leave a stray
 release PR behind from the same push, and close it if it did. 1.0.0 was
 cut this way.
 
-The action reads its default CLI version from its own `Cargo.toml`, so
-the release PR's version bump also updates that default. The action and CLI
-share one version, including for action-only changes. `action.yml` is
-included in the Cargo package so release-plz detects those changes.
+The actions read their default CLI version from the repository's
+`Cargo.toml`, so the release PR's version bump also updates that default.
+The actions and CLI share one version, including for action-only changes.
+`action.yml`, `releases/action.yml`, and `scripts/` are included in the
+Cargo package so release-plz detects those changes.
 Use conventional commits such as `fix(action): ...` or `feat(action): ...`;
 breaking action changes affect the shared version too.
 
@@ -92,6 +97,8 @@ behind the "cannot be verified" dialog.
 | Variable `RELEASE_PLZ_RELEASE=true` | Enables the release job. Without it, merging the release PR does not publish a release. |
 | Secrets `CERTIFICATES_P12`, `CERTIFICATES_P12_PASS` | The base64-encoded Developer ID Application certificate and its export password, the same pair the other jdx.dev CLIs use. The macOS build fails at signing without them. |
 | Secrets `APPLE_API_KEY_P8`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID` | A base64-encoded App Store Connect API key and its key and issuer IDs. The macOS job fails early and by name when any is missing, rather than shipping an unnotarized binary. |
+| Secrets `CLOUDFLARE_ACCESS_KEY_ID`, `CLOUDFLARE_SECRET_ACCESS_KEY` | S3 credentials for the `jdx-releases` R2 bucket, shared across the jdx.dev CLIs as organization secrets. The release job and `packslip-releases.yml` write the release files, bundles, and list under `packslip/`. |
+| Secret `CLOUDFLARE_TOKEN` | An API token that can deploy Workers and their custom domains. `site.yml` deploys packslip.dev with it. |
 
 Communiqué's context and tone are configured in `communique.toml`.
 Its version is declared in `mise.toml` and resolved in `mise.lock`;
@@ -125,6 +132,13 @@ receiving updates until it moves to `@v1`.
 
 After publication, check the workflow result, the platform assets, and
 the release's packslip. Use the [verification guide](https://packslip.dev/docs/verifying/)
-to check a downloaded artifact against the repository identity.
+to check a downloaded artifact against the repository identity, and confirm
+that `https://packslip.dev/.well-known/packslip.json` names the new version.
+
+A release that shipped before packslip.dev served its own can be published
+there afterwards: run `release.yml` by hand with `backfill-tag` set to its
+tag. The job describes the release's existing GitHub assets again as
+`packslip.dev`, from the same workflow file that signs new releases, so a
+consumer sees one signer throughout, and then rebuilds the list.
 For local builds and documentation generation, see
 [CONTRIBUTING.md](CONTRIBUTING.md).

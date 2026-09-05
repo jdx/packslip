@@ -1,0 +1,241 @@
+name: packslip releases
+description: >
+  Build and sign a project's release list from the release bundles it has
+  published: verify each one against the repository's identity, index
+  their digests, and write a signed list to publish at the project's
+  well-known URL.
+author: Jeff Dickey <@jdx>
+branding:
+  icon: list
+  color: red
+
+inputs:
+  project:
+    description: >
+      The project's name, as its bundles spell it: a host such as
+      mytool.example.com, or a host with a path.
+    required: true
+  dir:
+    description: >
+      A directory holding the published bundles as <dir>/<tag>/<bundle>,
+      one tag directory per release, as synced down from the download host.
+    required: true
+  url-base:
+    description: >
+      Where the bundles are served, without the tag: https://<host>. Each
+      entry's URL is <url-base>/<tag>/<bundle>.
+    required: true
+  bundle:
+    description: >
+      The bundle file name inside every tag directory. A tool in a monorepo
+      uses its own name, such as packslip.mytool.sigstore.json.
+    required: false
+    default: packslip.sigstore.json
+  sequence:
+    description: >
+      The list's sequence, an integer that must increase with every list
+      published; defaults to the current Unix time, which does so with no
+      state to keep. A consumer refuses a list whose sequence is below one
+      it accepted, so a project that switches to the default cannot go
+      back to small hand-picked numbers.
+    required: false
+    default: ""
+  valid-for:
+    description: >
+      How long the list stays current, as a number and unit (30d, 12h, 2w).
+      Publish a fresh list before it expires, whether or not a release
+      shipped.
+    required: false
+    default: 30d
+  latest:
+    description: >
+      Recommend this exact listed version for unconstrained latest
+      requests. Empty leaves consumers to take the highest eligible version.
+    required: false
+    default: ""
+  yank:
+    description: >
+      Releases to mark withdrawn, one per line, as TAG=REASON or URL=REASON.
+      A withdrawn release stays in the list with its status.
+    required: false
+    default: ""
+  security:
+    description: >
+      Releases that fix a vulnerability, one per line, as a TAG or URL.
+    required: false
+    default: ""
+  identity-prefix:
+    description: >
+      The certificate identity prefix every input bundle, and the output
+      list, must verify under; defaults to this repository's workflows.
+    required: false
+    default: ""
+  identity:
+    description: An exact certificate identity to require instead of a prefix
+    required: false
+    default: ""
+  issuer:
+    description: The OIDC issuer of that identity
+    required: false
+    default: https://token.actions.githubusercontent.com
+  out:
+    description: >
+      Where to write the list. Publish it at the project's well-known URL:
+      https://<host>/.well-known/packslip.json, or
+      https://<host>/.well-known/packslip/<path>.json for a project with
+      a path.
+    required: false
+    default: packslip-releases.sigstore.json
+  packslip-version:
+    description: >
+      The packslip release to run; defaults to the version this action was
+      released with (read from its Cargo.toml). Ignored when packslip-path
+      is set.
+    required: false
+    default: ""
+  packslip-path:
+    description: >
+      An existing packslip executable to run instead of downloading a
+      release: a path, or a name to look up on PATH. The action runs the
+      binary as given and does not check its provenance.
+    required: false
+    default: ""
+  token:
+    description: Token for downloading packslip
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  list:
+    description: Path of the written list
+    value: ${{ steps.build.outputs.list }}
+  count:
+    description: How many releases the list names
+    value: ${{ steps.bundles.outputs.count }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install packslip
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        PACKSLIP_VERSION: ${{ inputs.packslip-version }}
+        PACKSLIP_PATH: ${{ inputs.packslip-path }}
+        PACKSLIP_ACTION_ROOT: ${{ github.action_path }}/..
+      run: bash "$PACKSLIP_ACTION_ROOT/scripts/install-packslip.sh"
+
+    # The list signs for the bundles it names, so each is verified under
+    # the same pin first: a bundle the download host acquired some other
+    # way fails here rather than being indexed.
+    - name: Verify the published bundles
+      id: bundles
+      shell: bash
+      env:
+        IN_PROJECT: ${{ inputs.project }}
+        IN_DIR: ${{ inputs.dir }}
+        IN_URL_BASE: ${{ inputs.url-base }}
+        IN_BUNDLE: ${{ inputs.bundle }}
+        IN_IDENTITY_PREFIX: ${{ inputs.identity-prefix }}
+        IN_IDENTITY: ${{ inputs.identity }}
+        IN_ISSUER: ${{ inputs.issuer }}
+        REPO: ${{ github.repository }}
+        SERVER: ${{ github.server_url }}
+      run: |
+        set -euo pipefail
+        dir="${IN_DIR%/}"
+        base="${IN_URL_BASE%/}"
+        name="${IN_BUNDLE:-packslip.sigstore.json}"
+        pin=(--issuer "$IN_ISSUER")
+        if [ -n "$IN_IDENTITY" ]; then
+          pin+=(--identity "$IN_IDENTITY")
+        else
+          pin+=(--identity-prefix "${IN_IDENTITY_PREFIX:-${SERVER}/${REPO}/}")
+        fi
+        printf '%s\n' "${pin[@]}" > "${RUNNER_TEMP}/packslip-pin"
+        shopt -s nullglob
+        releases=()
+        for bundle in "$dir"/*/"$name"; do
+          tag="$(basename "$(dirname "$bundle")")"
+          packslip verify "$bundle" "${pin[@]}"
+          statement="$(packslip show "$bundle")"
+          project="$(jq -r .predicate.project <<< "$statement")"
+          if [ "$project" != "$IN_PROJECT" ]; then
+            echo "$bundle is for $project, not $IN_PROJECT" >&2
+            exit 1
+          fi
+          # The directory names the URL, so it has to be the release's tag.
+          source_tag="$(jq -r '.predicate.source.tag // empty' <<< "$statement")"
+          if [ -n "$source_tag" ] && [ "$source_tag" != "$tag" ]; then
+            echo "$bundle is release $source_tag but sits under $tag/" >&2
+            exit 1
+          fi
+          releases+=("$base/$tag/$name=$bundle")
+        done
+        if [ "${#releases[@]}" -eq 0 ]; then
+          echo "no $name under $dir/<tag>/; a release list cannot be empty" >&2
+          exit 1
+        fi
+        printf '%s\n' "${releases[@]}" > "${RUNNER_TEMP}/packslip-releases"
+        echo "count=${#releases[@]}" >> "$GITHUB_OUTPUT"
+
+    - name: Build and sign the list
+      id: build
+      shell: bash
+      env:
+        IN_PROJECT: ${{ inputs.project }}
+        IN_URL_BASE: ${{ inputs.url-base }}
+        IN_BUNDLE: ${{ inputs.bundle }}
+        IN_SEQUENCE: ${{ inputs.sequence }}
+        IN_VALID_FOR: ${{ inputs.valid-for }}
+        IN_LATEST: ${{ inputs.latest }}
+        IN_YANK: ${{ inputs.yank }}
+        IN_SECURITY: ${{ inputs.security }}
+        IN_OUT: ${{ inputs.out }}
+      run: |
+        set -euo pipefail
+        base="${IN_URL_BASE%/}"
+        name="${IN_BUNDLE:-packslip.sigstore.json}"
+        sequence="${IN_SEQUENCE:-$(date +%s)}"
+        if ! [[ "$sequence" =~ ^[0-9]+$ ]]; then
+          echo "sequence must be a non-negative integer, not \"$sequence\"" >&2
+          exit 1
+        fi
+        args=(
+          releases
+          --project "$IN_PROJECT"
+          --sequence "$sequence"
+          --valid-for "$IN_VALID_FOR"
+          --out "$IN_OUT"
+        )
+        [ -n "$IN_LATEST" ] && args+=(--latest "$IN_LATEST")
+        mapfile -t releases < "${RUNNER_TEMP}/packslip-releases"
+        for release in "${releases[@]}"; do
+          args+=(--release "$release")
+        done
+        # A tag names its bundle's URL; a URL is taken as given.
+        url_of() {
+          case "$1" in
+            https://*|http://*) printf '%s' "$1" ;;
+            *) printf '%s/%s/%s' "$base" "$1" "$name" ;;
+          esac
+        }
+        while IFS= read -r line; do
+          [ -n "$line" ] || continue
+          args+=(--yank "$(url_of "${line%%=*}")=${line#*=}")
+        done <<< "$IN_YANK"
+        while IFS= read -r line; do
+          [ -n "$line" ] || continue
+          args+=(--security "$(url_of "$line")")
+        done <<< "$IN_SECURITY"
+        packslip "${args[@]}"
+        echo "list=$IN_OUT" >> "$GITHUB_OUTPUT"
+
+    - name: Verify what was written
+      shell: bash
+      env:
+        LIST: ${{ steps.build.outputs.list }}
+      run: |
+        set -euo pipefail
+        mapfile -t pin < "${RUNNER_TEMP}/packslip-pin"
+        packslip verify "$LIST" "${pin[@]}"

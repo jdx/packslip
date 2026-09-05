@@ -1,5 +1,8 @@
-name: pages
+name: site
 
+# packslip.dev: the Hugo site as a Worker's static assets, with the
+# project's releases served from R2 by cloudflare/worker.js. The Worker is
+# configured in wrangler.jsonc.
 on:
   push:
     branches: [main]
@@ -7,11 +10,9 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: pages
+  group: site
   cancel-in-progress: true
 
 jobs:
@@ -19,11 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       HUGO_VERSION: 0.165.0
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install Hugo
         run: |
           wget -O "${RUNNER_TEMP}/hugo.deb" "https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/hugo_${HUGO_VERSION}_linux-amd64.deb"
@@ -33,17 +31,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api "repos/${GITHUB_REPOSITORY}" --jq '{stars: .stargazers_count}' > data/github.json
-      - id: pages
-        uses: actions/configure-pages@v5
       - name: Build site
         run: |
-          hugo --gc --minify --baseURL "${{ steps.pages.outputs.base_url }}/"
+          hugo --gc --minify
           if grep -R -I -F '%!' public; then
             echo "Hugo rendered a formatting error"
             exit 1
           fi
-      - uses: actions/upload-pages-artifact@v5
+      - uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
         with:
-          path: public
-      - id: deploy
-        uses: actions/deploy-pages@v5
+          apiToken: ${{ secrets.CLOUDFLARE_TOKEN }}
+          command: deploy

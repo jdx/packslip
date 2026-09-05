@@ -32,7 +32,8 @@ toolchain, for example `RUSTUP_TOOLCHAIN=1.95.0 mise run docs`.
 | Schema and validation | `src/model.rs` |
 | Conformance vectors | `tests/conformance/` (see its README) |
 | Creation and verification | `src/create.rs`, `src/verify.rs`, `src/sigstore.rs` |
-| GitHub Action | `action.yml` |
+| GitHub Actions | `action.yml`, `releases/action.yml`, and `scripts/install-packslip.sh`, which both run |
+| The site's Worker | `wrangler.jsonc`, `cloudflare/worker.js` |
 | Site layout and styling | `layouts/`, `static/style.css` |
 | Release process | `RELEASING.md`, `.github/workflows/`, `release-plz.toml` |
 
@@ -53,6 +54,7 @@ require. Say which in the pull request.
 mise run docs        # Regenerate and serve with Hugo.
 mise run docs:build  # Regenerate and build into public/.
 mise run docs:check  # Build, check links, and run offline examples.
+mise run lint        # Shellcheck the scripts the actions and workflows run.
 ```
 
 `mise run render` regenerates the CLI reference, usage spec, JSON schemas,
@@ -66,8 +68,9 @@ against the implementation, distinguish draft integrations from shipped
 features, and use site paths such as `/docs/verifying/` for internal links.
 Preserve existing specification anchors when reorganizing sections.
 
-The Pages workflow updates the GitHub star count in `data/github.json`
-before building. Local previews use the checked-in value.
+The site workflow updates the GitHub star count in `data/github.json`
+before building, then deploys the built site as the packslip.dev Worker's
+static assets. Local previews use the checked-in value.
 
 ## Check a change
 
