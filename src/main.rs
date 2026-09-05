@@ -68,8 +68,11 @@ enum Commands {
 /// Generate a self-contained shell completion script
 #[derive(Debug, usage_rs::Args)]
 struct Completion {
-    /// Shell: bash, zsh, fish, or powershell
-    #[usage(arg)]
+    /// Shell to generate completions for
+    #[usage(
+        arg,
+        choices("bash", "elvish", "zsh", "fish", "nu", "nushell", "powershell", "pwsh")
+    )]
     shell: String,
 }
 

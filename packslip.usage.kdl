@@ -14,7 +14,9 @@ flag "-h --help" help="Print help" action=help builtin=#true
 flag "-V --version" help="Print version" action=version builtin=#true
 cmd completion help="Generate a self-contained shell completion script" {
     flag "-h --help" help="Print help" action=help builtin=#true
-    arg <SHELL> help="Shell: bash, zsh, fish, or powershell"
+    arg <SHELL> help="Shell to generate completions for" {
+        choices bash elvish zsh fish nu nushell powershell pwsh
+    }
 }
 cmd create help="Create and sign a packslip for a release" {
     long_help #"""
