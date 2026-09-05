@@ -58,7 +58,9 @@ inputs:
   resources:
     description: >
       What ships besides the executables, one per line, each a `packslip
-      create --resource` value: KIND[/QUALIFIER]=SOURCE:VALUE, such as
+      create --resource` value: KIND[/QUALIFIER][@os[/arch[/libc]]]=SOURCE:VALUE,
+      where the optional @ scope limits an entry to one platform
+      (man@linux=archive:share/man/man1/tool.1), such as
       completion/zsh=archive:share/zsh/site-functions/_tool,
       man=archive:share/man/man1/tool.1, cli-spec/usage=exec:tool usage,
       skill/tool=repo:skills/tool, skill/tool=asset:dist/tool-skill.tar.gz,

@@ -341,14 +341,18 @@ struct Create {
     /// executable, the name it gets on PATH (repeatable)
     #[usage(long)]
     bin: Vec<String>,
-    /// Something else the release ships, as KIND[/QUALIFIER]=SOURCE:VALUE
-    /// where SOURCE is archive (a path inside every archive), asset (a
+    /// Something else the release ships, as
+    /// KIND[/QUALIFIER][@os[/arch[/libc]]]=SOURCE:VALUE where SOURCE is
+    /// archive (a path inside every archive), asset (a
     /// separate release file, by local path), repo (a path at --commit),
     /// or exec (a command whose stdout is the file). Kinds: completion/SHELL
     /// (or completion/SHELL,SHELL with exec and a {shell} placeholder),
     /// man[/BIN], cli-spec/FORMAT[/BIN], skill/NAME, sbom/FORMAT, desktop, icon,
-    /// app. Example: 'completion/zsh=archive:share/zsh/site-functions/_tool'
-    /// (repeatable)
+    /// app. An @ scope limits the entry to the artifacts of that platform,
+    /// for a layout that differs across them; the manifest also scopes to
+    /// one exact artifact. Examples:
+    /// 'completion/zsh=archive:share/zsh/site-functions/_tool',
+    /// 'man@linux=archive:share/man/man1/tool.1' (repeatable)
     #[usage(long)]
     resource: Vec<String>,
     /// Provenance URL for an artifact, as FILENAME=URL, or bare URLs in
@@ -390,16 +394,26 @@ struct ResourceSpec {
     asset_path: Option<PathBuf>,
 }
 
-/// `KIND[/QUALIFIER...]=SOURCE:VALUE`. `completion/zsh=archive:PATH`,
+/// `KIND[/QUALIFIER...][@os[/arch[/libc]]]=SOURCE:VALUE`.
+/// `completion/zsh=archive:PATH`,
 /// `completion/bash,zsh,fish=exec:tool completion {shell}`,
 /// `completion/bash,zsh=exec:COMPLETE={shell} tool` (leading `NAME=value`
 /// words become `env`, as at a shell prompt),
 /// `skill/NAME=repo:PATH`, `cli-spec/usage[/BIN]=exec:tool usage`,
-/// `man=archive:PATH`, `app=archive:Tool.app`. With one `--bin`, a
-/// `cli-spec` may omit the executable's name.
+/// `man=archive:PATH`, `man@linux=archive:PATH`, `app=archive:Tool.app`.
+/// With one `--bin`, a `cli-spec` may omit the executable's name.
+///
+/// The scope is read from the head, which is a small closed grammar of
+/// words, so an `@` there is always the scope and never part of a name.
+/// The value is left alone, and an `@` inside an exec argv or a path
+/// stays where it is.
 fn parse_resource(spec: &str, default_bin: Option<&str>) -> Result<ResourceSpec> {
     let Some((head, value)) = spec.split_once('=') else {
         bail!("--resource wants KIND[/QUALIFIER]=SOURCE:VALUE, got {spec:?}");
+    };
+    let (head, scope) = match head.split_once('@') {
+        Some((head, scope)) => (head, Some(scope)),
+        None => (head, None),
     };
     let mut parts = head.split('/');
     let kind = parts.next().unwrap_or_default();
@@ -456,6 +470,15 @@ fn parse_resource(spec: &str, default_bin: Option<&str>) -> Result<ResourceSpec>
         (_, []) => {}
         (_, [name]) => resource.name = Some(name.to_string()),
         (_, _) => bail!("--resource {spec:?}: {kind} takes at most one qualifier"),
+    }
+    if let Some(scope) = scope {
+        if !valid_scope(scope) {
+            bail!("--resource {spec:?}: the @ scope wants os[/arch[/libc]], got {scope:?}");
+        }
+        let mut fields = scope.split('/');
+        resource.os = fields.next().map(str::to_string);
+        resource.arch = fields.next().map(str::to_string);
+        resource.libc = fields.next().map(str::to_string);
     }
     let mut asset_path = None;
     match value.split_once(':') {
@@ -868,6 +891,14 @@ fn valid_word(part: &str) -> bool {
         && part
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+}
+
+/// A `--resource` scope: `os`, `os/arch`, or `os/arch/libc`. Unlike an
+/// artifact's, the os alone is enough, which is how a resource says it is
+/// in every Linux build without naming their architectures.
+fn valid_scope(scope: &str) -> bool {
+    let parts: Vec<_> = scope.split('/').collect();
+    (1..=3).contains(&parts.len()) && parts.iter().all(|part| valid_word(part))
 }
 
 fn valid_platform(platform: &str) -> bool {
@@ -1360,6 +1391,33 @@ mod tests {
         assert_eq!(r.resource.name, None);
         assert_eq!(r.resource.asset.as_deref(), Some("tool.cdx.json"));
         assert!(parse_resource("sbom=asset:dist/tool.cdx.json", None).is_err());
+
+        // An @ scope limits the entry to one platform, from the os alone
+        // down to os/arch/libc, and rides alongside any qualifier.
+        let r = parse_resource("man@linux=archive:share/man/man1/tool.1", None).unwrap();
+        assert_eq!(r.resource.os.as_deref(), Some("linux"));
+        assert_eq!(r.resource.arch, None);
+        assert_eq!(r.resource.libc, None);
+        assert_eq!(r.resource.archive.as_deref(), Some("share/man/man1/tool.1"));
+        let r = parse_resource("completion/zsh@linux/x86_64/musl=archive:_tool", None).unwrap();
+        assert_eq!(r.resource.shell.as_deref(), Some("zsh"));
+        assert_eq!(
+            (
+                r.resource.os.as_deref(),
+                r.resource.arch.as_deref(),
+                r.resource.libc.as_deref()
+            ),
+            (Some("linux"), Some("x86_64"), Some("musl"))
+        );
+        // Only the head is read for a scope, so an @ in an exec argv or a
+        // path is left where it is.
+        let r = parse_resource("cli-spec/usage/tool=exec:tool usage @all", None).unwrap();
+        assert_eq!(r.resource.os, None);
+        assert_eq!(r.resource.exec, ["tool", "usage", "@all"]);
+        let r = parse_resource("skill/tool=repo:skills/@tool", None).unwrap();
+        assert_eq!(r.resource.repo.as_deref(), Some("skills/@tool"));
+        assert_eq!(r.resource.os, None);
+
         for bad in [
             "man",
             "=archive:x",
@@ -1368,6 +1426,10 @@ mod tests {
             "completion=archive:x",
             "skill=archive:x",
             "man/a/b=archive:x",
+            "man@=archive:x",
+            "man@linux/x86_64/gnu/extra=archive:x",
+            "man@linux//gnu=archive:x",
+            "man@1inux=archive:x",
         ] {
             assert!(parse_resource(bad, None).is_err(), "{bad}");
         }

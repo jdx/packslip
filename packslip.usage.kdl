@@ -68,7 +68,7 @@ Examples and configuration: https://packslip.dev/docs/describing-releases/
     flag --bin help="Executable inside every artifact, as PATH or NAME=PATH; for a bare executable, the name it gets on PATH (repeatable)" var=#true {
         arg <BIN>
     }
-    flag --resource help="Something else the release ships, as KIND[/QUALIFIER]=SOURCE:VALUE where SOURCE is archive (a path inside every archive), asset (a separate release file, by local path), repo (a path at --commit), or exec (a command whose stdout is the file). Kinds: completion/SHELL (or completion/SHELL,SHELL with exec and a {shell} placeholder), man[/BIN], cli-spec/FORMAT[/BIN], skill/NAME, sbom/FORMAT, desktop, icon, app. Example: 'completion/zsh=archive:share/zsh/site-functions/_tool' (repeatable)" var=#true {
+    flag --resource help="Something else the release ships, as KIND[/QUALIFIER][@os[/arch[/libc]]]=SOURCE:VALUE where SOURCE is archive (a path inside every archive), asset (a separate release file, by local path), repo (a path at --commit), or exec (a command whose stdout is the file). Kinds: completion/SHELL (or completion/SHELL,SHELL with exec and a {shell} placeholder), man[/BIN], cli-spec/FORMAT[/BIN], skill/NAME, sbom/FORMAT, desktop, icon, app. An @ scope limits the entry to the artifacts of that platform, for a layout that differs across them; the manifest also scopes to one exact artifact. Examples: 'completion/zsh=archive:share/zsh/site-functions/_tool', 'man@linux=archive:share/man/man1/tool.1' (repeatable)" var=#true {
         arg <RESOURCE>
     }
     flag --provenance help="Provenance URL for an artifact, as FILENAME=URL, or bare URLs in the order the artifacts are given (repeatable)" var=#true {

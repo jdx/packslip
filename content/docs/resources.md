@@ -98,6 +98,20 @@ This man page belongs only to the named archive, not to another format or
 variant for the same platform. For complete configurations, see the
 [release recipes](/docs/recipes/).
 
+On the command line, add the platform scope to the kind with `@`:
+
+```bash
+packslip create ... \
+  --resource 'man@linux=archive:share/man/man1/mytool.1' \
+  --resource 'completion/zsh@darwin/aarch64=archive:share/zsh/site-functions/_mytool'
+```
+
+The scope is `os`, `os/arch`, or `os/arch/libc`, and it is read from the
+kind rather than the value, so an `@` inside an `exec` argv or a path is
+left alone. Scoping to one exact artifact stays a manifest field:
+`artifact` names a file, and the file names of a release change with
+every version.
+
 ## Provide fallbacks deliberately
 
 Consumers group entries by resource identity before selecting a source.
