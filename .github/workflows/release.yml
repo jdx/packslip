@@ -219,6 +219,11 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: Install completion syntax checkers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh fish
+          mise install github:PowerShell/PowerShell@7.5.4
       - name: Generate the CLI specification and completions
         run: |
           set -euo pipefail
@@ -232,6 +237,16 @@ jobs:
             bin/packslip __complete_word__ --shell "$shell" --line 'packslip ver' | grep -Fq -- 'verify'
           done
           bash -n dist/packslip.bash
+          zsh -n dist/packslip.zsh
+          fish --no-execute dist/packslip.fish
+          mise exec github:PowerShell/PowerShell@7.5.4 -- pwsh -NoProfile -Command - <<'POWERSHELL'
+          $ErrorActionPreference = 'Stop'
+          foreach ($script in Get-ChildItem -LiteralPath "dist" -Filter '*.powershell') {
+            $parseErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$null, [ref]$parseErrors)
+            if ($parseErrors.Count) { $parseErrors | Write-Error; exit 1 }
+          }
+          POWERSHELL
       - name: Attest the release files
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
