@@ -113,6 +113,33 @@ selection, and remembered policy. Implement the full
    Select resources for the chosen artifact and executable, and follow
    the execution rules for generated resources.
 
+### Take the crate as a library
+
+The `packslip` crate holds the schema, the verifier, and the selection
+rules as well as the CLI and the generator. A consumer that only verifies
+takes it without the parts it will not call:
+
+```sh
+cargo add packslip --no-default-features
+```
+
+That leaves the statement types, `verify`, `verify_release_list`,
+`select_artifact`, and `select_resources`, and drops the archive readers,
+the executable decoder that derives `requires.libs`, the signing path, the
+JSON Schema generator, and the CLI: about seventy fewer crates in the
+dependency graph. The features are additive and all on by default, so the
+binary and any dependent that says nothing is unaffected:
+
+| Feature | Adds |
+| --- | --- |
+| `cli` (default) | The `packslip` binary; implies the rest. |
+| `create` | Build a statement from built artifacts; implies `archive`, `linkage`, and `sign`. |
+| `archive` | Read tar and zip archives to resolve declared executable paths. |
+| `linkage` | Derive `requires.libs` from ELF, Mach-O, and PE executables. |
+| `sign` | Sign statements, keylessly through Fulcio or with a minisign key. |
+| `manifest` | Read a `packslip.toml`. |
+| `schema` | `Statement::schema()` and `ReleaseListStatement::schema()`. |
+
 A lockfile can carry a project's signer commitment alongside artifact
 URLs and digests so another machine can enforce it on its first install.
 Local state can separately remember signer history and release-list
