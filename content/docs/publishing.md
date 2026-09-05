@@ -156,6 +156,7 @@ is not checked at all, so the job vouches for where it came from.
 | `tag` | Existing release tag; defaults to the triggering tag. |
 | `manifest` | Path to a TOML manifest. Its artifact entries join the matched files. |
 | `variants` | Whitespace-separated `FILENAME=VARIANT` entries. |
+| `formats` | Whitespace-separated `FILENAME=FORMAT` entries, for an artifact whose name does not say what it is. |
 | `resources` | One resource declaration per line. Add `@os[/arch[/libc]]` after the kind to scope one to a platform. |
 | `require` | One `bin:NAME[@MIN]` requirement per line. |
 | `extensions` | One `NAME=JSON` extension per line. |

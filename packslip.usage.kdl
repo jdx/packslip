@@ -47,6 +47,9 @@ Examples and configuration: https://packslip.dev/docs/describing-releases/
     flag --url help="Download URL for one artifact or resource asset, as FILENAME=URL (repeatable)" var=#true {
         arg <URL>
     }
+    flag --format help="Format of one artifact whose name does not say, as FILENAME=FORMAT: an archive (tar.xz, tar.gz, tar.zst, tar.bz2, tgz, tar, zip, 7z), a single compressed executable (gz, xz, zst, bz2), an installer (deb, rpm, dmg, pkg, msi, msix, exe, appimage), raw for a bare executable, or a type of your own (repeatable)" var=#true {
+        arg <FORMAT>
+    }
     flag --source-repo help="Source repository URL" {
         arg <SOURCE_REPO>
     }

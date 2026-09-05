@@ -523,9 +523,17 @@ pub struct Artifact {
     /// `zst`, `bz2`), an installer (`deb`, `rpm`, `dmg`, `pkg`, `msi`,
     /// `msix`, `exe`, `appimage`), or `raw` for a bare executable. Two
     /// artifacts that differ only in format carry the same build, and a
-    /// consumer takes whichever it prefers.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "schema", schemars(regex(pattern = TOKEN_PATTERN)))]
+    /// consumer takes whichever it prefers. Required: an artifact whose
+    /// format is unknown is one no consumer can select.
+    ///
+    /// `Option` so that a document leaving it out still parses and is
+    /// then refused by `validate`, which can name the artifact. The field
+    /// is not optional: no `serde(default)`, so the schema demands it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(required, regex(pattern = TOKEN_PATTERN))
+    )]
     pub format: Option<String>,
     /// Executables inside the artifact, as paths relative to the archive
     /// root, or the artifact's own name (minus any compression suffix)
@@ -1189,6 +1197,8 @@ pub enum InvalidDocument {
     AmbiguousArtifacts(String, String),
     #[error("at least one artifact is required")]
     NoArtifacts,
+    #[error("artifact {0:?} has no format, so no consumer can select it")]
+    ArtifactFormat(String),
     #[error("a resource has an empty kind")]
     ResourceKind,
     #[error("resource {0:?} names artifact {1:?}, which is absent or outside its platform scope")]
@@ -1349,6 +1359,11 @@ impl Statement {
             )?;
             if !self.subject.iter().any(|s| s.name == artifact.name) {
                 return Err(InvalidDocument::OrphanArtifact(artifact.name.clone()));
+            }
+            // Rule 3 of Selecting an artifact skips a format the consumer
+            // does not handle, and no consumer handles an absent one.
+            if artifact.format.is_none() {
+                return Err(InvalidDocument::ArtifactFormat(artifact.name.clone()));
             }
             for (field, value) in [
                 ("os", &artifact.os),
@@ -3310,12 +3325,16 @@ mod tests {
             s.validate(),
             Err(InvalidDocument::AmbiguousArtifacts(_, _))
         ));
-        // Without a format neither is selectable, so nothing is ambiguous.
+        // An artifact with no format is not ambiguous with anything, for
+        // the reason it is refused outright: no consumer can select it.
         for artifact in &mut s.predicate.artifacts {
             artifact.format = None;
             artifact.bin.clear();
         }
-        s.validate().unwrap();
+        assert!(matches!(
+            s.validate(),
+            Err(InvalidDocument::ArtifactFormat(_))
+        ));
     }
 
     #[test]
@@ -3331,5 +3350,35 @@ mod tests {
             text.contains("attested_by") && text.contains("variant"),
             "{text}"
         );
+        // `format` is Option in Rust only so that an explicit null is
+        // reported by validate; the schema must still demand it.
+        assert!(
+            text.contains(r#""required":["name","size","format"]"#),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn an_artifact_without_a_format_is_refused() {
+        // A null reaches validate and is named there.
+        let mut s = sample();
+        s.predicate.artifacts[0].format = None;
+        s.predicate.artifacts[0].bin.clear();
+        assert!(matches!(
+            s.validate(),
+            Err(InvalidDocument::ArtifactFormat(_))
+        ));
+        // An omitted key parses, so the refusal names the artifact rather
+        // than arriving as a serde message about a field.
+        let mut json = serde_json::to_value(sample()).unwrap();
+        let artifact = &mut json["predicate"]["artifacts"][0];
+        artifact.as_object_mut().unwrap().remove("format");
+        artifact["bin"] = serde_json::json!([]);
+        let parsed: Statement = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.predicate.artifacts[0].format, None);
+        assert!(matches!(
+            parsed.validate(),
+            Err(InvalidDocument::ArtifactFormat(name)) if name == parsed.predicate.artifacts[0].name
+        ));
     }
 }
