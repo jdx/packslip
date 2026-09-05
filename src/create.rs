@@ -286,12 +286,17 @@ pub fn infer_platform(name: &str) -> Platform {
 }
 
 /// Whether a file name ends in something that reads as an extension: a
-/// short alphanumeric tail after the last dot. A dotted version leaves a
-/// tail of its own, and `tool-1.2.3-linux-x64` is a bare executable
-/// rather than a file of type `3-linux-x64`.
+/// short alphanumeric tail after the last dot with a letter in it. A
+/// dotted version leaves a tail of its own, so `tool-1.2.3-linux-x64` is
+/// a bare executable rather than a file of type `3-linux-x64`, and
+/// `tool-linux-x64-1.2.3` is not one of type `3`. Every documented format
+/// clears the bar: the longest is `appimage`, and `7z` is the only one
+/// that starts with a digit.
 fn has_extension(name: &str) -> bool {
     name.rsplit_once('.').is_some_and(|(_, ext)| {
-        !ext.is_empty() && ext.len() <= 9 && ext.chars().all(|c| c.is_ascii_alphanumeric())
+        ext.len() <= 9
+            && ext.chars().all(|c| c.is_ascii_alphanumeric())
+            && ext.chars().any(|c| c.is_ascii_alphabetic())
     })
 }
 
@@ -1177,6 +1182,20 @@ mod tests {
         let arts = &versioned.statement.predicate.artifacts;
         assert_eq!(arts[0].format.as_deref(), Some("raw"));
         assert_eq!(arts[0].bin, [Bin::named("tool-v1.2.3-linux-x64", "tool")]);
+
+        // The same when the version comes last and the tail is a bare
+        // number: `3` is no more an extension than `3-linux-x64` was.
+        let trailing = dir.path().join("tool-linux-x64-v1.2.3");
+        std::fs::write(&trailing, b"elf").unwrap();
+        let trailing = create(&request(
+            vec![input(&trailing, None, &["tool"], &[])],
+            None,
+            None,
+        ))
+        .unwrap();
+        let arts = &trailing.statement.predicate.artifacts;
+        assert_eq!(arts[0].format.as_deref(), Some("raw"));
+        assert_eq!(arts[0].bin, [Bin::named("tool-linux-x64-v1.2.3", "tool")]);
         // Two portable artifacts of one format are as ambiguous as two
         // builds for one platform.
         let other_script = dir.path().join("tool-anywhere");
