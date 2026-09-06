@@ -1,10 +1,17 @@
+min_version = "2026.8.16"
+
 [tools]
+mr-boxington = "1.8.3"
 # Keep release-note generation reproducible. `latest` is resolved by mise.lock;
 # update the lock deliberately with `mise lock`.
 communique = "latest"
 hugo = "0.165.0"
 shellcheck = "0.11.0"
 usage = "6.6.1"
+
+[wrappers.cargo]
+command = "mbx"
+env = { MBX_CARGO_SHIM_MODE = "1" }
 
 [tasks.build]
 run = "cargo build"
