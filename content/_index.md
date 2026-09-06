@@ -2,6 +2,10 @@
 title: A signed manifest for every release
 description: Publish the checksums, platforms, executables, and resources for your software in one signed release manifest.
 ---
+Read the [Introducing packslip](https://jdx.dev/posts/2026-09-05-introducing-packslip/)
+announcement for the motivation behind the format and examples of using it
+with mise.
+
 ## What a packslip does
 
 Publish `packslip.sigstore.json` beside your release artifacts. It contains

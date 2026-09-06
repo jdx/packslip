@@ -4,10 +4,6 @@ description: Guides and reference for publishing and verifying packslip release 
 ---
 # Documentation
 
-Read the [Introducing packslip](https://jdx.dev/posts/2026-09-05-introducing-packslip/)
-announcement for the motivation behind the format and examples of using it
-with mise.
-
 Choose a path based on whether you publish software, install it, or build
 an integration. For the relationship between configuration, signing, and
 discovery, read [How packslip fits a release](/docs/release-workflow/).
