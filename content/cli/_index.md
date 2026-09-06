@@ -3,7 +3,7 @@
 
 **Usage:** `packslip <SUBCOMMAND>`
 
-**Version:** 1.1.1
+**Version:** 1.2.0
 
 **Author:** Jeff Dickey <@jdx>
 
