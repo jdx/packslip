@@ -7,7 +7,7 @@ mr-boxington = "1.8.3"
 communique = "latest"
 hugo = "0.165.0"
 shellcheck = "0.11.0"
-usage = "6.6.1"
+usage = "6.8.0"
 
 [wrappers.cargo]
 command = "mbx"
