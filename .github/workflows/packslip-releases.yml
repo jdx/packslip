@@ -43,7 +43,7 @@ jobs:
       AWS_REGION: auto
       AWS_ENDPOINT_URL: https://6e243906ff257b965bcae8025c2fc344.r2.cloudflarestorage.com
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Fetch the published bundles
         run: |
           set -euo pipefail
