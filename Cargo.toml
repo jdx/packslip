@@ -60,13 +60,14 @@ eyre = { version = "0.6", optional = true }
 flate2 = { version = "1", optional = true }
 getrandom = { version = "0.4", optional = true }
 goblin = { version = "0.10", optional = true }
+hex = "0.4"
 jiff = "0.2"
 lzma-rs = { version = "0.3", optional = true }
 schemars = { version = "1", optional = true }
 semver = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
+sha2 = "0.11"
 sigstore-bundle = { version = "0.11", default-features = false, features = ["rustls"] }
 sigstore-oidc = { version = "0.11", default-features = false, features = ["rustls"], optional = true }
 sigstore-rekor = { version = "0.11", default-features = false, features = ["rustls"] }

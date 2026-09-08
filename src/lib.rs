@@ -81,8 +81,8 @@ pub fn digest_file_all(path: &std::path::Path) -> std::io::Result<Digests> {
         size += n as u64;
     }
     Ok(Digests {
-        sha256: format!("{:x}", sha256.finalize()),
-        sha512: format!("{:x}", sha512.finalize()),
+        sha256: hex::encode(sha256.finalize()),
+        sha512: hex::encode(sha512.finalize()),
         size,
     })
 }
