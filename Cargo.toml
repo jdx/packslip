@@ -60,6 +60,7 @@ eyre = { version = "0.6", optional = true }
 flate2 = { version = "1", optional = true }
 getrandom = { version = "0.4", optional = true }
 goblin = { version = "0.10", optional = true }
+hex = "0.4"
 jiff = "0.2"
 lzma-rs = { version = "0.3", optional = true }
 schemars = { version = "1", optional = true }

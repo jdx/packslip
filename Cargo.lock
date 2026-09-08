@@ -1359,6 +1359,7 @@ dependencies = [
  "flate2",
  "getrandom 0.4.3",
  "goblin",
+ "hex",
  "jiff",
  "lzma-rs",
  "ruzstd",
