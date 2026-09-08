@@ -51,7 +51,7 @@ sign = ["dep:getrandom", "dep:sigstore-oidc", "dep:sigstore-sign"]
 schema = ["dep:schemars"]
 
 [dependencies]
-base64 = "0.22"
+base64 = "0.23"
 blake2 = "0.10"
 bzip2 = { version = "0.6", optional = true }
 color-eyre = { version = "0.6", optional = true }
