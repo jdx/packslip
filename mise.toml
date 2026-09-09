@@ -25,6 +25,7 @@ description = "Generate the usage spec, CLI reference, schemas, and spec page"
 depends = ["build"]
 run = [
   "target/debug/packslip usage > packslip.usage.kdl",
+  "usage generate manpage --file packslip.usage.kdl --out-file packslip.1",
   "target/debug/packslip schema > static/schema/release-v1.json",
   "target/debug/packslip schema --releases > static/schema/releases-v1.json",
   # The site renders the spec from its canonical text.

@@ -231,12 +231,14 @@ jobs:
           if ! command -v pwsh >/dev/null 2>&1; then
             sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 install -y powershell
           fi
-      - name: Generate the CLI specification and completions
+      - name: Generate the CLI resources
         run: |
           set -euo pipefail
           mkdir -p bin
           tar -xJf "dist/packslip-${GITHUB_REF_NAME}-linux-x64.tar.xz" --strip-components=1 -C bin
           bin/packslip usage > dist/packslip.usage.kdl
+          cp packslip.1 dist/packslip.1
+          test -s dist/packslip.1
           for shell in bash zsh fish powershell; do
             bin/packslip completion "$shell" > "dist/packslip.$shell"
             test -s "dist/packslip.$shell"
