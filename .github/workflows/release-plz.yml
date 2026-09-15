@@ -49,7 +49,7 @@ jobs:
       # `mise run render` builds the CLI to regenerate the docs below.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # cargo-semver-checks backs `semver_check = true` in release-plz.toml.
-      - uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
+      - uses: taiki-e/install-action@d438492cf8a250514fa2d34b30bc3c0dc37c65ff # v2.87.8
         with:
           tool: release-plz@0.3.160,cargo-semver-checks@0.48.0
       - name: Bump the version and changelog
