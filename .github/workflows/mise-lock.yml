@@ -1,0 +1,31 @@
+name: mise-lock
+
+# Regenerates mise.lock on Renovate branches. Renovate's mise manager
+# updates mise.toml but leaves the lockfile stale, so `mise install
+# --locked` fails in CI with "<tool>@<version> is not in the lockfile".
+# See jdx/renovate-config for the workflow implementation.
+
+on:
+  push:
+    branches: ["renovate/**"]
+
+permissions:
+  contents: write
+
+jobs:
+  mise-lock:
+    uses: jdx/renovate-config/.github/workflows/mise-lock.yml@653969079190b3aa7969d3896b8da3bd08cf807f # main
+    with:
+      # ci.yml runs `mise run render` and fails if it produces a diff, so a
+      # tool bump that changes generated output (usage renders the CLI
+      # reference) has to regenerate it in the same commit.
+      post_update_task: render
+      post_update_paths: |
+        packslip.usage.kdl
+        content/cli
+        content/spec.md
+        static/schema/release-v1.json
+        static/schema/releases-v1.json
+    secrets:
+      MISE_LOCK_APP_ID: ${{ secrets.MISE_LOCK_APP_ID }}
+      MISE_LOCK_APP_PRIVATE_KEY: ${{ secrets.MISE_LOCK_APP_PRIVATE_KEY }}
