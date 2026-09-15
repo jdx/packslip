@@ -22,6 +22,7 @@ jobs:
       post_update_task: render
       post_update_paths: |
         packslip.usage.kdl
+        packslip.1
         content/cli
         content/spec.md
         static/schema/release-v1.json
