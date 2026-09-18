@@ -40,6 +40,14 @@ inputs:
     description: The release tag to upload to; defaults to the tag that triggered the job
     required: false
     default: ""
+  commit:
+    description: >
+      Source commit recorded in the release manifest; defaults to github.sha.
+      Set this to the full commit SHA of the release tag when publishing a
+      different revision, for example from a manually dispatched workflow.
+      This does not change the workflow identity or artifact provenance.
+    required: false
+    default: ""
   url-base:
     description: Download URL prefix; defaults to this release's download URL
     required: false
@@ -259,6 +267,7 @@ runs:
         IN_PROJECT: ${{ inputs.project }}
         IN_VERSION: ${{ inputs.version }}
         IN_TAG: ${{ inputs.tag }}
+        IN_COMMIT: ${{ inputs.commit }}
         IN_URL_BASE: ${{ inputs.url-base }}
         IN_BIN: ${{ inputs.bin }}
         IN_MANIFEST: ${{ inputs.manifest }}
@@ -296,7 +305,7 @@ runs:
           --notes-url "$notes_url"
           --source-repo "${SERVER}/${REPO}"
           --tag "$tag"
-          --commit "$SHA"
+          --commit "${IN_COMMIT:-$SHA}"
         )
         for b in $IN_BIN; do args+=(--bin "$b"); done
         [ -n "$IN_MANIFEST" ] && args+=(--manifest "$IN_MANIFEST")

@@ -33,6 +33,7 @@ jobs:
       # features; keep that build compiling and its tests passing.
       - run: cargo clippy --no-default-features --all-targets -- -D warnings
       - run: cargo test --no-default-features
+      - run: python3 -B -m unittest discover -s tests -p 'test_action*.py'
       - run: mise run lint
       - run: mise run render
       - run: usage lint packslip.usage.kdl
