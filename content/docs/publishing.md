@@ -60,6 +60,36 @@ explicitly override that selection.
 `packslip-path` runs a CLI the job already has instead of downloading
 one; see [Build the CLI on the runner](#build-the-cli-on-the-runner).
 
+## Publish a different source commit
+
+`tag` selects the release, but does not change the default source commit:
+`commit` defaults to the workflow's `github.sha`. If you dispatch from a branch
+and check out a different release tag, pass that tag's full commit SHA explicitly:
+
+```yaml
+# After checking out the intended release tag and preparing its artifacts:
+- name: Resolve the checked-out release commit
+  id: source
+  shell: bash
+  run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+- uses: jdx/packslip@v1
+  with:
+    tag: ${{ inputs.tag }}
+    commit: ${{ steps.source.outputs.commit }}
+    artifacts: dist/*.tar.xz dist/*.zip
+    bin: mytool
+    attest: link
+```
+
+Use `attest: link` only when the build jobs already attested these files.
+A repository skill resource is pinned to this source commit. The caller must
+ensure the commit matches the tag, artifacts, and repository resources; the
+input does not fetch or validate that relationship. It changes only the release
+manifest's source metadata, not the workflow's signing identity or separate
+build-provenance statements. Keep any workflow-ref/tag guards needed to ensure
+those statements describe the intended build. Workflows that already run from
+the release commit can omit the input.
+
 ## Add resources and requirements
 
 ```yaml
@@ -190,6 +220,7 @@ is not checked at all, so the job vouches for where it came from.
 | `project` | Project name; defaults to `github.com/<owner>/<repo>`. A host such as `mytool.example.com` names a [project on its own domain](/docs/self-hosting/). |
 | `version` | Semver version; defaults to the tag without its leading `v`. |
 | `tag` | Existing release tag; defaults to the triggering tag. |
+| `commit` | Source commit SHA; defaults to `github.sha`. Override when the release source differs from the workflow commit. |
 | `manifest` | Path to a TOML manifest. Its artifact entries join the matched files. |
 | `variants` | Whitespace-separated `FILENAME=VARIANT` entries. |
 | `formats` | Whitespace-separated `FILENAME=FORMAT` entries, for an artifact whose name does not say what it is. |
