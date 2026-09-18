@@ -85,6 +85,7 @@ zip = { version = "8", default-features = false, features = ["deflate"], optiona
 usage_rs = { package = "usage-rs", version = "6", features = ["completions"], optional = true }
 
 [dev-dependencies]
+serde_yaml_bw = "2"
 tempfile = "3"
 which = "8"
 
