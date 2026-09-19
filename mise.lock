@@ -86,38 +86,38 @@ url = "https://github.com/gohugoio/hugo/releases/download/v0.165.0/hugo_0.165.0_
 url_api = "https://api.github.com/repos/gohugoio/hugo/releases/assets/511697493"
 
 [[tools.mr-boxington]]
-version = "1.10.0"
+version = "1.14.0"
 backend = "packslip:github.com/jdx/mr-boxington"
-specifiers = ["1.10.0"]
+specifiers = ["1.14.0"]
 
 [tools.mr-boxington."platforms.linux-arm64"]
-checksum = "sha256:03f40995a0dc71c33a15450e298043979451300ff09be8d964004b2180dce751"
-url = "https://github.com/jdx/mr-boxington/releases/download/v1.10.0/mbx-aarch64-unknown-linux-gnu.tar.gz"
+checksum = "sha256:fdf7965e886e25b2a34cefcc1a0b685159a0ee66002f58b720a0e29b5901fee8"
+url = "https://github.com/jdx/mr-boxington/releases/download/v1.14.0/mbx-aarch64-unknown-linux-gnu.tar.gz"
 signer = "sigstore-oidc:https://github.com/jdx/mr-boxington/.github/workflows/release.yml"
 
 [tools.mr-boxington."platforms.linux-arm64-musl"]
-checksum = "sha256:dbfeb2d8b9fe13f69bc3553b8d7a81af309f9c2be5197ae8387aa3bc0a14e78a"
-url = "https://github.com/jdx/mr-boxington/releases/download/v1.10.0/mbx-aarch64-unknown-linux-musl.tar.gz"
+checksum = "sha256:bdb15ae0cc6a124e770a53ec52ac08f6da0cc574efe4dc7f787884ead8da35f5"
+url = "https://github.com/jdx/mr-boxington/releases/download/v1.14.0/mbx-aarch64-unknown-linux-musl.tar.gz"
 signer = "sigstore-oidc:https://github.com/jdx/mr-boxington/.github/workflows/release.yml"
 
 [tools.mr-boxington."platforms.linux-x64"]
-checksum = "sha256:9c00780f6db91b766b5ebe3f8cd0e309a2bd1dbdeac98123e2d929d30265ce2b"
-url = "https://github.com/jdx/mr-boxington/releases/download/v1.10.0/mbx-x86_64-unknown-linux-gnu.tar.gz"
+checksum = "sha256:fc32cc431a9e022519b16348962f99ca84626ff25196bc11e61cb05df66fb069"
+url = "https://github.com/jdx/mr-boxington/releases/download/v1.14.0/mbx-x86_64-unknown-linux-gnu.tar.gz"
 signer = "sigstore-oidc:https://github.com/jdx/mr-boxington/.github/workflows/release.yml"
 
 [tools.mr-boxington."platforms.linux-x64-musl"]
-checksum = "sha256:d7694d03c3ed978964302b71ab3e7ee2be76f479f414e90bdfe139dda24c07d8"
-url = "https://github.com/jdx/mr-boxington/releases/download/v1.10.0/mbx-x86_64-unknown-linux-musl.tar.gz"
+checksum = "sha256:e048e5ae5957fe18506e1dafd149e881fe373c9e1c0d3ad7a94a54149420ccbb"
+url = "https://github.com/jdx/mr-boxington/releases/download/v1.14.0/mbx-x86_64-unknown-linux-musl.tar.gz"
 signer = "sigstore-oidc:https://github.com/jdx/mr-boxington/.github/workflows/release.yml"
 
 [tools.mr-boxington."platforms.macos-arm64"]
-checksum = "sha256:585b9b91ac5fd123de46aaaafc12bdf180daea956c72e72fdcf3a551a35e1c1b"
-url = "https://github.com/jdx/mr-boxington/releases/download/v1.10.0/mbx-aarch64-apple-darwin.tar.gz"
+checksum = "sha256:ff743aad797d198c9381d36ff3c4f49e6a2601832f7bdf8cccdb34106e5385cd"
+url = "https://github.com/jdx/mr-boxington/releases/download/v1.14.0/mbx-aarch64-apple-darwin.tar.gz"
 signer = "sigstore-oidc:https://github.com/jdx/mr-boxington/.github/workflows/release.yml"
 
 [tools.mr-boxington."platforms.windows-x64"]
-checksum = "sha256:5f9a0d63bde6eb32a273865ce187dc1af9f896d4ff5114a79f666998047fa268"
-url = "https://github.com/jdx/mr-boxington/releases/download/v1.10.0/mbx-x86_64-pc-windows-msvc.zip"
+checksum = "sha256:5d102168bd30ac480da37b663edde883501aee4778bd757a547773d36cbcabfe"
+url = "https://github.com/jdx/mr-boxington/releases/download/v1.14.0/mbx-x86_64-pc-windows-msvc.zip"
 signer = "sigstore-oidc:https://github.com/jdx/mr-boxington/.github/workflows/release.yml"
 
 [[tools.shellcheck]]
