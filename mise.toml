@@ -1,7 +1,7 @@
-min_version = "2026.8.16"
+min_version = "2026.9.2"
 
 [tools]
-mr-boxington = "1.10.0"
+mr-boxington = "1.14.0"
 # Keep release-note generation reproducible. `latest` is resolved by mise.lock;
 # update the lock deliberately with `mise lock`.
 communique = "latest"
