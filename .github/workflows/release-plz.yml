@@ -62,6 +62,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
         run: |
           set -euo pipefail
+          # release-plz runs `cargo package` in temporary checkouts of the
+          # last released commit, whose mise.toml is untrusted and may pin
+          # another mbx. The mise cargo wrapper then fails with "mbx"
+          # couldn't exec, so this step uses plain rustup cargo instead.
+          PATH=$(printf '%s' "$PATH" | tr ':' '\n' \
+            | grep -v '/mise/command-wrappers/' | paste -sd ':')
+          export PATH
           release-plz update --git-token "$GITHUB_TOKEN"
           # After the release PR merges, `update` finds the version already
           # ahead of crates.io and the changelog already written, and
