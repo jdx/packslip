@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   mise-lock:
-    uses: jdx/renovate-config/.github/workflows/mise-lock.yml@5b4643284bcbb1330637e10e3924258fb1559e93 # main
+    uses: jdx/renovate-config/.github/workflows/mise-lock.yml@090d40946326123d50ef965296d3fc188b214886 # v1.0.0
     with:
       # ci.yml runs `mise run render` and fails if it produces a diff, so a
       # tool bump that changes generated output (usage renders the CLI
