@@ -1,5 +1,5 @@
 ---
-title: A signed manifest for every release
+title: Signed manifests for software releases
 description: Publish the checksums, platforms, executables, and resources for your software in one signed release manifest.
 ---
 Read the [Introducing packslip](https://jdx.dev/posts/2026-09-05-introducing-packslip/)
@@ -46,7 +46,7 @@ or explore the [full specification](/release/v1/#the-release-statement).
 | Download software or build an installer | [Understand verification and trust](/docs/verifying/) |
 | Want a consumer example | [Use packslip with mise](/docs/mise/) |
 
-## Describe the release once
+## Use release metadata in installers
 
 A consumer can read the platform and executable paths from the signed
 manifest instead of maintaining filename guesses for each vendor.
@@ -58,7 +58,7 @@ The metadata travels with the release, so a publisher can change an
 archive layout and describe the new layout in the same release.
 Consumers decide which formats and resource kinds they support.
 
-## Know what verification proves
+## What verification proves
 
 A verified packslip authenticates a signer's statement about the release.
 Checking an artifact against it establishes that the downloaded bytes
