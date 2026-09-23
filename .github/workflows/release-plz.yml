@@ -51,7 +51,7 @@ jobs:
       # symlink, and restoring it made `release-plz update` fail copying the
       # project ("cannot strip prefix ... prefix not found").
       # cargo-semver-checks backs `semver_check = true` in release-plz.toml.
-      - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2.87.12
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
         with:
           tool: release-plz@0.3.160,cargo-semver-checks@0.48.0
       - name: Bump the version and changelog
