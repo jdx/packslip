@@ -63,9 +63,9 @@ jobs:
         run: |
           set -euo pipefail
           # release-plz runs `cargo package` in temporary checkouts of the
-          # last released commit, whose mise.toml is untrusted and may pin
-          # another mbx. The mise cargo wrapper then fails with "mbx"
-          # couldn't exec, so this step uses plain rustup cargo instead.
+          # last released commit, whose mise.toml may pin an mbx that isn't
+          # installed. The mise cargo wrapper then fails with "mbx" couldn't
+          # exec (jdx/mise#13532), so this step uses plain rustup cargo.
           PATH=$(printf '%s' "$PATH" | tr ':' '\n' \
             | grep -v '/mise/command-wrappers/' | paste -sd ':')
           export PATH
