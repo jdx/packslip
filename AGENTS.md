@@ -9,7 +9,7 @@ should use it too:
 <type>[optional scope][optional !]: <description>
 ```
 
-Start the description with a lowercase character and keep it concise and imperative. Use `!` before the colon for a
+Start the description with a lowercase character or an acronym such as `CLI`, and keep it concise and imperative. Use `!` before the colon for a
 breaking change and explain it in the commit body with a `BREAKING CHANGE:`
 footer.
 
@@ -24,7 +24,7 @@ Examples:
 
 CI validates the pull request title and re-runs when it is edited. Intermediate
 commit subjects are not checked because pull requests are squash-merged. CI
-mechanically checks the allowed type, syntax, and lowercase-leading description;
+mechanically checks the allowed type, syntax, and lowercase- or acronym-leading description;
 imperative mood and breaking-change details remain review rules.
 
 ## PR titles and descriptions are release-note inputs
