@@ -24,6 +24,7 @@ pub mod cli;
 #[cfg(feature = "create")]
 pub mod create;
 pub mod dsse;
+pub mod forge;
 #[cfg(feature = "linkage")]
 pub mod linkage;
 #[cfg(feature = "manifest")]
@@ -44,7 +45,10 @@ pub use model::{
 #[cfg(feature = "sign")]
 pub use sigstore::Signer;
 pub use sigstore::{Policy, Trust};
-pub use verify::{Options, Verified, VerifiedList, verify, verify_release_list};
+pub use verify::{
+    ForgeError, ForgeVerified, Options, Verified, VerifiedList, verify, verify_forge,
+    verify_forge_release_list, verify_release_list,
+};
 
 /// The sha256 of a file, lowercase hex, and its size.
 pub fn digest_file(path: &std::path::Path) -> std::io::Result<(String, u64)> {

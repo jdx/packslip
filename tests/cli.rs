@@ -32,6 +32,36 @@ fn usage_spec_is_emitted_but_hidden_from_help() {
 }
 
 #[test]
+fn verify_reports_the_signing_repository_ids() {
+    let fixture = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/hk-v2.3.0.sigstore.json"
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let (code, out, err) = packslip(dir.path(), &["verify", fixture]);
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.contains(
+            "\n  repository https://github.com/jdx/hk (id 922514152), owner https://github.com/jdx (id 216188)\n"
+        ),
+        "{out}"
+    );
+    let (code, out, err) = packslip(dir.path(), &["verify", fixture, "--json"]);
+    assert_eq!(code, 0, "{err}");
+    let report: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(report["project"], "github.com/jdx/hk");
+    assert_eq!(
+        report["source_repository"],
+        serde_json::json!({
+            "uri": "https://github.com/jdx/hk",
+            "id": "922514152",
+            "owner_uri": "https://github.com/jdx",
+            "owner_id": "216188",
+        })
+    );
+}
+
+#[test]
 fn keygen_create_verify_show_and_list() {
     let dir = tempfile::tempdir().unwrap();
     let d = dir.path();

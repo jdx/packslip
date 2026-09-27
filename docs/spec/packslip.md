@@ -48,7 +48,7 @@ A project name is a host with an optional path, such as
 It has no URL scheme or trailing slash. The host is lowercase and contains
 at least one dot; path segments cannot be empty, `.` or `..`.
 
-The name is the location and, on a forge, the identity:
+The name is the location and, on a forge, says who may sign:
 
 - `github.com/<owner>/<repo>`: releases and their packslips are GitHub
   release assets, and the packslip is expected to be signed by a workflow
@@ -56,15 +56,18 @@ The name is the location and, on a forge, the identity:
   (`https://token.actions.githubusercontent.com`).
 - `gitlab.com/<path>`: likewise, signed by a pipeline of that project
   through `https://gitlab.com`. GitLab subgroups make paths arbitrary
-  depth, so the whole path is the pin.
+  depth, so the whole path names the repository.
 - Any other host: the vendor controls the domain and publishes a release
   list at the well-known URL below, signed with the key or identity the
   consumer pins.
 
 For a known forge, a consumer derives the initial signer policy from the
 project it intends to install. It must also check that the verified
-statement names that project. Deriving a policy only from an untrusted
-statement's claimed project does not check the user's intended identity.
+statement names that project, or the same repository under another name
+as [Forge identity](#forge-identity) allows. Deriving a policy only from
+an untrusted statement's claimed project does not check the user's
+intended identity. A forge name can change hands, so it locates the
+project; the forge's repository ID pins it.
 A short-name alias such as `mise` for `github.com/jdx/mise` is a consumer
 convenience, not part of the format.
 
@@ -85,7 +88,76 @@ by `-` (`packslip.oxlint.sigstore.json`, `packslip.crates-cli.sigstore.json`).
 A repository's own packslip stays `packslip.sigstore.json`. Consumers do
 not trust the file name: they read the `packslip*.sigstore.json` assets of
 a release and keep the one whose `predicateType` is `release/v1` and whose
-`project` is the name they asked for.
+`project` is the name they asked for, or the same tool of the repository
+renamed. A tool keeps its subpath across a rename:
+`github.com/old/repo/tool` becomes `github.com/new/repo/tool`, never
+another tool of the repository.
+
+### Forge identity
+
+A repository can be renamed or moved to another owner, and the forge
+redirects the old name to the new one: `github.com/jdx/rtx` became
+`github.com/jdx/mise`, and GitHub answers for the first with the second.
+Once the old name is free, anyone can create a repository under it, with
+a workflow at the same path. The name cannot tell these apart. The
+forge's repository ID can: it never changes and is never reused.
+
+Fulcio records the IDs in every certificate it issues to a GitHub Actions
+or GitLab CI job, from the job's OIDC token:
+
+| Extension | OID | GitHub claim | GitLab claim |
+| --- | --- | --- | --- |
+| Source Repository URI | `1.3.6.1.4.1.57264.1.12` | server URL + `repository` | server URL + `project_path` |
+| Source Repository Identifier | `1.3.6.1.4.1.57264.1.15` | `repository_id` | `project_id` |
+| Source Repository Owner URI | `1.3.6.1.4.1.57264.1.16` | server URL + `repository_owner` | server URL + `namespace_path` |
+| Source Repository Owner Identifier | `1.3.6.1.4.1.57264.1.17` | `repository_owner_id` | `namespace_id` |
+
+Each is a DER UTF8String; an empty value means the forge gave none. The
+repository ID survives a rename and a transfer. The owner ID survives
+renaming the owner and changes when the repository moves to another
+owner; a GitLab project's owner is its immediate group, so moving it
+between groups is a transfer. The IDs speak for a packslip only when the
+Source Repository URI is the repository its `project` names and the
+signer is a workflow of that repository.
+
+A consumer remembers the repository ID and owner ID of the first release
+it accepts, with its signer (see [Consumer rules](#consumer-rules)), and
+compares each later release with them:
+
+- **Same.** The statement names the requested project and the certificate
+  carries the pinned repository ID and owner ID. Accept it.
+- **Renamed.** The statement names another repository on the same forge,
+  with the same monorepo subpath, and the certificate carries the pinned
+  repository ID and owner ID. Accept it and report the name it was signed
+  under. That covers a release after the rename, under the new name, and
+  one from before it, under the old name, whichever name the user asks
+  for. Signer continuity compares the workflow's path inside the
+  repository: `.github/workflows/release.yml` of `jdx/rtx` continues as
+  the same file of `jdx/mise`.
+- **Transferred.** The pinned repository ID under another owner ID. Refuse
+  it unless a person accepts the new owner, as for a signer change.
+- **Different repository.** A repository ID other than the pinned one.
+  Refuse it, even under the requested name: that is what a name
+  recreated after a rename or a deletion looks like.
+- A statement for another name with no ID to compare, on either side, is
+  refused, as it would be with no pin.
+
+With no pin, the consumer has only the forge's word. GitHub's
+`GET /repos/<owner>/<repo>` redirects a renamed repository's old name to
+the repository and returns its `id`, and a consumer may take that as the
+expected repository ID. It says nothing about the owner, so without a
+pinned owner ID the owner is compared by name, and a release from an
+owner of another name counts as a transfer. First use is trust on first
+use: when the name was recreated before the consumer first saw it, the
+forge answers for the new repository, and nothing in the release says
+otherwise. A lockfile that records the repository ID carries the pin to
+every machine that reads it. A certificate that carries no IDs, from
+before Fulcio recorded them, is checked by name alone.
+
+The reference implementation reads the extensions as
+`sigstore::source_repository`, classifies a release as above in
+`forge::check`, and verifies and classifies a bundle in one call with
+`verify_forge`.
 
 ## The file
 
@@ -779,7 +851,11 @@ releases endpoint, which every consumer can read without the vendor
 publishing anything more:
 
 - A release counts when it is not a draft and carries a packslip whose
-  `project` matches.
+  `project` matches, or names the same repository renamed, as
+  [Forge identity](#forge-identity) allows. GitHub redirects a renamed
+  repository's API and release URLs from the old name to the new one, so
+  a consumer asking for the old name reaches the renamed repository's
+  releases.
 - Its tag names its version, as Versions defines: the version, optionally
   after a `v`, and optionally after the tool's subpath, its last segment,
   or the repository name plus a separator. A consumer lists versions from
@@ -997,8 +1073,13 @@ These rules apply to the complete consumer workflow, not just signature
 verification. Consumers must preserve enough state to enforce signer
 continuity, no-downgrade policy, and release-list sequences across installs.
 
-1. Pin the identity once. For a forge project, the name is the pin: accept
-   only the forge's issuer and an identity under the repository. For other
+1. Pin the identity once. For a forge project, the name gives the first
+   pin: accept only the forge's issuer and an identity under the
+   repository, and remember the repository ID and owner ID its
+   certificate records. From then on those IDs pin the project, as
+   [Forge identity](#forge-identity) says: a renamed repository keeps its
+   pin, a transfer needs a person's say-so, and a recreated name does not
+   inherit it. For other
    projects, pin the public key or identity from a list of pins you
    maintain, or from the well-known list on first use. A list from another
    publisher is trusted per host, by configuration. Never take a key from
@@ -1012,7 +1093,8 @@ continuity, no-downgrade policy, and release-list sequences across installs.
    saying so, whose `attested_by` went from vendor to repackager, or that
    dropped per-artifact provenance the last release carried. For a keyless
    signer, compare the workflow path, not the ref: a new tag of the same
-   workflow is the same signer.
+   workflow is the same signer. For a renamed repository, compare the
+   workflow's path inside the repository.
 4. Apply any minimum release age to the log's integration time, falling
    back to `published_at` only for an unlogged bundle you chose to accept.
 5. Use the project's release list: GitHub's releases endpoint with the
