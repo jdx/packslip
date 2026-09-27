@@ -390,6 +390,93 @@ pub struct BundleVerified {
     pub integrated_time: Option<i64>,
 }
 
+/// Fulcio's Source Repository URI extension.
+const SOURCE_REPOSITORY_URI: &str = "1.3.6.1.4.1.57264.1.12";
+/// Fulcio's Source Repository Identifier extension: GitHub's
+/// `repository_id`, GitLab's `project_id`.
+const SOURCE_REPOSITORY_ID: &str = "1.3.6.1.4.1.57264.1.15";
+/// Fulcio's Source Repository Owner URI extension.
+const SOURCE_REPOSITORY_OWNER_URI: &str = "1.3.6.1.4.1.57264.1.16";
+/// Fulcio's Source Repository Owner Identifier extension: GitHub's
+/// `repository_owner_id`, GitLab's `namespace_id`.
+const SOURCE_REPOSITORY_OWNER_ID: &str = "1.3.6.1.4.1.57264.1.17";
+
+/// The repository a keyless signer's CI run was based on, as Fulcio
+/// recorded it in the certificate from the forge's OIDC token.
+///
+/// A forge's numeric IDs do not change when a repository or its owner is
+/// renamed, so they tell a renamed repository from a new one that took its
+/// old name. The repository ID also survives a transfer to another owner;
+/// the owner ID does not. GitHub Actions and GitLab CI certificates carry
+/// all four fields; certificates Fulcio issued before it recorded them,
+/// and those for other identities, carry none.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[non_exhaustive]
+pub struct SourceRepository {
+    /// The repository's URL when the certificate was issued:
+    /// `https://github.com/owner/repo`.
+    pub uri: String,
+    /// The forge's immutable repository ID, a decimal string on GitHub and
+    /// GitLab.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// The owner's URL when the certificate was issued:
+    /// `https://github.com/owner`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_uri: Option<String>,
+    /// The forge's immutable ID of the repository's owner (a GitHub user or
+    /// organization, a GitLab namespace).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_id: Option<String>,
+}
+
+impl SourceRepository {
+    /// The source repository a DER certificate records, or none when it has
+    /// no Source Repository URI extension. Verifies nothing.
+    pub fn from_certificate(der: &[u8]) -> Result<Option<SourceRepository>, Error> {
+        use x509_cert::der::Decode as _;
+        use x509_cert::der::asn1::Utf8StringRef;
+        use x509_cert::der::oid::ObjectIdentifier;
+
+        let cert = x509_cert::Certificate::from_der(der)
+            .map_err(|e| Error::Verification(format!("certificate does not parse: {e}")))?;
+        let extensions = cert.tbs_certificate.extensions.unwrap_or_default();
+        let value = |oid: &str| -> Result<Option<String>, Error> {
+            let oid = ObjectIdentifier::new_unwrap(oid);
+            let Some(ext) = extensions.iter().find(|e| e.extn_id == oid) else {
+                return Ok(None);
+            };
+            // Fulcio encodes these as DER UTF8Strings inside the extension's
+            // octet string. An empty value means the forge had none to give.
+            let text = Utf8StringRef::from_der(ext.extn_value.as_bytes()).map_err(|e| {
+                Error::Verification(format!("certificate extension {oid} is malformed: {e}"))
+            })?;
+            Ok(Some(text.as_str().to_string()).filter(|s| !s.is_empty()))
+        };
+        let Some(uri) = value(SOURCE_REPOSITORY_URI)? else {
+            return Ok(None);
+        };
+        Ok(Some(SourceRepository {
+            uri,
+            id: value(SOURCE_REPOSITORY_ID)?,
+            owner_uri: value(SOURCE_REPOSITORY_OWNER_URI)?,
+            owner_id: value(SOURCE_REPOSITORY_OWNER_ID)?,
+        }))
+    }
+}
+
+/// The source repository the signing certificate in a bundle records:
+/// none for a key-signed bundle or a certificate without the extensions.
+/// Verifies nothing, so read it only from a bundle that verified;
+/// [`crate::verify::verify_forge`] does both.
+pub fn source_repository(bundle_json: &str) -> Result<Option<SourceRepository>, Error> {
+    let bundle = Bundle::from_json(bundle_json).map_err(|e| Error::BundleJson(e.to_string()))?;
+    match bundle.signing_certificate() {
+        Some(cert) => SourceRepository::from_certificate(cert.as_bytes()),
+        None => Ok(None),
+    }
+}
+
 /// The trusted root: a file's contents, or the production root embedded in
 /// this build.
 pub fn trusted_root(json: Option<&str>) -> Result<TrustedRoot, Error> {
@@ -585,6 +672,14 @@ mod tests {
     }
 
     #[test]
+    fn a_certificate_that_does_not_parse_is_an_error() {
+        assert!(matches!(
+            SourceRepository::from_certificate(b"not a certificate"),
+            Err(Error::Verification(_))
+        ));
+    }
+
+    #[test]
     fn embedded_trusted_root_parses() {
         trusted_root(None).unwrap();
     }
@@ -605,6 +700,7 @@ mod tests {
         .unwrap();
         assert!(bundle.contains("\"publicKey\""), "{bundle}");
         assert_eq!(peek_statement(&bundle).unwrap(), statement);
+        assert_eq!(source_repository(&bundle).unwrap(), None);
 
         let public = key.public_key();
         let err = verify(&bundle, &Trust::Key(&public), true, &root).unwrap_err();

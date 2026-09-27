@@ -23,6 +23,18 @@ packslip verify packslip.sigstore.json \
 Keep the trailing slash on the repository prefix. For a narrower pin,
 use `--identity` with the exact certificate identity instead.
 
+For a keyless bundle from GitHub Actions or GitLab CI, the result also
+names the repository the signing run was based on, with the forge's
+immutable IDs for it and its owner:
+
+```text
+  repository https://github.com/jdx/hk (id 922514152), owner https://github.com/jdx (id 216188)
+```
+
+`--json` reports them as `source_repository`. A repository keeps its ID
+when it is renamed, so an installer pins the ID rather than the name; see
+[Forge identity](/release/v1/#forge-identity).
+
 Without identity flags, the CLI derives a policy from the bundle's
 claimed project on GitHub or GitLab. That checks whether the signer
 belongs to the project the document names. It does **not** establish that
@@ -105,6 +117,10 @@ selection, and remembered policy. Implement the full
    signer changes, weaker signing, vendor-to-repackager changes, or lost
    provenance links. A workflow's tag ref can change without changing
    the workflow's identity for this comparison.
+   For a forge project, remember the repository and owner IDs too:
+   follow a rename that keeps the repository ID, ask before accepting a
+   transfer to another owner, and refuse a repository with another ID
+   under the same name.
 4. Apply any release-age policy to the verified log time, using the signed
    publication time only for an explicitly accepted unlogged bundle.
 5. Select the artifact for the host and variant, then check host
@@ -124,10 +140,10 @@ cargo add packslip --no-default-features
 ```
 
 That leaves the statement types, `verify`, `verify_release_list`,
-`select_artifact`, and `select_resources`, and drops the archive readers,
-the executable decoder that derives `requires.libs`, the signing path, the
-JSON Schema generator, and the CLI: about seventy fewer crates in the
-dependency graph. The features are additive and all on by default, so the
+`verify_forge`, `select_artifact`, and `select_resources`, and drops the
+archive readers, the executable decoder that derives `requires.libs`, the
+signing path, the JSON Schema generator, and the CLI: about seventy fewer
+crates in the dependency graph. The features are additive and all on by default, so the
 binary and any dependent that says nothing is unaffected:
 
 | Feature | Adds |
@@ -139,6 +155,30 @@ binary and any dependent that says nothing is unaffected:
 | `sign` | Sign statements, keylessly through Fulcio or with a minisign key. |
 | `manifest` | Read a `packslip.toml`. |
 | `schema` | `Statement::schema()` and `ReleaseListStatement::schema()`. |
+
+For a GitHub or GitLab project, `verify_forge` verifies a bundle under
+the policy the forge implies and checks it against what the consumer
+remembers, following renames by repository ID:
+
+```rust
+use packslip::forge::{Continuity, Expected, ForgePin};
+
+// The pin a consumer stored after an earlier install, if any.
+let pin: Option<ForgePin> = load_pin("github.com/jdx/hk");
+let expected = Expected::new("github.com/jdx/hk").pinned(pin.as_ref());
+let accepted = packslip::verify_forge(&bundle, &expected, options, &artifacts)?;
+if let Continuity::Renamed { signed, .. } = &accepted.check.continuity {
+    eprintln!("github.com/jdx/hk is now {signed}");
+}
+if let Some(pin) = &accepted.check.pin {
+    store_pin("github.com/jdx/hk", pin);
+}
+```
+
+`accepted.check.continues_signer(previous)` compares a remembered
+signer with this one across a rename. A different repository under the
+pinned name, or a transfer without `accepting_transfer(true)`, is an
+error.
 
 A lockfile can carry a project's signer commitment alongside artifact
 URLs and digests so another machine can enforce it on its first install.
@@ -154,6 +194,8 @@ with [Manage release lists](/docs/release-lists/).
 | Failure | Check |
 | --- | --- |
 | Identity mismatch | Expected repository/workflow and issuer; do not change the pin just to make the command pass. |
+| Different repository under the pinned name | The name now belongs to a new repository: the original was renamed or deleted and someone took its name. Find where the project went; do not re-pin the name. |
+| Repository moved to another owner | Confirm the transfer with the project before accepting the new owner. |
 | Missing public-key policy | Supply the trusted key for a key-signed release. |
 | Unlogged bundle refused | Confirm whether the publisher intentionally omitted logging. |
 | Digest or size mismatch | Confirm the original filename and release version, then obtain a fresh copy from the publisher. |

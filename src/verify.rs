@@ -6,8 +6,9 @@ use std::path::Path;
 
 use sigstore_trust_root::TrustedRoot;
 
+use crate::forge;
 use crate::model::{InvalidDocument, ReleaseListStatement, Scheme, Statement};
-use crate::sigstore::{self, SignedBy, Trust};
+use crate::sigstore::{self, Policy, SignedBy, Trust};
 
 /// How strict to be.
 #[derive(Debug, Clone, Copy)]
@@ -254,4 +255,203 @@ pub fn verify_release_list(
         issuer,
         logged_at: logged_at(verified.integrated_time),
     })
+}
+
+/// What [`verify_forge`] or [`verify_forge_release_list`] established: the
+/// verification itself, and how the signing repository relates to the
+/// one the consumer expected.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ForgeVerified<T> {
+    /// A [`Verified`] or a [`VerifiedList`].
+    pub verified: T,
+    /// The continuity, the certificate's source repository, and the pin
+    /// to remember once the release is accepted.
+    pub check: forge::Check,
+}
+
+/// Why [`verify_forge`] or [`verify_forge_release_list`] refused a bundle.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum ForgeError {
+    /// The bundle or its statement did not verify.
+    #[error(transparent)]
+    Verify(#[from] Error),
+    /// It verified, but not as the project the consumer expected.
+    #[error(transparent)]
+    Identity(#[from] forge::IdentityError),
+}
+
+/// The policy to verify a forge project's bundle under: see
+/// [`forge::policy`].
+fn forge_policy(bundle: &str, expected: &forge::Expected<'_>) -> Result<Policy, ForgeError> {
+    let payload = sigstore::peek_statement(bundle).map_err(Error::from)?;
+    let peeked: serde_json::Value = serde_json::from_slice(&payload).map_err(Error::from)?;
+    let signed = peeked["predicate"]["project"].as_str().unwrap_or_default();
+    forge::policy(expected.project, signed)
+        .ok_or_else(|| forge::IdentityError::NotForge(expected.project.to_string()).into())
+}
+
+/// Verify a GitHub or GitLab project's packslip under the policy its forge
+/// implies, then check that it was signed by the repository the consumer
+/// expected, by the forge's immutable repository ID where the certificate
+/// and the consumer's pin or forge lookup give one ([`forge::check`]). A
+/// renamed repository's releases verify under the new name, and its older
+/// releases under the old one; a transfer or a recreated name does not.
+///
+/// The caller still applies signer continuity, with
+/// [`forge::Check::continues_signer`], and records
+/// [`forge::Check::pin`] once it accepts the release.
+pub fn verify_forge(
+    bundle: &str,
+    expected: &forge::Expected<'_>,
+    options: Options<'_>,
+    artifacts: &[&Path],
+) -> Result<ForgeVerified<Verified>, ForgeError> {
+    let policy = forge_policy(bundle, expected)?;
+    let verified = verify(bundle, &Trust::Identity(&policy), options, artifacts)?;
+    let source = sigstore::source_repository(bundle).map_err(Error::from)?;
+    let check = forge::check(
+        expected,
+        &verified.project,
+        &verified.key_id,
+        verified.issuer.as_deref(),
+        source.as_ref(),
+    )?;
+    Ok(ForgeVerified { verified, check })
+}
+
+/// [`verify_forge`] for a forge project's supplementary release list.
+pub fn verify_forge_release_list(
+    bundle: &str,
+    expected: &forge::Expected<'_>,
+    options: Options<'_>,
+) -> Result<ForgeVerified<VerifiedList>, ForgeError> {
+    let policy = forge_policy(bundle, expected)?;
+    let verified = verify_release_list(bundle, &Trust::Identity(&policy), options)?;
+    let source = sigstore::source_repository(bundle).map_err(Error::from)?;
+    let check = forge::check(
+        expected,
+        &verified.list.predicate.project,
+        &verified.key_id,
+        verified.issuer.as_deref(),
+        source.as_ref(),
+    )?;
+    Ok(ForgeVerified { verified, check })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::forge::{Continuity, Evidence, Expected, ForgePin, IdentityError};
+
+    /// jdx/hk's v2.3.0 packslip, as its release workflow published it.
+    const HK: &str = include_str!("../tests/fixtures/hk-v2.3.0.sigstore.json");
+
+    fn options(root: &TrustedRoot) -> Options<'_> {
+        Options {
+            require_log: true,
+            trusted_root: root,
+        }
+    }
+
+    #[test]
+    fn a_published_certificate_records_the_repository_ids() {
+        let source = sigstore::source_repository(HK).unwrap().unwrap();
+        assert_eq!(source.uri, "https://github.com/jdx/hk");
+        assert_eq!(source.id.as_deref(), Some("922514152"));
+        assert_eq!(source.owner_uri.as_deref(), Some("https://github.com/jdx"));
+        assert_eq!(source.owner_id.as_deref(), Some("216188"));
+    }
+
+    #[test]
+    fn a_published_release_verifies_by_repository_id() {
+        let root = sigstore::trusted_root(None).unwrap();
+        let ok =
+            verify_forge(HK, &Expected::new("github.com/jdx/hk"), options(&root), &[]).unwrap();
+        assert_eq!(ok.verified.project, "github.com/jdx/hk");
+        assert_eq!(ok.check.continuity, Continuity::Same);
+        let pin = ok.check.pin.clone().unwrap();
+        assert_eq!(
+            pin,
+            ForgePin::new("github.com/jdx/hk", "922514152", Some("216188".into()))
+        );
+        assert!(
+            ok.check
+                .continues_signer("https://github.com/jdx/hk/.github/workflows/release.yml")
+        );
+
+        // Were hk renamed to hook, a user asking for the new name with the
+        // pin would still take this release, signed under the old name.
+        let pinned = ForgePin::new("github.com/jdx/hook", "922514152", Some("216188".into()));
+        let ok = verify_forge(
+            HK,
+            &Expected::new("github.com/jdx/hook").pinned(Some(&pinned)),
+            options(&root),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            ok.check.continuity,
+            Continuity::Renamed {
+                requested: "github.com/jdx/hook".into(),
+                signed: "github.com/jdx/hk".into(),
+            }
+        );
+        // Without the pin or a forge lookup, another name is refused.
+        let err = verify_forge(
+            HK,
+            &Expected::new("github.com/jdx/hook"),
+            options(&root),
+            &[],
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ForgeError::Identity(IdentityError::ProjectMismatch { .. })
+            ),
+            "{err}"
+        );
+        // A pin for another repository under the same name is a recreated name.
+        let other = ForgePin::new("github.com/jdx/hk", "1", Some("216188".into()));
+        let err = verify_forge(
+            HK,
+            &Expected::new("github.com/jdx/hk").pinned(Some(&other)),
+            options(&root),
+            &[],
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ForgeError::Identity(IdentityError::DifferentRepository {
+                    evidence: Evidence::Pin,
+                    ..
+                })
+            ),
+            "{err}"
+        );
+        // A monorepo tool of the repository is not the repository.
+        let err = verify_forge(
+            HK,
+            &Expected::new("github.com/jdx/hk/tool"),
+            options(&root),
+            &[],
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ForgeError::Identity(IdentityError::ProjectMismatch { .. })
+            ),
+            "{err}"
+        );
+        // Only forge projects.
+        let err = verify_forge(HK, &Expected::new("hk.jdx.dev"), options(&root), &[]).unwrap_err();
+        assert!(
+            matches!(err, ForgeError::Identity(IdentityError::NotForge(_))),
+            "{err}"
+        );
+    }
 }

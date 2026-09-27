@@ -1249,6 +1249,9 @@ impl RunWith<BinInfo> for Verify {
                                 String::new()
                             }
                         );
+                        if let Some(source) = sigstore::source_repository(&text)? {
+                            println!("  repository {}", describe_source(&source));
+                        }
                     }
                     Ok(())
                 }
@@ -1260,8 +1263,22 @@ impl RunWith<BinInfo> for Verify {
         }
         match packslip::verify(&text, &pin.as_trust(), options, &artifacts) {
             Ok(verified) => {
+                // The bundle verified, so its certificate's record of the
+                // repository is the one Fulcio issued.
+                let source = sigstore::source_repository(&text)?;
                 if self.json {
-                    println!("{}", serde_json::to_string_pretty(&verified)?);
+                    #[derive(serde::Serialize)]
+                    struct Report<'a> {
+                        #[serde(flatten)]
+                        verified: &'a packslip::Verified,
+                        #[serde(skip_serializing_if = "Option::is_none")]
+                        source_repository: Option<&'a sigstore::SourceRepository>,
+                    }
+                    let report = Report {
+                        verified: &verified,
+                        source_repository: source.as_ref(),
+                    };
+                    println!("{}", serde_json::to_string_pretty(&report)?);
                 } else {
                     println!(
                         "ok: {} {}{} published {} signed by {} ({}){}{} ({} of {} artifact(s) checked{}{})",
@@ -1297,6 +1314,9 @@ impl RunWith<BinInfo> for Verify {
                             format!(", {} resource(s)", verified.resources.len())
                         }
                     );
+                    if let Some(source) = &source {
+                        println!("  repository {}", describe_source(source));
+                    }
                     for line in &verified.requires {
                         println!("  requires {line}");
                     }
@@ -1309,6 +1329,20 @@ impl RunWith<BinInfo> for Verify {
             }
         }
     }
+}
+
+/// The signing repository and the forge's IDs for it and its owner:
+/// `https://github.com/jdx/hk (id 922514152), owner https://github.com/jdx (id 216188)`.
+fn describe_source(source: &sigstore::SourceRepository) -> String {
+    let with_id = |uri: &str, id: &Option<String>| match id {
+        Some(id) => format!("{uri} (id {id})"),
+        None => uri.to_string(),
+    };
+    let mut line = with_id(&source.uri, &source.id);
+    if let Some(owner) = &source.owner_uri {
+        line.push_str(&format!(", owner {}", with_id(owner, &source.owner_id)));
+    }
+    line
 }
 
 fn main() -> Result<()> {

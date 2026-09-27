@@ -33,3 +33,9 @@
   --no-as-needed -o needs-musl start.o libc.musl-x86_64.so.1`, against a
   stub made with `-shared -soname libc.musl-x86_64.so.1` from an empty
   object.
+
+- `hk-v2.3.0.sigstore.json`: the packslip `jdx/hk` published with its
+  v2.3.0 GitHub release, signed keylessly by its release workflow. Its
+  Fulcio certificate records repository ID 922514152 and owner ID 216188,
+  which is what `gh api repos/jdx/hk --jq '.id,.owner.id'` gives. Tests
+  verify it offline against the embedded trusted root.
