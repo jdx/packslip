@@ -95,7 +95,7 @@ Examples and configuration: https://packslip.dev/docs/describing-releases/
     }
     flag --no-libs help="Do not open the artifacts to record the shared libraries their executables load from the host"
     flag "-h --help" help="Print help" action=help builtin=#true
-    arg "[ARTIFACTS]..." help="Artifact files, optionally as path[:os/arch[/libc]|:any][@variant]. Added to those the manifest lists"
+    arg "[ARTIFACTS]..." help="Artifact files, optionally as path[:os/arch[/libc]|:any][@variant]. An arch or libc of any leaves it out, for a build that runs on every one. Added to those the manifest lists"
     complete manifest type=path
     complete key type=path
 }

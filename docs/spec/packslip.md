@@ -225,7 +225,9 @@ The following rules apply to the decoded release statement:
   nothing, so a vendor uses one only for a platform or format this
   document has not named yet. An absent `os`, `arch`, or `libc` means the
   artifact does not depend on it: a universal macOS binary has `os` and
-  no `arch`, a script or a jar has none of the three.
+  no `arch`, a statically linked Linux executable, which loads no C
+  library from the host, has no `libc`, and a script or a jar has none of
+  the three.
 - `format` is the archive or installer type, or `raw` for a bare
   executable. Two artifacts that differ only in format carry the same
   build, and a consumer takes whichever it prefers. A vendor must not

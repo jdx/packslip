@@ -12,7 +12,7 @@ Signing uses a supported CI OIDC identity by default. Use --key to sign with an 
 Examples and configuration: https://packslip.dev/docs/describing-releases/
 
 ## Arguments
-- **`[ARTIFACTS]…`** — Artifact files, optionally as path[:os/arch[/libc]|:any][@variant]. Added to those the manifest lists
+- **`[ARTIFACTS]…`** — Artifact files, optionally as path[:os/arch[/libc]|:any][@variant]. An arch or libc of any leaves it out, for a build that runs on every one. Added to those the manifest lists
 
 ## Flags
 - **`--project <PROJECT>`** — The project's name: a host path such as github.com/owner/repo, or github.com/owner/repo/tool for one tool of a monorepo. Required unless the manifest names it

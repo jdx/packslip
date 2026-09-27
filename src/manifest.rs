@@ -97,7 +97,9 @@ impl From<SourceSpec> for Source {
 pub struct ArtifactSpec {
     pub path: PathBuf,
     pub os: Option<String>,
+    /// `any` for a build that runs on every architecture of its OS.
     pub arch: Option<String>,
+    /// `any` for a build that loads no C library from the host.
     pub libc: Option<String>,
     /// Runs on any host: no `os`, `arch`, or `libc`, whatever the name
     /// says.

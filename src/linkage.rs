@@ -113,6 +113,59 @@ pub fn host_libraries(executables: &Executables) -> Option<Vec<String>> {
     )
 }
 
+/// Which C library a set of Linux executables loads from the host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Libc {
+    /// None: every executable is statically linked, with no interpreter
+    /// and no `DT_NEEDED` entries, as a Go binary built with
+    /// `CGO_ENABLED=0` is. It runs on a glibc or a musl host alike.
+    Static,
+    /// musl: an executable's interpreter is `ld-musl-*` or it links
+    /// `libc.musl-*`, and none needs glibc.
+    Musl,
+    /// glibc, or at least not musl: some executable is dynamically linked
+    /// against another loader.
+    Gnu,
+}
+
+impl Libc {
+    /// The artifact's `libc` value.
+    pub fn value(self) -> Option<&'static str> {
+        match self {
+            Libc::Static => None,
+            Libc::Musl => Some("musl"),
+            Libc::Gnu => Some("gnu"),
+        }
+    }
+}
+
+/// The C library `executables` load, when every one of them is an ELF
+/// binary. `None` when there are none, or when one is a script or
+/// another kind of binary, since what it runs is not in its bytes.
+pub fn elf_libc(executables: &Executables) -> Option<Libc> {
+    let mut libc = None;
+    for (_, bytes) in &executables.found {
+        let goblin::Object::Elf(elf) = goblin::Object::parse(bytes).ok()? else {
+            return None;
+        };
+        let this = if elf.interpreter.is_some_and(|i| i.contains("ld-musl"))
+            || elf.libraries.iter().any(|l| l.starts_with("libc.musl"))
+        {
+            Libc::Musl
+        } else if elf.interpreter.is_none() && elf.libraries.is_empty() {
+            Libc::Static
+        } else {
+            Libc::Gnu
+        };
+        libc = Some(match (libc, this) {
+            (Some(Libc::Gnu), _) | (_, Libc::Gnu) => Libc::Gnu,
+            (Some(Libc::Musl), _) | (_, Libc::Musl) => Libc::Musl,
+            _ => Libc::Static,
+        });
+    }
+    libc
+}
+
 /// The libraries one binary asks the host for, after the baseline for its
 /// platform is removed. `None` when the bytes are not a binary.
 pub fn needed_libraries(bytes: &[u8]) -> Option<Vec<String>> {
@@ -554,6 +607,48 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(needed_libraries(&fixture).unwrap(), ["libz.so.1"]);
+    }
+
+    fn fixture(name: &str) -> Vec<u8> {
+        std::fs::read(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures")
+                .join(name),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn libc_is_read_from_the_loader() {
+        let of = |bins: &[&str]| {
+            elf_libc(&Executables {
+                found: bins
+                    .iter()
+                    .map(|name| (name.to_string(), fixture(name)))
+                    .collect(),
+                shipped: BTreeSet::new(),
+            })
+        };
+        assert_eq!(of(&["static"]), Some(Libc::Static));
+        assert_eq!(needed_libraries(&fixture("static")).unwrap(), [""; 0]);
+        assert_eq!(of(&["needs-z"]), Some(Libc::Gnu));
+        assert_eq!(of(&["needs-musl"]), Some(Libc::Musl));
+        // One dynamic executable decides for the static ones beside it.
+        assert_eq!(of(&["static", "needs-musl"]), Some(Libc::Musl));
+        assert_eq!(of(&["static", "needs-z", "needs-musl"]), Some(Libc::Gnu));
+        assert_eq!(of(&[]), None);
+        // A script says nothing about the C library, so neither does the
+        // artifact it is in.
+        let with_script = Executables {
+            found: vec![
+                ("static".into(), fixture("static")),
+                ("run".into(), b"#!/bin/sh\n".to_vec()),
+            ],
+            shipped: BTreeSet::new(),
+        };
+        assert_eq!(elf_libc(&with_script), None);
+        assert_eq!(Libc::Static.value(), None);
+        assert_eq!(Libc::Musl.value(), Some("musl"));
     }
 
     #[test]

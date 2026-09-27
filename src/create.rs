@@ -70,7 +70,11 @@ impl<'a> Request<'a> {
 pub struct ArtifactInput<'a> {
     pub path: &'a Path,
     pub os: Option<&'a str>,
+    /// [`ANY`] for a build that runs on every architecture of its OS.
+    /// Without one, the name must say, unless the OS is macOS or Windows.
     pub arch: Option<&'a str>,
+    /// [`ANY`] for a build that loads no C library from the host.
+    /// Without one, the name says, or the executables do.
     pub libc: Option<&'a str>,
     /// Runs on any host: `os`, `arch`, and `libc` are left out whatever
     /// the file name says.
@@ -166,7 +170,15 @@ pub enum Error {
         "artifact {name:?}: nothing in the name says what kind of file it is; give it a format, or leave it out of the artifacts if it is not one"
     )]
     UnknownFormat { name: String },
+    #[error(
+        "artifact {name:?} is for {os}, but nothing in the name says which architecture; give it as PATH:{os}/x86_64 or arch = \"x86_64\" in the manifest, with any in place of x86_64 if the build runs on every architecture"
+    )]
+    UnknownArch { name: String, os: String },
 }
+
+/// The `arch` or `libc` a vendor gives for a build that runs on every
+/// architecture or C library: the field is left out.
+pub const ANY: &str = "any";
 
 /// The `(os, arch, libc, format)` a file name implies.
 pub type Platform = (
@@ -177,6 +189,11 @@ pub type Platform = (
 );
 
 /// Infer `(os, arch, libc, format)` from a release file name.
+///
+/// `libc` is only what the name says (`musl`, or `gnu` in a triple such as
+/// `x86_64-unknown-linux-gnu`); [`create`] reads the rest from the
+/// executables. An architecture the vocabulary lacks, such as goreleaser's
+/// `mips64le`, is given as Rust's triples spell it (`mips64el`).
 ///
 /// A `.exe` is taken for the program itself (`raw`) unless its name says
 /// `setup`, `install`, or `installer`, which makes it an `exe` installer;
@@ -243,6 +260,23 @@ pub fn infer_platform(name: &str) -> Platform {
     } else {
         None
     };
+    // A number stands for an architecture only as a word of its own, not
+    // as a part of a dotted version: goreleaser's `386` is i686 in
+    // `tool_1.2.0_linux_386.tar.gz`, but nothing in `tool-1.386.0.tar.gz`.
+    let bytes = lower.as_bytes();
+    let digit_at = |i: Option<usize>| i.and_then(|i| bytes.get(i)).is_some_and(u8::is_ascii_digit);
+    let word = |w: &str| {
+        lower.match_indices(w).any(|(start, _)| {
+            let end = start + w.len();
+            let before = start.checked_sub(1).map(|i| bytes[i]);
+            let after = bytes.get(end).copied();
+            let bounded = |c: Option<u8>| !c.is_some_and(|c| c.is_ascii_alphanumeric());
+            let versioned = w.bytes().all(|b| b.is_ascii_digit())
+                && ((before == Some(b'.') && digit_at(start.checked_sub(2)))
+                    || (after == Some(b'.') && digit_at(Some(end + 1))));
+            bounded(before) && bounded(after) && !versioned
+        })
+    };
     let arch = if lower.contains("x86_64")
         || lower.contains("x86-64")
         || lower.contains("x64")
@@ -257,20 +291,59 @@ pub fn infer_platform(name: &str) -> Platform {
         Some("armv6")
     } else if lower.contains("riscv64") {
         Some("riscv64")
-    } else if lower.contains("ppc64le") || lower.contains("powerpc64le") {
+    } else if lower.contains("ppc64le")
+        || lower.contains("ppc64el")
+        || lower.contains("powerpc64le")
+    {
         Some("powerpc64le")
     } else if lower.contains("s390x") {
         Some("s390x")
     } else if lower.contains("loongarch64") || lower.contains("loong64") {
         Some("loongarch64")
-    } else if lower.contains("i686") || lower.contains("i386") || lower.contains("x86") {
+    } else if lower.contains("i686")
+        || lower.contains("i386")
+        || lower.contains("x86")
+        || word("ia32")
+        || word("386")
+    {
         Some("i686")
+    } else if word("arm") {
+        // Plain `arm` is ARMv6 in both of the conventions that write it:
+        // goreleaser builds `GOARCH=arm` with `GOARM=6` unless told
+        // otherwise, and Rust's `arm-unknown-linux-*` targets are ARMv6.
+        Some("armv6")
+    } else if word("mips64el") || word("mips64le") {
+        // Architectures outside the vocabulary, spelled as Rust's triples
+        // spell them, so no consumer takes them for another one.
+        // goreleaser writes the little-endian ones `mipsle`, `mips64le`.
+        Some("mips64el")
+    } else if word("mips64") {
+        Some("mips64")
+    } else if word("mipsel") || word("mipsle") {
+        Some("mipsel")
+    } else if word("mips") {
+        Some("mips")
+    } else if word("ppc64") || word("powerpc64") {
+        Some("powerpc64")
+    } else if word("win64") {
+        // Only when nothing else in the name gives the architecture.
+        Some("x86_64")
     } else {
         None
     };
-    let libc = if lower.contains("musl") {
+    // Only what the name says. `create` falls back to what the
+    // executables load, then to `gnu`, for a Linux build.
+    let libc = if !matches!(os, None | Some("linux")) {
+        None
+    } else if lower.contains("musl") {
         Some("musl")
-    } else if os == Some("linux") {
+    } else if tokens.iter().any(|t| {
+        *t == "gnu"
+            || t.starts_with("gnueabi")
+            || t.starts_with("gnuabi")
+            || t.starts_with("gnux32")
+            || t.starts_with("glibc")
+    }) {
         Some("gnu")
     } else {
         None
@@ -287,6 +360,12 @@ pub fn infer_platform(name: &str) -> Platform {
         other => other,
     });
     (os, arch, libc, format)
+}
+
+/// What the vendor gave for `arch` or `libc`: `Some(None)` for `any`,
+/// which leaves the field out because the build runs on every one.
+fn given(value: Option<&str>) -> Option<Option<&str>> {
+    value.map(|v| (v != ANY).then_some(v))
 }
 
 /// Whether a file name ends in something that reads as an extension: a
@@ -342,18 +421,12 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
         } else {
             input.os.or(inferred_os)
         };
+        let given_arch = given(input.arch);
+        let given_libc = given(input.libc);
         let arch = if input.portable {
             None
         } else {
-            input.arch.or(inferred_arch)
-        };
-        let libc = if input.portable {
-            None
-        } else {
-            input.libc.map(str::to_string).or_else(|| match os {
-                Some("linux") => Some(inferred_libc.unwrap_or("gnu").to_string()),
-                _ => None,
-            })
+            given_arch.unwrap_or(inferred_arch)
         };
         // A file with no archive or installer extension is the executable
         // itself, when the name says which host it is for or the vendor
@@ -377,6 +450,22 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
             return Err(Error::UnknownFormat { name });
         };
         let format = Some(format);
+        // An artifact with no architecture fits every host of its OS, so
+        // a name that only fails to say one would hand an x86 build to an
+        // ARM host. macOS and Windows are the exceptions: a build named for
+        // no architecture there is by convention universal or x86, and
+        // both run x86 builds on ARM.
+        if !input.portable
+            && arch.is_none()
+            && given_arch.is_none()
+            && let Some(os) = os
+            && !matches!(os, "darwin" | "windows")
+        {
+            return Err(Error::UnknownArch {
+                name,
+                os: os.to_string(),
+            });
+        }
         let bare = format
             .as_deref()
             .filter(|f| crate::model::is_bare_format(f))
@@ -427,6 +516,14 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
                 .url_base
                 .map(|base| format!("{}/{name}", base.trim_end_matches('/')))
         });
+        // What the executables load is read from them, so the document
+        // says what the bytes say. An artifact `create` cannot open, or
+        // an executable that is a script, records nothing.
+        let executables = if request.read_executables {
+            crate::linkage::read_executables(input.path, format.as_deref(), &bin)?
+        } else {
+            None
+        };
         let mut requires = input.requires.clone().unwrap_or_default();
         if !bin.is_empty() {
             for required in &request.requires_bin {
@@ -434,14 +531,10 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
                     requires.bin.push(required.clone());
                 }
             }
-            // What the executables load is read from them, so the document
-            // says what the bytes say. An artifact `create` cannot open, or
-            // an executable that is a script, records nothing. A list the
-            // manifest gives must agree with what is read.
-            if request.read_executables
-                && let Some(executables) =
-                    crate::linkage::read_executables(input.path, format.as_deref(), &bin)?
-                && let Some(read) = crate::linkage::host_libraries(&executables)
+            // A list the manifest gives must agree with what is read.
+            if let Some(read) = executables
+                .as_ref()
+                .and_then(crate::linkage::host_libraries)
             {
                 // The read list is sorted; a given one may be in any order.
                 let given_sorted = requires.libs.as_ref().map(|given| {
@@ -462,12 +555,30 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
                 }
             }
         }
+        // A Linux build's C library is what the vendor or the name says,
+        // else what the executables load: none for a static build, which
+        // runs on a musl host as well as a glibc one. Only when neither
+        // can be told is it taken for `gnu`, the common case.
+        let libc = if input.portable {
+            None
+        } else if let Some(libc) = given_libc {
+            libc
+        } else if os != Some("linux") {
+            None
+        } else if inferred_libc.is_some() {
+            inferred_libc
+        } else {
+            match executables.as_ref().and_then(crate::linkage::elf_libc) {
+                Some(read) => read.value(),
+                None => Some("gnu"),
+            }
+        };
         let artifact = Artifact {
             url,
             name: name.clone(),
             os: os.map(str::to_string),
             arch: arch.map(str::to_string),
-            libc,
+            libc: libc.map(str::to_string),
             variant: input.variant.clone(),
             size: digests.size,
             format,
@@ -735,9 +846,11 @@ mod tests {
 
     #[test]
     fn infers_platforms() {
+        // The name gives a libc only when it says one; `create` reads the
+        // rest from the executables.
         assert_eq!(
             infer_platform("mise-v2026.9.1-linux-x64.tar.xz"),
-            (Some("linux"), Some("x86_64"), Some("gnu"), Some("tar.xz"))
+            (Some("linux"), Some("x86_64"), None, Some("tar.xz"))
         );
         assert_eq!(
             infer_platform("mise-v2026.9.1-linux-arm64-musl.tar.gz"),
@@ -763,7 +876,7 @@ mod tests {
         // Single compressed executables, and a plain tar.
         assert_eq!(
             infer_platform("argo-linux-amd64.gz"),
-            (Some("linux"), Some("x86_64"), Some("gnu"), Some("gz"))
+            (Some("linux"), Some("x86_64"), None, Some("gz"))
         );
         assert_eq!(
             infer_platform("argo-windows-amd64.exe.gz"),
@@ -771,19 +884,19 @@ mod tests {
         );
         assert_eq!(
             infer_platform("restic_0.16.0_linux_arm64.bz2"),
-            (Some("linux"), Some("aarch64"), Some("gnu"), Some("bz2"))
+            (Some("linux"), Some("aarch64"), None, Some("bz2"))
         );
         assert_eq!(
             infer_platform("tool-linux-x64.zst"),
-            (Some("linux"), Some("x86_64"), Some("gnu"), Some("zst"))
+            (Some("linux"), Some("x86_64"), None, Some("zst"))
         );
         assert_eq!(
             infer_platform("tool-linux-x64.xz"),
-            (Some("linux"), Some("x86_64"), Some("gnu"), Some("xz"))
+            (Some("linux"), Some("x86_64"), None, Some("xz"))
         );
         assert_eq!(
             infer_platform("mmctl_linux_amd64.tar"),
-            (Some("linux"), Some("x86_64"), Some("gnu"), Some("tar"))
+            (Some("linux"), Some("x86_64"), None, Some("tar"))
         );
         // Less common hosts and architectures.
         // Android and iOS triples also say linux and apple.
@@ -810,11 +923,11 @@ mod tests {
         // Whole words only: a product name is not a platform.
         assert_eq!(
             infer_platform("helios-linux-amd64.tar.gz"),
-            (Some("linux"), Some("x86_64"), Some("gnu"), Some("tar.gz"))
+            (Some("linux"), Some("x86_64"), None, Some("tar.gz"))
         );
         assert_eq!(
             infer_platform("android-tools_linux_amd64.tar.gz"),
-            (Some("linux"), Some("x86_64"), Some("gnu"), Some("tar.gz"))
+            (Some("linux"), Some("x86_64"), None, Some("tar.gz"))
         );
         assert_eq!(
             infer_platform("studios-darwin-arm64.tar.gz"),
@@ -826,25 +939,20 @@ mod tests {
         );
         assert_eq!(
             infer_platform("tool-linux-ppc64le.tar.gz"),
-            (
-                Some("linux"),
-                Some("powerpc64le"),
-                Some("gnu"),
-                Some("tar.gz")
-            )
+            (Some("linux"), Some("powerpc64le"), None, Some("tar.gz"))
         );
         assert_eq!(
             infer_platform("tool-linux-s390x.tar.gz"),
-            (Some("linux"), Some("s390x"), Some("gnu"), Some("tar.gz"))
+            (Some("linux"), Some("s390x"), None, Some("tar.gz"))
         );
         assert_eq!(
             infer_platform("tool-linux-armv6.tar.gz"),
-            (Some("linux"), Some("armv6"), Some("gnu"), Some("tar.gz"))
+            (Some("linux"), Some("armv6"), None, Some("tar.gz"))
         );
         assert_eq!(infer_platform("SHASUMS256.txt"), (None, None, None, None));
         assert_eq!(
             infer_platform("tool_amd64.deb"),
-            (Some("linux"), Some("x86_64"), Some("gnu"), Some("deb"))
+            (Some("linux"), Some("x86_64"), None, Some("deb"))
         );
         assert_eq!(
             infer_platform("Tool.dmg"),
@@ -860,16 +968,221 @@ mod tests {
         );
         assert_eq!(
             infer_platform("LM-Studio-0.3.0-x64.AppImage"),
-            (Some("linux"), Some("x86_64"), Some("gnu"), Some("appimage"))
+            (Some("linux"), Some("x86_64"), None, Some("appimage"))
         );
         assert_eq!(
             infer_platform("tool-linux-x86-64.tar.zst"),
-            (Some("linux"), Some("x86_64"), Some("gnu"), Some("tar.zst"))
+            (Some("linux"), Some("x86_64"), None, Some("tar.zst"))
         );
         assert_eq!(
             infer_platform("tool-linux-x64.7z"),
-            (Some("linux"), Some("x86_64"), Some("gnu"), Some("7z"))
+            (Some("linux"), Some("x86_64"), None, Some("7z"))
         );
+        assert_eq!(
+            infer_platform("tool-x86_64-unknown-linux-gnu.tar.xz"),
+            (Some("linux"), Some("x86_64"), Some("gnu"), Some("tar.xz"))
+        );
+        assert_eq!(
+            infer_platform("tool-arm-unknown-linux-gnueabihf.tar.gz"),
+            (Some("linux"), Some("armv6"), Some("gnu"), Some("tar.gz"))
+        );
+        assert_eq!(
+            infer_platform("tool-x86_64-unknown-linux-musl.tar.gz"),
+            (Some("linux"), Some("x86_64"), Some("musl"), Some("tar.gz"))
+        );
+        // libc is for Linux builds; a windows-gnu triple names none.
+        assert_eq!(
+            infer_platform("tool-x86_64-pc-windows-gnu.zip"),
+            (Some("windows"), Some("x86_64"), None, Some("zip"))
+        );
+        // goreleaser's architecture names.
+        for (name, arch) in [
+            ("helmfile_1.8.0_linux_386.tar.gz", "i686"),
+            ("tool_1.0.0_windows_386.zip", "i686"),
+            ("tool-win32-ia32.zip", "i686"),
+            ("tool_1.0.0_linux_arm.tar.gz", "armv6"),
+            ("tool_1.0.0_linux_armv6.tar.gz", "armv6"),
+            ("tool_1.0.0_linux_armv7.tar.gz", "armv7"),
+            ("tool_1.0.0_linux_arm64.tar.gz", "aarch64"),
+            ("tool_1.0.0_linux_ppc64le.tar.gz", "powerpc64le"),
+            ("tool_1.0.0_linux_s390x.tar.gz", "s390x"),
+            ("tool_1.0.0_linux_riscv64.tar.gz", "riscv64"),
+            ("tool_1.0.0_linux_loong64.tar.gz", "loongarch64"),
+            // Outside the vocabulary, as Rust's triples spell them.
+            ("tool_1.0.0_linux_mips.tar.gz", "mips"),
+            ("tool_1.0.0_linux_mips_softfloat.tar.gz", "mips"),
+            ("tool_1.0.0_linux_mipsle.tar.gz", "mipsel"),
+            ("tool_1.0.0_linux_mips64.tar.gz", "mips64"),
+            ("tool_1.0.0_linux_mips64le_hardfloat.tar.gz", "mips64el"),
+            ("tool-mips64el-unknown-linux-gnuabi64.tar.gz", "mips64el"),
+            ("tool_1.0.0_linux_ppc64.tar.gz", "powerpc64"),
+            ("tool-powerpc64-unknown-linux-gnu.tar.gz", "powerpc64"),
+            ("ffmpeg-win64-gpl.zip", "x86_64"),
+        ] {
+            assert_eq!(infer_platform(name).1, Some(arch), "{name}");
+        }
+        // A number is an architecture only as a word of its own, never as
+        // part of a version.
+        for name in [
+            "tool-1.386.0-linux.tar.gz",
+            "tool-386.1.0-linux.tar.gz",
+            "tool-v2.0.386-linux.tar.gz",
+            "tool386-linux.tar.gz",
+            "armory-linux.tar.gz",
+            "tool-linux-armel.tar.gz",
+            "tool-linux.tar.gz",
+        ] {
+            assert_eq!(infer_platform(name).1, None, "{name}");
+        }
+    }
+
+    #[test]
+    fn libc_is_read_from_the_executables() {
+        let dir = tempfile::tempdir().unwrap();
+        let fixture = |name: &str| {
+            std::fs::read(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures")
+                    .join(name),
+            )
+            .unwrap()
+        };
+        let key = SecretKey::from_seed([1u8; 32]);
+        let libc_of = |file: &str, elf: &str, libc: Option<&str>| {
+            let path = dir.path().join(file);
+            std::fs::write(&path, fixture(elf)).unwrap();
+            let created = create(&Request {
+                artifacts: vec![ArtifactInput {
+                    libc,
+                    bin: vec![Bin::new("tool")],
+                    ..ArtifactInput::new(&path)
+                }],
+                ..Request::new("tool.example.com", "1.0.0", key_identity(&key))
+            })
+            .unwrap();
+            created.statement.predicate.artifacts[0].libc.clone()
+        };
+        let read = |file, elf| libc_of(file, elf, None);
+        // A static build, such as a Go binary built with CGO_ENABLED=0,
+        // names no libc, so a musl host takes it as well as a glibc one.
+        assert_eq!(read("helmfile_linux_amd64", "static"), None);
+        assert_eq!(read("tool-linux-x64", "needs-z").as_deref(), Some("gnu"));
+        assert_eq!(
+            read("tool-linux-arm64", "needs-musl").as_deref(),
+            Some("musl")
+        );
+        // What the name says wins over the bytes.
+        assert_eq!(
+            read("tool-linux-x64-musl", "static").as_deref(),
+            Some("musl")
+        );
+        assert_eq!(
+            read("tool-x86_64-unknown-linux-gnu", "static").as_deref(),
+            Some("gnu")
+        );
+        // And what the vendor says wins over both; `any` leaves it out.
+        assert_eq!(
+            libc_of("tool-linux-riscv64", "static", Some("gnu")).as_deref(),
+            Some("gnu")
+        );
+        assert_eq!(libc_of("tool-linux-s390x", "needs-z", Some(ANY)), None);
+        // Without reading the executables the default is gnu, as before.
+        let path = dir.path().join("tool-linux-ppc64le");
+        std::fs::write(&path, fixture("static")).unwrap();
+        let unread = create(&Request {
+            artifacts: vec![ArtifactInput {
+                bin: vec![Bin::new("tool")],
+                ..ArtifactInput::new(&path)
+            }],
+            read_executables: false,
+            ..Request::new("tool.example.com", "1.0.0", key_identity(&key))
+        })
+        .unwrap();
+        assert_eq!(
+            unread.statement.predicate.artifacts[0].libc.as_deref(),
+            Some("gnu")
+        );
+        // A static executable in a non-Linux build still names no libc.
+        assert_eq!(read("tool-freebsd-x64", "static"), None);
+    }
+
+    #[test]
+    fn an_architecture_is_required() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = SecretKey::from_seed([1u8; 32]);
+        let one = |input: ArtifactInput<'_>| {
+            create(&Request {
+                artifacts: vec![input],
+                ..Request::new("tool.example.com", "1.0.0", key_identity(&key))
+            })
+        };
+        let file = |name: &str| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, b"bytes").unwrap();
+            path
+        };
+        // A Linux or BSD build whose name says no architecture would fit
+        // every host of its OS, so it is refused.
+        for name in [
+            "tool_1.0.0_linux_sparc.tar.gz",
+            "tool-1.386.0-linux.tar.gz",
+            "tool-freebsd.tar.gz",
+            "tool-linux.AppImage",
+        ] {
+            let path = file(name);
+            let err = one(ArtifactInput::new(&path)).unwrap_err();
+            assert!(matches!(err, Error::UnknownArch { .. }), "{name}: {err}");
+            assert!(err.to_string().contains("any in place of"), "{err}");
+        }
+        let path = file("tool_1.0.0_linux_sparc.tar.gz");
+        let err = one(ArtifactInput {
+            os: Some("linux"),
+            ..ArtifactInput::new(&path)
+        })
+        .unwrap_err();
+        assert!(matches!(err, Error::UnknownArch { .. }), "{err}");
+        // Naming one, saying `any`, or declaring the artifact portable
+        // settles it.
+        let named = one(ArtifactInput {
+            os: Some("linux"),
+            arch: Some("sparc64"),
+            ..ArtifactInput::new(&path)
+        })
+        .unwrap();
+        assert_eq!(
+            named.statement.predicate.artifacts[0].arch.as_deref(),
+            Some("sparc64")
+        );
+        let any = one(ArtifactInput {
+            arch: Some(ANY),
+            ..ArtifactInput::new(&path)
+        })
+        .unwrap();
+        let artifact = &any.statement.predicate.artifacts[0];
+        assert_eq!(
+            (artifact.os.as_deref(), artifact.arch.as_deref()),
+            (Some("linux"), None)
+        );
+        let portable = one(ArtifactInput {
+            portable: true,
+            ..ArtifactInput::new(&path)
+        })
+        .unwrap();
+        assert_eq!(portable.statement.predicate.artifacts[0].os, None);
+        // A macOS or Windows build named for no architecture is universal
+        // or x86, which both run on ARM, and a file with no OS in its name
+        // is not refused either.
+        for name in [
+            "Tool.dmg",
+            "tool-macos.zip",
+            "Tool-Setup-1.2.3.exe",
+            "Tool.msi",
+            "tool.tar.gz",
+        ] {
+            let path = file(name);
+            let created = one(ArtifactInput::new(&path)).unwrap();
+            assert_eq!(created.statement.predicate.artifacts[0].arch, None);
+        }
     }
 
     #[test]

@@ -1414,3 +1414,99 @@ fn host_requirements_are_read_and_declared() {
     assert_ne!(code, 0);
     assert!(err.contains("--bin"), "{err}");
 }
+
+#[test]
+fn static_builds_and_unnamed_architectures() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let (code, _, err) = packslip(d, &["keygen", "-o", "k.key"]);
+    assert_eq!(code, 0, "{err}");
+    let fixture = |name: &str| {
+        std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures")
+                .join(name),
+        )
+        .unwrap()
+    };
+    let (static_elf, glibc_elf, musl_elf) =
+        (fixture("static"), fixture("needs-z"), fixture("needs-musl"));
+    // goreleaser's layout: the executable at the root, the architecture as
+    // Go spells it.
+    for (name, elf) in [
+        ("tool_1.0.0_linux_amd64.tar.gz", &static_elf),
+        ("tool_1.0.0_linux_386.tar.gz", &static_elf),
+        ("tool_1.0.0_linux_arm64.tar.gz", &glibc_elf),
+        ("tool_1.0.0_linux_riscv64.tar.gz", &musl_elf),
+        ("tool_1.0.0_linux_sparc.tar.gz", &static_elf),
+    ] {
+        tar_gz(&d.join(name), &[("tool", Some(elf), None)]);
+    }
+    let base = [
+        "create",
+        "--project",
+        "tool.example.com",
+        "--version",
+        "1.0.0",
+        "--key",
+        "k.key",
+        "--no-log",
+        "--out",
+        "dist",
+        "--bin",
+        "tool",
+    ];
+    let create = |artifacts: &[&str]| {
+        let mut args = base.to_vec();
+        args.extend_from_slice(artifacts);
+        packslip(d, &args)
+    };
+    let show = || {
+        let (code, out, err) = packslip(d, &["show", "dist/packslip.sigstore.json"]);
+        assert_eq!(code, 0, "{err}");
+        let doc: serde_json::Value = serde_json::from_str(&out).unwrap();
+        doc["predicate"]["artifacts"].clone()
+    };
+
+    let (code, _, err) = create(&[
+        "tool_1.0.0_linux_amd64.tar.gz",
+        "tool_1.0.0_linux_386.tar.gz",
+        "tool_1.0.0_linux_arm64.tar.gz",
+        "tool_1.0.0_linux_riscv64.tar.gz",
+        // An explicit libc wins over what the executable loads.
+        "tool_1.0.0_linux_sparc.tar.gz:linux/sparc64/gnu",
+    ]);
+    assert_eq!(code, 0, "{err}");
+    let arts = show();
+    let platform = |a: &serde_json::Value| {
+        [&a["os"], &a["arch"], &a["libc"]]
+            .map(|v| v.as_str().map(str::to_string))
+            .to_vec()
+    };
+    let s = |v: &str| Some(v.to_string());
+    assert_eq!(platform(&arts[0]), [s("linux"), s("x86_64"), None]);
+    assert_eq!(platform(&arts[1]), [s("linux"), s("i686"), None]);
+    assert_eq!(platform(&arts[2]), [s("linux"), s("aarch64"), s("gnu")]);
+    assert_eq!(platform(&arts[3]), [s("linux"), s("riscv64"), s("musl")]);
+    assert_eq!(platform(&arts[4]), [s("linux"), s("sparc64"), s("gnu")]);
+
+    // A Linux build whose name gives no architecture is refused, and
+    // `any` says it runs on every one, as it does for the C library.
+    let (code, _, err) = create(&["tool_1.0.0_linux_sparc.tar.gz"]);
+    assert_ne!(code, 0);
+    assert!(
+        err.contains("nothing in the name says which architecture"),
+        "{err}"
+    );
+    let (code, _, err) = create(&["tool_1.0.0_linux_sparc.tar.gz:linux/any/any"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(platform(&show()[0]), [s("linux"), None, None]);
+    std::fs::write(
+        d.join("release.toml"),
+        "[[artifact]]\npath = \"tool_1.0.0_linux_arm64.tar.gz\"\nlibc = \"any\"\n",
+    )
+    .unwrap();
+    let (code, _, err) = create(&["--manifest", "release.toml"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(platform(&show()[0]), [s("linux"), s("aarch64"), None]);
+}

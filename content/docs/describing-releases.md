@@ -26,6 +26,8 @@ argument forms to override platform inference:
 | --- | --- |
 | `dist/mytool-linux-x64.tar.gz` | Infer the platform from the filename. |
 | `dist/mytool.tar.gz:linux/x86_64/gnu` | Set OS, architecture, and libc explicitly. |
+| `dist/mytool.tar.gz:linux/x86_64/any` | A Linux x86_64 build that loads no C library from the host. |
+| `dist/mytool.tar.gz:linux/any` | A Linux build that runs on every architecture. |
 | `dist/mytool.tar.gz:any` | Clear platform fields for a portable artifact. |
 | `dist/mytool-fips-linux-x64.tar.gz@fips` | Selectable `fips` variant. |
 | `dist/mytool.tar.gz:linux/x86_64/gnu@fips` | Explicit platform and variant together. |
@@ -41,16 +43,34 @@ format, creation fails.
 
 An absent platform field means no restriction on that dimension. A
 universal macOS binary has `os = "darwin"` with no `arch`; it does not run
-on every OS. Use `portable = true` only when all platform fields should
-be absent.
+on every OS. In a manifest, `arch = "any"` or `libc = "any"` leaves that
+one field absent. Use `portable = true` only when all platform fields
+should be absent.
 
 ### Check inferred metadata
 
 Inference reads filenames, not your build configuration. An ambiguous name
 can leave a platform field unrestricted or describe the wrong target.
-For Linux artifacts, the generator defaults libc to `gnu` unless overridden
-or declared portable. Inspect the generated statement and set explicit
-values for anything the filename does not establish.
+Inspect the generated statement and set explicit values for anything the
+filename does not establish.
+
+Architectures are read in the spellings Rust targets, goreleaser, and
+common release names use: `x64` and `amd64` are `x86_64`, `arm64` is
+`aarch64`, `386` and `ia32` are `i686`, and a plain `arm` is `armv6`, the
+default of both goreleaser and Rust's `arm-` targets. MIPS and big-endian
+POWER builds, which the vocabulary does not list, are recorded as Rust
+spells them (`mips64el` for goreleaser's `mips64le`). A Linux or BSD
+artifact whose name gives no architecture is refused, since it would fit
+every host of its OS; name one, or give `any` if the build really runs on
+all of them. A macOS or Windows artifact without one is taken for a
+universal or x86 build, which both systems run on ARM.
+
+For a Linux artifact whose name does not say `musl` or `gnu`, `create`
+reads the libc from the executables it lists: a statically linked build,
+such as a Go binary built with `CGO_ENABLED=0`, gets no `libc` and fits
+glibc and musl hosts alike, and one whose loader is musl's gets `musl`.
+When there are no executables to read, or with `--no-libs`, libc defaults
+to `gnu`.
 
 `os`, `arch`, and `libc` describe where a build runs. `variant` distinguishes
 builds a user chooses, such as `fips` or `debug`. A minimum OS or glibc version

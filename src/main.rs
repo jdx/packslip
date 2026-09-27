@@ -314,7 +314,8 @@ struct Create {
     #[usage(long)]
     version: Option<String>,
     /// Artifact files, optionally as path[:os/arch[/libc]|:any][@variant].
-    /// Added to those the manifest lists
+    /// An arch or libc of any leaves it out, for a build that runs on
+    /// every one. Added to those the manifest lists
     artifacts: Vec<String>,
     /// A TOML manifest giving per-artifact executables, formats,
     /// requirements, platforms, and the release's resources; see
