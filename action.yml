@@ -126,7 +126,10 @@ inputs:
     required: false
     default: packslip
   upload:
-    description: Upload the packslip to the release
+    description: >
+      Upload the packslip to the release. Defaults to true for existing
+      workflows. Set false to generate in a job with contents: read, then
+      upload the bundle from a separate job with contents: write.
     required: false
     default: "true"
   packslip-version:

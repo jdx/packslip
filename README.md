@@ -35,6 +35,12 @@ For exact fields and rules, read the [specification](docs/spec/packslip.md),
 
 ## Add it to a GitHub release
 
+To keep third-party actions away from release write access,
+[run packslip in a separate job with read-only release access](https://packslip.dev/docs/publishing/#keep-the-action-away-from-release-write-access)
+with `upload: false`, then upload its bundle from a job you control. The
+existing one-step form below still uploads by default and needs
+`contents: write`.
+
 Add this step to a tag-triggered release job after building the artifacts
 and creating the GitHub release:
 

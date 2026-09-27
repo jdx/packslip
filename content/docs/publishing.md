@@ -24,7 +24,71 @@ job yourself (a build matrix typically stages them with
 them straight from the release — see
 [Download from the release](#download-from-the-release) below.
 
-## Add the release step
+## Keep the action away from release write access
+
+Run packslip in its own job after your build and release jobs. Give that job
+`contents: read` so the action can download release assets but cannot change
+the release or its other files. It signs and verifies the bundle with
+`id-token: write`; `attestations: write` lets the provenance step attest the
+matched files. The job has no checkout of the build workspace. A separate job
+you control receives only the bundle and uploads that exact JSON file.
+
+```yaml
+jobs:
+  packslip:
+    needs: release # Your existing job that publishes the release files.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: jdx/packslip@v1
+        id: packslip
+        with:
+          download: mytool-*.tar.xz mytool-*.zip
+          bin: mytool
+          upload: false
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: packslip-bundle
+          path: ${{ steps.packslip.outputs.bundle }}
+          if-no-files-found: error
+
+  publish-packslip:
+    needs: packslip
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: packslip-bundle
+          path: packslip
+      - name: Upload the signed bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test -f packslip/packslip.sigstore.json
+          gh release upload "$GITHUB_REF_NAME" packslip/packslip.sigstore.json \
+            --repo "$GITHUB_REPOSITORY" --clobber
+```
+
+This example runs on a tag. If another event triggers the workflow, use its
+release tag in both the action's `tag` input and the upload command. For a
+monorepo project, upload the bundle name reported by the action, such as
+`packslip.mytool.sigstore.json`. If build jobs already attested every file,
+set `attest: link` and omit `attestations: write` from the packslip job.
+
+GitHub's token permissions apply to a job, not to individual steps. Passing
+`upload: false` in a job that still has `contents: write` does not sandbox the
+action: an action can access that job's token even when it is not passed as an
+input. The separate job is the security boundary. GitHub does not offer a
+token limited to one release asset; the small upload step in the write-enabled
+job is therefore part of your workflow, not part of the packslip action.
+
+## Add the release step to an existing job
 
 Use this fragment after those preparation steps in your release job.
 
@@ -48,10 +112,13 @@ Run on a release tag, or pass `tag` explicitly. By default, `project` is
 removed. For tags such as `mytool-v1.2.3`, pass `version: 1.2.3` explicitly.
 The action does not normalize arbitrary tag formats.
 
-The action installs its matching packslip version, attests the files
-matched by `artifacts`, creates and signs the manifest, verifies the
-bundle, and uploads it. The output `${{ steps.packslip.outputs.bundle }}`
-is the local bundle path.
+In this compact form, the action installs its matching packslip version,
+attests the files matched by `artifacts`, creates and signs the manifest,
+verifies the bundle, and uploads it. The output
+`${{ steps.packslip.outputs.bundle }}` is the local bundle path. It needs
+`contents: write` because its default `upload: true` preserves existing
+workflows; use the separate jobs above when the action must not have
+release write access.
 
 The action and CLI share a version: `@v1` follows CLI 1.x releases, and
 `@v1.0.0` pins both to 1.0.0. By default, the action installs the CLI
