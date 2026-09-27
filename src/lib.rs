@@ -46,8 +46,8 @@ pub use model::{
 pub use sigstore::Signer;
 pub use sigstore::{Policy, Trust};
 pub use verify::{
-    ForgeError, ForgeVerified, Options, Verified, VerifiedList, verify, verify_forge,
-    verify_forge_release_list, verify_release_list,
+    Claimed, ForgeError, ForgeVerified, Options, Verified, VerifiedList, peek_unverified, verify,
+    verify_forge, verify_forge_release_list, verify_release_list,
 };
 
 /// The sha256 of a file, lowercase hex, and its size.

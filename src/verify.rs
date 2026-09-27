@@ -282,6 +282,50 @@ pub enum ForgeError {
     Identity(#[from] forge::IdentityError),
 }
 
+/// What a bundle's statement claims, read by [`peek_unverified`] without
+/// verifying anything. Nothing in it is established: an attacker can put
+/// any project and version in a bundle. Use it only to decide how to
+/// verify, such as whether a forge lookup is worth making, and take the
+/// project and version from [`Verified`] afterwards.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Claimed {
+    /// The statement's `predicateType`: [`crate::model::PREDICATE_TYPE`]
+    /// for a release, [`crate::model::RELEASES_PREDICATE_TYPE`] for a
+    /// release list.
+    pub predicate_type: String,
+    /// The project the statement names.
+    pub project: String,
+    /// The version it names; none for a release list.
+    pub version: Option<String>,
+}
+
+/// Read the project and version a bundle's statement claims, **without
+/// verifying the bundle**. The result is untrusted: see [`Claimed`].
+/// Fails when the bundle is not a DSSE-wrapped in-toto statement or the
+/// statement names no project.
+pub fn peek_unverified(bundle: &str) -> Result<Claimed, Error> {
+    #[derive(serde::Deserialize)]
+    struct Peek {
+        #[serde(rename = "predicateType")]
+        predicate_type: String,
+        predicate: PeekPredicate,
+    }
+    #[derive(serde::Deserialize)]
+    struct PeekPredicate {
+        project: String,
+        version: Option<String>,
+    }
+    let payload = sigstore::peek_statement(bundle)?;
+    let peek: Peek = serde_json::from_slice(&payload)?;
+    let is_release = peek.predicate_type == crate::model::PREDICATE_TYPE;
+    Ok(Claimed {
+        predicate_type: peek.predicate_type,
+        project: peek.predicate.project,
+        version: peek.predicate.version.filter(|_| is_release),
+    })
+}
+
 /// The policy to verify a forge project's bundle under: see
 /// [`forge::policy`].
 fn forge_policy(bundle: &str, expected: &forge::Expected<'_>) -> Result<Policy, ForgeError> {
@@ -343,7 +387,7 @@ pub fn verify_forge_release_list(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::forge::{Continuity, Evidence, Expected, ForgePin, IdentityError};
+    use crate::forge::{Continuity, Evidence, Expected, ForgePin, IdentityError, PinSource};
 
     /// jdx/hk's v2.3.0 packslip, as its release workflow published it.
     const HK: &str = include_str!("../tests/fixtures/hk-v2.3.0.sigstore.json");
@@ -453,5 +497,83 @@ mod tests {
             matches!(err, ForgeError::Identity(IdentityError::NotForge(_))),
             "{err}"
         );
+    }
+
+    #[test]
+    fn a_published_release_is_held_to_every_pin() {
+        let root = sigstore::trusted_root(None).unwrap();
+        let pins = [
+            (
+                PinSource::Local,
+                ForgePin::new("github.com/jdx/hk", "922514152", Some("216188".into())),
+            ),
+            (
+                PinSource::Lockfile,
+                ForgePin::new("github.com/jdx/hk", "1", Some("216188".into())),
+            ),
+        ];
+        let err = verify_forge(
+            HK,
+            &Expected::new("github.com/jdx/hk").pinned_by(&pins),
+            options(&root),
+            &[],
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ForgeError::Identity(IdentityError::DifferentRepository {
+                    evidence: Evidence::LockfilePin,
+                    ..
+                })
+            ),
+            "{err}"
+        );
+        let ok = verify_forge(
+            HK,
+            &Expected::new("github.com/jdx/hk").pinned_by(&pins[..1]),
+            options(&root),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(ok.check.continuity, Continuity::Same);
+    }
+
+    #[test]
+    fn a_bundle_claims_a_project_before_it_is_verified() {
+        let claimed = peek_unverified(HK).unwrap();
+        assert_eq!(
+            claimed,
+            Claimed {
+                predicate_type: crate::model::PREDICATE_TYPE.into(),
+                project: "github.com/jdx/hk".into(),
+                version: Some("2.3.0".into()),
+            }
+        );
+
+        // The claim is whatever the statement says, signed or not: here a
+        // release list for another project, under hk's signature.
+        use base64::Engine as _;
+        let mut bundle: serde_json::Value = serde_json::from_str(HK).unwrap();
+        let list = serde_json::json!({
+            "_type": crate::model::STATEMENT_TYPE,
+            "subject": [],
+            "predicateType": crate::model::RELEASES_PREDICATE_TYPE,
+            "predicate": { "project": "github.com/evil/x", "version": "9.9.9" },
+        });
+        bundle["dsseEnvelope"]["payload"] = base64::engine::general_purpose::STANDARD
+            .encode(list.to_string())
+            .into();
+        let forged = bundle.to_string();
+        let claimed = peek_unverified(&forged).unwrap();
+        assert_eq!(claimed.project, "github.com/evil/x");
+        assert_eq!(claimed.version, None, "a release list has no version");
+        let root = sigstore::trusted_root(None).unwrap();
+        assert!(
+            verify_forge_release_list(&forged, &Expected::new("github.com/evil/x"), options(&root))
+                .is_err()
+        );
+
+        assert!(peek_unverified("not a bundle").is_err());
     }
 }

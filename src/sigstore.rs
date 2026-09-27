@@ -431,6 +431,37 @@ pub struct SourceRepository {
 }
 
 impl SourceRepository {
+    /// A source repository with only its URL, as a certificate from before
+    /// Fulcio recorded the IDs has. With [`SourceRepository::with_id`] and
+    /// [`SourceRepository::with_owner`], it describes a certificate without
+    /// one at hand, for a consumer's tests of [`crate::forge::check`].
+    pub fn new(uri: impl Into<String>) -> SourceRepository {
+        SourceRepository {
+            uri: uri.into(),
+            id: None,
+            owner_uri: None,
+            owner_id: None,
+        }
+    }
+
+    /// With the forge's repository ID.
+    pub fn with_id(self, id: impl Into<String>) -> SourceRepository {
+        SourceRepository {
+            id: Some(id.into()),
+            ..self
+        }
+    }
+
+    /// With the owner's URL (`https://github.com/owner`) and the forge's ID
+    /// for it.
+    pub fn with_owner(self, uri: impl Into<String>, id: impl Into<String>) -> SourceRepository {
+        SourceRepository {
+            owner_uri: Some(uri.into()),
+            owner_id: Some(id.into()),
+            ..self
+        }
+    }
+
     /// The source repository a DER certificate records, or none when it has
     /// no Source Repository URI extension. Verifies nothing.
     pub fn from_certificate(der: &[u8]) -> Result<Option<SourceRepository>, Error> {

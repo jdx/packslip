@@ -120,7 +120,8 @@ selection, and remembered policy. Implement the full
    For a forge project, remember the repository and owner IDs too:
    follow a rename that keeps the repository ID, ask before accepting a
    transfer to another owner, and refuse a repository with another ID
-   under the same name.
+   under the same name. Once a transfer is accepted, keep the previous
+   owner accepted so that older releases still install.
 4. Apply any release-age policy to the verified log time, using the signed
    publication time only for an explicitly accepted unlogged bundle.
 5. Select the artifact for the host and variant, then check host
@@ -161,11 +162,12 @@ the policy the forge implies and checks it against what the consumer
 remembers, following renames by repository ID:
 
 ```rust
-use packslip::forge::{Continuity, Expected, ForgePin};
+use packslip::forge::{Continuity, Expected, ForgePin, PinSource};
 
-// The pin a consumer stored after an earlier install, if any.
-let pin: Option<ForgePin> = load_pin("github.com/jdx/hk");
-let expected = Expected::new("github.com/jdx/hk").pinned(pin.as_ref());
+// The pins a consumer stored after earlier installs: its own and the
+// lockfile's, each checked.
+let pins: Vec<(PinSource, ForgePin)> = load_pins("github.com/jdx/hk");
+let expected = Expected::new("github.com/jdx/hk").pinned_by(&pins);
 let accepted = packslip::verify_forge(&bundle, &expected, options, &artifacts)?;
 if let Continuity::Renamed { signed, .. } = &accepted.check.continuity {
     eprintln!("github.com/jdx/hk is now {signed}");
@@ -176,9 +178,18 @@ if let Some(pin) = &accepted.check.pin {
 ```
 
 `accepted.check.continues_signer(previous)` compares a remembered
-signer with this one across a rename. A different repository under the
-pinned name, or a transfer without `accepting_transfer(true)`, is an
-error.
+signer with this one across a rename. A different repository under a
+pinned name is an error that says which pin disagreed, and so is a
+transfer without `accepting_transfer(true)`, which also names the old
+and new owners. The pin from an accepted transfer keeps the previous
+owner in `accepted_owner_ids`, so releases from before the transfer
+still verify. `packslip::forge::same_workflow` compares two remembered
+signers, each with the pin recorded alongside it, for a no-downgrade
+check with no release at hand, such as regenerating a lockfile.
+
+To decide how to verify before verifying, `packslip::peek_unverified`
+reads the project and version a bundle claims. Nothing in it is
+established until the bundle verifies.
 
 A lockfile can carry a project's signer commitment alongside artifact
 URLs and digests so another machine can enforce it on its first install.
