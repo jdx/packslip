@@ -454,10 +454,19 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
         // a name that only fails to say one would hand an x86 build to an
         // ARM host. macOS and Windows are the exceptions: a build named for
         // no architecture there is by convention universal or x86, and
-        // both run x86 builds on ARM.
+        // both run x86 builds on ARM. A package its own format declares
+        // architecture-independent, `.noarch.rpm` or `_all.deb`, is another:
+        // the package manager already installs it on every architecture.
+        let lower = name.to_ascii_lowercase();
+        let arch_independent_package = match format.as_deref() {
+            Some("rpm") => lower.ends_with(".noarch.rpm"),
+            Some("deb") => lower.ends_with("_all.deb"),
+            _ => false,
+        };
         if !input.portable
             && arch.is_none()
             && given_arch.is_none()
+            && !arch_independent_package
             && let Some(os) = os
             && !matches!(os, "darwin" | "windows")
         {
@@ -1128,6 +1137,8 @@ mod tests {
             "tool-1.386.0-linux.tar.gz",
             "tool-freebsd.tar.gz",
             "tool-linux.AppImage",
+            "tool-linux-noarch-tool.rpm",
+            "tool-linux-all-tools.deb",
         ] {
             let path = file(name);
             let err = one(ArtifactInput::new(&path)).unwrap_err();
@@ -1171,8 +1182,11 @@ mod tests {
         assert_eq!(portable.statement.predicate.artifacts[0].os, None);
         // A macOS or Windows build named for no architecture is universal
         // or x86, which both run on ARM, and a file with no OS in its name
-        // is not refused either.
+        // is not refused either, nor is a package whose format declares it
+        // architecture-independent.
         for name in [
+            "tool-1.0-1.noarch.rpm",
+            "tool_1.0_all.deb",
             "Tool.dmg",
             "tool-macos.zip",
             "Tool-Setup-1.2.3.exe",
