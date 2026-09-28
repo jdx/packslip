@@ -20,14 +20,17 @@ ROOT = Path(__file__).resolve().parent.parent
 class Page(HTMLParser):
     def __init__(self, path):
         super().__init__()
+        html = path.read_text()
         self.ids = set()
         self.references = []
         self.duplicates = []
         self.headings = 0
+        self.punctuation_gaps = [html.count("\n", 0, match.start()) + 1 for match in
+                                 re.finditer(r"</(?:a|code|em|strong)>\s+[,.;:!?)]", html)]
         # An alias page is a redirect stub: a canonical link and a meta
         # refresh, with no content of its own to check.
         self.redirect = False
-        self.feed(path.read_text())
+        self.feed(html)
 
     def handle_starttag(self, tag, attributes):
         attrs = dict(attributes)
@@ -62,6 +65,8 @@ def check_links(site):
             errors.append(f"{path}: expected one H1, found {page.headings}")
         for identifier in page.duplicates:
             errors.append(f"{path}: duplicate id {identifier}")
+        for line in page.punctuation_gaps:
+            errors.append(f"{path.relative_to(site)}:{line}: space before punctuation after inline markup")
         route = path.relative_to(site).as_posix().removesuffix("index.html")
         for ref in page.references:
             url = urlsplit(urljoin(f"https://packslip.dev/{route}", ref))
