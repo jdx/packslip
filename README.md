@@ -106,6 +106,7 @@ fixes and what a revision may add. Bug reports and format feedback
 belong in [issues](https://github.com/jdx/packslip/issues).
 
 Developed by [Jeff Dickey (@jdx)](https://github.com/jdx), author of
-[mise](https://mise.jdx.dev) and [usage](https://usage.jdx.dev), and
-[Shunsuke Suzuki (@suzuki-shunsuke)](https://github.com/suzuki-shunsuke).
+[mise](https://mise.jdx.dev), and
+[Shunsuke Suzuki (@suzuki-shunsuke)](https://github.com/suzuki-shunsuke),
+author of [aqua](https://aquaproj.github.io/).
 MIT licensed; see [LICENSE](LICENSE).
