@@ -46,9 +46,12 @@ For example, add these to the action's `resources` input:
 
 ```yaml
 resources: |
-  cli-spec/usage=asset:dist/mytool.usage.kdl
+  cli-spec/usage/mytool=asset:dist/mytool.usage.kdl
   skill/mytool=repo:skills/mytool
 ```
+
+The `mytool` qualifier binds the CLI specification to that executable, including
+in releases containing several commands.
 
 The skill directory must contain `SKILL.md` at the recorded release commit,
 including every relative file it references. A separate skill asset is an
