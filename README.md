@@ -96,6 +96,20 @@ machine, or a job that would rather build from source than download.
 `packslip-path` takes precedence over `packslip-version`, and a binary
 the action did not download is not verified, so the job vouches for it.
 
+## Agent skill
+
+Packslip publishes a [skill](skills/packslip/SKILL.md) for release configuration,
+resources, and verification. With a release that includes the skill, mise can
+fetch the matching version and link it into your agent's skill directory:
+
+```sh
+mise use packslip:packslip.dev
+mise skills sync --dir .agents/skills
+```
+
+The generated link is local to your installation; keep it out of version control
+and run sync again after changing tool versions.
+
 ## Work on packslip
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, checks, and documentation

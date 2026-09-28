@@ -33,6 +33,11 @@ for f in dist/*; do
   digest=$(sha256sum "$f" | cut -d' ' -f1)
   args+=(--provenance "${f##*/}=${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/attestations/sha256:${digest}")
 done
+# A repository skill must exist at the release commit, not just on the
+# current branch from which a backfill is being run.
+if git cat-file -e "${COMMIT}:skills/packslip/SKILL.md" 2>/dev/null; then
+  args+=(--resource skill/packslip=repo:skills/packslip)
+fi
 # Older releases being backfilled may have only the CLI specification.
 resource_artifacts=()
 if [ -f dist/packslip.1 ]; then
