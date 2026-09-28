@@ -3,7 +3,8 @@
 Version 1. Predicate types `https://packslip.dev/release/v1` and
 `https://packslip.dev/releases/v1`.
 
-Author: Jeff Dickey ([@jdx](https://github.com/jdx)).
+Authors: Jeff Dickey ([@jdx](https://github.com/jdx)) and Shunsuke Suzuki
+([@suzuki-shunsuke](https://github.com/suzuki-shunsuke)).
 
 ## Reading this specification
 

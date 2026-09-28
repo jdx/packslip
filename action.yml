@@ -3,7 +3,7 @@ description: >
   Publish a signed packslip for a release: attest the artifacts' build
   provenance, digest them, sign the release manifest keylessly with this
   job's OIDC identity, and upload the bundle as a release asset.
-author: Jeff Dickey <@jdx>
+author: Jeff Dickey <@jdx>, Shunsuke Suzuki <@suzuki-shunsuke>
 branding:
   icon: package
   color: red

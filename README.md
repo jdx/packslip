@@ -105,6 +105,7 @@ The format is stable at version 1; see
 fixes and what a revision may add. Bug reports and format feedback
 belong in [issues](https://github.com/jdx/packslip/issues).
 
-Created by [Jeff Dickey (@jdx)](https://github.com/jdx), author of
-[mise](https://mise.jdx.dev) and [usage](https://usage.jdx.dev).
+Developed by [Jeff Dickey (@jdx)](https://github.com/jdx), author of
+[mise](https://mise.jdx.dev) and [usage](https://usage.jdx.dev), and
+[Shunsuke Suzuki (@suzuki-shunsuke)](https://github.com/suzuki-shunsuke).
 MIT licensed; see [LICENSE](LICENSE).

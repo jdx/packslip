@@ -78,6 +78,7 @@ predicates, signing schemes, and consumer rules. The
 [CLI reference](/cli/) documents the generator and verifier.
 
 packslip is developed by [Jeff Dickey](https://github.com/jdx), author of
-[mise](https://mise.jdx.dev) and [usage](https://usage.jdx.dev).
+[mise](https://mise.jdx.dev) and [usage](https://usage.jdx.dev), and
+[Shunsuke Suzuki](https://github.com/suzuki-shunsuke).
 The format is stable at [version 1](/release/v1/#stability).
 [Feedback](https://github.com/jdx/packslip/issues) is welcome.

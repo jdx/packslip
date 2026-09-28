@@ -42,7 +42,7 @@ pub fn bundle_name(project: &str) -> String {
     name = "packslip",
     bin = "packslip",
     version,
-    author = "Jeff Dickey <@jdx>",
+    author = "Jeff Dickey <@jdx>, Shunsuke Suzuki <@suzuki-shunsuke>",
     arg_required_else_help
 )]
 struct Cli {

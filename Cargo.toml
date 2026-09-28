@@ -7,7 +7,7 @@ rust-version = "1.95"
 license = "MIT"
 repository = "https://github.com/jdx/packslip"
 homepage = "https://packslip.dev"
-authors = ["Jeff Dickey <@jdx>"]
+authors = ["Jeff Dickey <@jdx>", "Shunsuke Suzuki <@suzuki-shunsuke>"]
 keywords = ["sigstore", "in-toto", "release", "supply-chain", "minisign"]
 categories = ["command-line-utilities", "cryptography"]
 # Keep the actions and the scripts they run in the package so action-only

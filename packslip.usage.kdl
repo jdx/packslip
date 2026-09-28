@@ -2,7 +2,7 @@
 name packslip
 bin packslip
 version "1.4.0"
-author "Jeff Dickey <@jdx>"
+author "Jeff Dickey <@jdx>, Shunsuke Suzuki <@suzuki-shunsuke>"
 about "A signed release manifest: what shipped, and how to verify it"
 long_about #"""
 A signed release manifest: what shipped, and how to verify it

@@ -4,7 +4,7 @@ description: >
   published: verify each one against the repository's identity, index
   their digests, and write a signed list to publish at the project's
   well-known URL.
-author: Jeff Dickey <@jdx>
+author: Jeff Dickey <@jdx>, Shunsuke Suzuki <@suzuki-shunsuke>
 branding:
   icon: list
   color: red
