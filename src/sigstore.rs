@@ -471,7 +471,11 @@ impl SourceRepository {
 
         let cert = x509_cert::Certificate::from_der(der)
             .map_err(|e| Error::Verification(format!("certificate does not parse: {e}")))?;
-        let extensions = cert.tbs_certificate.extensions.unwrap_or_default();
+        let extensions = cert
+            .tbs_certificate()
+            .extensions()
+            .map(Vec::as_slice)
+            .unwrap_or_default();
         let value = |oid: &str| -> Result<Option<String>, Error> {
             let oid = ObjectIdentifier::new_unwrap(oid);
             let Some(ext) = extensions.iter().find(|e| e.extn_id == oid) else {
