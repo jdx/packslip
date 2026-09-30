@@ -75,25 +75,37 @@ impl Envelope {
         BASE64.decode(&self.payload).map_err(|_| Error::Payload)
     }
 
-    /// Verify the signature made by `key`, returning the payload.
+    /// Verify any signature made by `key`, returning the payload.
     pub fn verify(&self, key: &PublicKey) -> Result<Vec<u8>, Error> {
         let keyid = key_id_hex(&key.key_id);
-        let entry = self
-            .signatures
-            .iter()
-            .find(|s| s.keyid.eq_ignore_ascii_case(&keyid))
-            .ok_or_else(|| Error::NoSignatureBy(keyid.clone()))?;
-        let sig = BASE64
-            .decode(&entry.sig)
-            .ok()
-            .and_then(|b| <[u8; 64]>::try_from(b).ok())
-            .map(|b| Signature::from_bytes(&b))
-            .ok_or_else(|| Error::Malformed(keyid.clone()))?;
         let payload = self.payload_bytes()?;
-        key.key
-            .verify(&pae(&self.payload_type, &payload), &sig)
-            .map_err(|_| Error::BadSignature(keyid))?;
-        Ok(payload)
+        let signed = pae(&self.payload_type, &payload);
+        let mut matching_entry = false;
+        let mut matching_signature = false;
+        for entry in &self.signatures {
+            let matching_hint = entry.keyid.eq_ignore_ascii_case(&keyid);
+            matching_entry |= matching_hint;
+            let Some(sig) = BASE64
+                .decode(&entry.sig)
+                .ok()
+                .and_then(|b| <[u8; 64]>::try_from(b).ok())
+                .map(|b| Signature::from_bytes(&b))
+            else {
+                continue;
+            };
+            matching_signature |= matching_hint;
+            if key.key.verify(&signed, &sig).is_ok() {
+                return Ok(payload);
+            }
+        }
+
+        if matching_signature {
+            Err(Error::BadSignature(keyid))
+        } else if matching_entry {
+            Err(Error::Malformed(keyid))
+        } else {
+            Err(Error::NoSignatureBy(keyid))
+        }
     }
 
     /// Verify with whichever of `keys` signed it.
