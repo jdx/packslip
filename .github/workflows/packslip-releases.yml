@@ -3,8 +3,12 @@ name: packslip-releases
 # packslip.dev is a project on its own domain, so its release list is the
 # release index: consumers see the releases it names and nothing else, and
 # refuse it once it expires. release.yml calls this after each release; the
-# schedule re-signs it before the 30-day validity runs out; a dispatch
-# withdraws a release or marks one a security fix.
+# schedule re-signs it before the 30-day validity runs out.
+#
+# Every run rebuilds the list from scratch, so withdrawals and security
+# marks live in .github/packslip/yanked and .github/packslip/security,
+# which every run reads from main. A change to either file publishes a new
+# list on merge. A dispatch only re-signs the list as it stands.
 on:
   workflow_call:
     secrets:
@@ -14,16 +18,11 @@ on:
         required: true
   schedule:
     - cron: "0 6 * * 1"
+  push:
+    branches: [main]
+    paths:
+      - ".github/packslip/**"
   workflow_dispatch:
-    inputs:
-      yank:
-        description: "Releases to withdraw, one per line, as TAG=REASON"
-        required: false
-        default: ""
-      security:
-        description: "Releases that fix a vulnerability, one tag per line"
-        required: false
-        default: ""
 
 permissions:
   contents: read
@@ -44,6 +43,38 @@ jobs:
       AWS_ENDPOINT_URL: https://6e243906ff257b965bcae8025c2fc344.r2.cloudflarestorage.com
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # The checkout above is the ref that triggered the run, which the
+      # action needs to be the version released with. For a post-release run
+      # that is the tag, cut before a withdrawal merged during the release
+      # build, and for a dispatch from a branch it can be older still, so
+      # the withdrawals come from main instead.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          path: withdrawals
+          sparse-checkout: .github/packslip
+          persist-credentials: false
+      - name: Read the withdrawals
+        id: withdrawn
+        run: |
+          set -euo pipefail
+          # Blank lines and # comments are for people; the action takes entries only.
+          entries() {
+            local file="withdrawals/.github/packslip/$1"
+            # A missing file must fail the run, not publish a list that quietly
+            # restores every withdrawn release.
+            [ -f "$file" ] || { echo "$file is missing" >&2; exit 1; }
+            grep -Ev '^[[:space:]]*(#|$)' "$file" || [ $? -eq 1 ]
+          }
+          delimiter="packslip_$(openssl rand -hex 16)"
+          {
+            echo "yank<<$delimiter"
+            entries yanked
+            echo "$delimiter"
+            echo "security<<$delimiter"
+            entries security
+            echo "$delimiter"
+          } >> "$GITHUB_OUTPUT"
       - name: Fetch the published bundles
         run: |
           set -euo pipefail
@@ -55,8 +86,8 @@ jobs:
           project: packslip.dev
           dir: lists
           url-base: https://packslip.dev
-          yank: ${{ inputs.yank }}
-          security: ${{ inputs.security }}
+          yank: ${{ steps.withdrawn.outputs.yank }}
+          security: ${{ steps.withdrawn.outputs.security }}
       - name: Publish the list
         env:
           LIST: ${{ steps.list.outputs.list }}

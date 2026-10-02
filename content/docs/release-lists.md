@@ -85,6 +85,14 @@ The URL must also appear in a `--release` argument. Consumers exclude
 that version and can warn users who already have it. `--security URL`
 marks a listed release as a security fix.
 
+Because each rebuild starts from the arguments it is given, repeat every
+`--yank` and `--security` on every rebuild, including the weekly refresh. A
+withdrawal passed to one run only is gone from the next list, and the release
+is eligible again. Keep the withdrawals in a file under version control and
+build the arguments from it each time; the
+[self-hosting guide](/docs/self-hosting/#keep-withdrawals-in-the-repository)
+shows this for the GitHub Actions release-list job.
+
 Consumers reject expired lists and sequences below the highest they have
 accepted. Once a supplementary GitHub list has been accepted, removing
 it must not silently restore withdrawn releases. Signed lists need
@@ -127,7 +135,7 @@ and [repackager attestation](/release/v1/#repackager-attestation).
 | A domain project has no releases | Publish the signed list at the well-known path, including the project subpath. |
 | A GitHub tag is invisible | Check that it maps to a version for this project, or add an explicit version/tag mapping in the signed list. |
 | A release is found but refused | Verify its bundle and confirm the signed project, version, and bundle digest match discovery metadata. |
-| A withdrawn version reappears | Keep its yanked entry; omission from a supplementary GitHub list does not withdraw it. |
+| A withdrawn version reappears | Keep its yanked entry in every rebuild, from a committed file rather than a one-off input; omission from a supplementary GitHub list does not withdraw it. |
 | The list expires without a new release | Re-sign the retained entries with a later expiry and increased sequence. |
 | `latest` selects another version | Check whether the recommendation is eligible under withdrawal, prerelease, age, stamping, and host policy. |
 
