@@ -122,6 +122,18 @@ validates the statement, and compares supplied files with the signed
 subject digests. It also checks sizes for artifacts. Preserve the original
 filenames so they match the statement's subjects.
 
+The success line counts artifacts and resource assets separately, so you
+can see whether every file you meant to check was supplied:
+
+```text
+ok: example.com/mytool 1.2.3 published 2026-10-02T19:32:44Z signed by 5CA6E9FAFB1F4098 (sigstore-key) unlogged (1 of 1 artifact(s) and 1 of 1 asset(s) checked, 1 resource(s))
+```
+
+A release that lists no assets omits the asset count: `(2 of 3
+artifact(s) checked)`. With `--json`, `checked_artifacts` and
+`artifact_count` cover artifacts, and `checked_assets` and `asset_count`
+cover assets. An asset you supply is reported only in `checked_assets`.
+
 Without `--artifact`, success verifies the bundle alone. It does not
 fetch, hash, or install remote artifacts. `--json` returns a report for
 scripts; verification failures exit with status 1.

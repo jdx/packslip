@@ -1243,6 +1243,7 @@ impl RunWith<BinInfo> for Verify {
                 &self.identity_prefix,
                 &self.issuer,
                 project,
+                sigstore::Error::NoPolicy,
             )?),
         };
         let trusted_root = load_trusted_root(self.trusted_root.as_deref())?;
@@ -1334,7 +1335,7 @@ impl RunWith<BinInfo> for Verify {
                     println!("{}", serde_json::to_string_pretty(&report)?);
                 } else {
                     println!(
-                        "ok: {} {}{} published {} signed by {} ({}){}{} ({} of {} artifact(s) checked{}{})",
+                        "ok: {} {}{} published {} signed by {} ({}){}{} ({}{} checked{}{})",
                         verified.project,
                         verified.version,
                         match (&verified.channel, verified.prerelease) {
@@ -1354,8 +1355,22 @@ impl RunWith<BinInfo> for Verify {
                             Some(at) => format!(" logged {at}"),
                             None => " unlogged".to_string(),
                         },
-                        verified.checked_artifacts.len(),
-                        verified.artifact_count,
+                        format_args!(
+                            "{} of {} artifact(s)",
+                            verified.checked_artifacts.len(),
+                            verified.artifact_count
+                        ),
+                        // Only a release that lists assets counts them, so
+                        // the line for one that lists none is unchanged.
+                        if verified.asset_count == 0 {
+                            String::new()
+                        } else {
+                            format!(
+                                " and {} of {} asset(s)",
+                                verified.checked_assets.len(),
+                                verified.asset_count
+                            )
+                        },
                         if verified.provenance_linked {
                             ", provenance linked"
                         } else {
@@ -1385,12 +1400,14 @@ impl RunWith<BinInfo> for Verify {
 }
 
 /// The certificate policy for `project`: the identity flags, or else the
-/// one its GitHub or GitLab name implies.
+/// one its GitHub or GitLab name implies. `missing` builds the error for a
+/// project that is on neither, so each command can name the flags it has.
 fn identity_policy(
     identity: &Option<String>,
     identity_prefix: &Option<String>,
     issuer: &Option<String>,
     project: &str,
+    missing: fn(String) -> sigstore::Error,
 ) -> Result<Policy> {
     let explicit = Policy {
         issuer: issuer.clone(),
@@ -1398,10 +1415,7 @@ fn identity_policy(
         identity_prefix: identity_prefix.clone(),
     };
     if explicit.is_empty() {
-        Ok(
-            Policy::for_project(project)
-                .ok_or_else(|| sigstore::Error::NoPolicy(project.into()))?,
-        )
+        Ok(Policy::for_project(project).ok_or_else(|| missing(project.into()))?)
     } else {
         Ok(explicit)
     }
@@ -1522,7 +1536,13 @@ impl RunWith<BinInfo> for Pin {
             bail!("a release list is not a release; give a release's packslip.sigstore.json");
         }
         let project = peeked["predicate"]["project"].as_str().unwrap_or_default();
-        let policy = identity_policy(&self.identity, &self.identity_prefix, &self.issuer, project)?;
+        let policy = identity_policy(
+            &self.identity,
+            &self.identity_prefix,
+            &self.issuer,
+            project,
+            sigstore::Error::NoIdentityPolicy,
+        )?;
         let trusted_root = load_trusted_root(self.trusted_root.as_deref())?;
         let options = Options {
             require_log: !self.allow_unlogged,

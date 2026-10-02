@@ -1338,7 +1338,10 @@ mod tests {
         let verified =
             crate::verify::verify(&bundle, &Trust::Key(&key.public_key()), options, &[&skill])
                 .unwrap();
-        assert_eq!(verified.checked_artifacts, ["tool-skill.tar.gz"]);
+        // The skill archive is an asset, not an artifact.
+        assert!(verified.checked_artifacts.is_empty());
+        assert_eq!(verified.checked_assets, ["tool-skill.tar.gz"]);
+        assert_eq!(verified.asset_count, 1);
         assert_eq!(
             verified.resources,
             [

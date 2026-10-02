@@ -127,6 +127,8 @@ fn pin_refuses_a_bundle_it_cannot_verify_or_fingerprint() {
     assert_ne!(code, 0);
     assert_eq!(out, "");
     assert!(err.contains("no identity to verify against"), "{err}");
+    // A key-signed release has no fingerprint, so `pin` does not take a key.
+    assert!(!err.contains("--pubkey"), "{err}");
 }
 
 #[test]
@@ -297,14 +299,19 @@ fn keygen_create_verify_show_and_list() {
     assert_eq!(json["scheme"], "sigstore-key");
     assert_eq!(json["provenance_linked"], false);
     assert_eq!(json["artifact_count"], 3);
+    assert_eq!(json["asset_count"], 0);
+    assert_eq!(json["checked_assets"], serde_json::json!([]));
 
-    // Without a pin, a non-forge project has nothing to verify against.
+    // Without a pin, a non-forge project has nothing to verify against, and
+    // the message names the flag a key-signed release needs.
     let (code, _, err) = packslip(
         d,
         &["verify", "dist/packslip.sigstore.json", "--allow-unlogged"],
     );
     assert_ne!(code, 0);
     assert!(err.contains("no identity to verify against"), "{err}");
+    assert!(err.contains("--identity-prefix"), "{err}");
+    assert!(err.contains("--pubkey"), "{err}");
 
     // A modified artifact and a wrong key fail.
     std::fs::write(d.join("tool-v1.2.3-linux-x64.tar.xz"), b"linux!").unwrap();
@@ -1030,8 +1037,10 @@ asset = "dist/tool.cdx.json"
         ],
     );
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("2 of 4 artifact(s) checked"), "{out}");
-    assert!(out.contains("2 resource(s)"), "{out}");
+    assert!(
+        out.contains("(1 of 4 artifact(s) and 1 of 1 asset(s) checked, 2 resource(s))"),
+        "{out}"
+    );
 
     // An executable the archive does not hold is refused, as is a manifest
     // that names no version and a command line without one.
@@ -1083,6 +1092,147 @@ asset = "dist/tool.cdx.json"
     );
     assert_ne!(code, 0);
     assert!(err.contains("no artifacts"), "{err}");
+}
+
+#[test]
+fn verify_counts_assets_apart_from_artifacts() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let (code, _, err) = packslip(d, &["keygen", "-o", "release.key"]);
+    assert_eq!(code, 0, "{err}");
+    std::fs::write(d.join("mytool-1.2.3-linux-x64.tar.gz"), b"archive").unwrap();
+    std::fs::write(d.join("mytool.cdx.json"), b"{}").unwrap();
+    let (code, out, err) = packslip(
+        d,
+        &[
+            "create",
+            "--project",
+            "example.com/mytool",
+            "--version",
+            "1.2.3",
+            "--key",
+            "release.key",
+            "--no-log",
+            "--out",
+            "dist",
+            "--url-base",
+            "https://dl.example.com/mytool/1.2.3",
+            "--bin",
+            "mytool",
+            "--resource",
+            "sbom/cyclonedx=asset:mytool.cdx.json",
+            "mytool-1.2.3-linux-x64.tar.gz",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("(1 artifact(s), 1 resource(s)"), "{out}");
+    let verify = |files: &[&str], json: bool| {
+        let mut args = vec![
+            "verify",
+            "dist/packslip.sigstore.json",
+            "--pubkey",
+            "release.pub",
+            "--allow-unlogged",
+        ];
+        for file in files {
+            args.extend_from_slice(&["--artifact", file]);
+        }
+        if json {
+            args.push("--json");
+        }
+        let (code, out, err) = packslip(d, &args);
+        assert_eq!(code, 0, "{err}");
+        out
+    };
+
+    // The artifact and the asset are each counted against their own total.
+    let out = verify(&["mytool-1.2.3-linux-x64.tar.gz", "mytool.cdx.json"], false);
+    assert!(
+        out.contains("(1 of 1 artifact(s) and 1 of 1 asset(s) checked, 1 resource(s))"),
+        "{out}"
+    );
+    let out = verify(&["mytool-1.2.3-linux-x64.tar.gz"], false);
+    assert!(
+        out.contains("(1 of 1 artifact(s) and 0 of 1 asset(s) checked, 1 resource(s))"),
+        "{out}"
+    );
+    let out = verify(&["mytool.cdx.json"], false);
+    assert!(
+        out.contains("(0 of 1 artifact(s) and 1 of 1 asset(s) checked, 1 resource(s))"),
+        "{out}"
+    );
+
+    // `--json` reports the same split.
+    let out = verify(&["mytool-1.2.3-linux-x64.tar.gz", "mytool.cdx.json"], true);
+    let json: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(
+        json["checked_artifacts"],
+        serde_json::json!(["mytool-1.2.3-linux-x64.tar.gz"])
+    );
+    assert_eq!(json["artifact_count"], 1);
+    assert_eq!(
+        json["checked_assets"],
+        serde_json::json!(["mytool.cdx.json"])
+    );
+    assert_eq!(json["asset_count"], 1);
+
+    // A release without assets keeps its line as it was.
+    std::fs::write(d.join("plain-1.0.0-linux-x64.tar.gz"), b"plain").unwrap();
+    let (code, _, err) = packslip(
+        d,
+        &[
+            "create",
+            "--project",
+            "example.com/plain",
+            "--version",
+            "1.0.0",
+            "--key",
+            "release.key",
+            "--no-log",
+            "--out",
+            "plain",
+            "--bin",
+            "plain",
+            "plain-1.0.0-linux-x64.tar.gz",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    let (code, out, err) = packslip(
+        d,
+        &[
+            "verify",
+            "plain/packslip.sigstore.json",
+            "--pubkey",
+            "release.pub",
+            "--allow-unlogged",
+            "--artifact",
+            "plain-1.0.0-linux-x64.tar.gz",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert!(out.ends_with("(1 of 1 artifact(s) checked)\n"), "{out}");
+
+    // A key-signed release of a non-forge project needs `--pubkey`, and the
+    // error for leaving it out says so.
+    let (code, _, err) = packslip(
+        d,
+        &[
+            "verify",
+            "dist/packslip.sigstore.json",
+            "--allow-unlogged",
+            "--artifact",
+            "mytool-1.2.3-linux-x64.tar.gz",
+        ],
+    );
+    assert_eq!(code, 1);
+    assert!(
+        err.contains(
+            "no identity to verify against for \"example.com/mytool\": pass --identity, \
+             --identity-prefix, or --issuer for a keyless release, or --pubkey for a \
+             key-signed one"
+        ),
+        "{err}"
+    );
 }
 
 #[test]
@@ -1170,7 +1320,10 @@ fn resources_and_assets() {
     );
     assert_eq!(code, 0, "{err}");
     let verified: serde_json::Value = serde_json::from_str(&out).unwrap();
-    assert_eq!(verified["checked_artifacts"][0], "tool-skill.tar.gz");
+    assert_eq!(verified["checked_artifacts"], serde_json::json!([]));
+    assert_eq!(verified["artifact_count"], 2);
+    assert_eq!(verified["checked_assets"][0], "tool-skill.tar.gz");
+    assert_eq!(verified["asset_count"], 1);
     assert_eq!(verified["resources"][4], "skill/tool (asset)");
     let (code, out, err) = packslip(
         d,

@@ -53,6 +53,11 @@ pub struct Verified {
     /// Artifacts whose digests were checked against files.
     pub checked_artifacts: Vec<String>,
     pub artifact_count: usize,
+    /// Resource assets, such as an SBOM or a skill archive, whose digests
+    /// were checked against files.
+    pub checked_assets: Vec<String>,
+    /// How many assets the document lists besides its artifacts.
+    pub asset_count: usize,
     /// The kinds of resources declared (completions, man pages, CLI
     /// specs, ...), one label per entry, in document order.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -167,7 +172,8 @@ pub fn verify(
     let version = crate::model::parse_version(&statement.predicate.version)?;
     let (scheme, key_id, issuer) =
         check_declared(&statement.predicate.identity, &verified.signed_by)?;
-    let mut checked = Vec::new();
+    let mut checked_artifacts = Vec::new();
+    let mut checked_assets = Vec::new();
     for path in artifacts {
         let name = path
             .file_name()
@@ -196,16 +202,19 @@ pub fn verify(
             .iter()
             .find(|a| a.name == name)
             .map(|a| a.size);
-        if let Some(declared) = declared_size
-            && declared != size
-        {
-            return Err(Error::Artifact {
-                name,
-                why: format!("size is {size}, document says {declared}"),
-            });
+        match declared_size {
+            Some(declared) if declared != size => {
+                return Err(Error::Artifact {
+                    name,
+                    why: format!("size is {size}, document says {declared}"),
+                });
+            }
+            Some(_) => checked_artifacts.push(name),
+            // A subject that is not an artifact is a resource asset.
+            None => checked_assets.push(name),
         }
-        checked.push(name);
     }
+    let artifact_count = statement.predicate.artifacts.len();
     Ok(Verified {
         project: statement.predicate.project.clone(),
         version: statement.predicate.version.clone(),
@@ -219,8 +228,10 @@ pub fn verify(
         issuer,
         logged_at: logged_at(verified.integrated_time),
         provenance_linked: statement.provenance_linked(),
-        checked_artifacts: checked,
-        artifact_count: statement.predicate.artifacts.len(),
+        checked_artifacts,
+        artifact_count,
+        checked_assets,
+        asset_count: statement.subject.len() - artifact_count,
         resources: statement
             .predicate
             .resources
