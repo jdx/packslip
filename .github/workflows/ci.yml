@@ -41,7 +41,7 @@ jobs:
         run: |
           set -euo pipefail
           test -f public/cli/index.html
-          for page in create keygen releases schema show verify version; do
+          for page in completion create keygen pin releases schema show verify version; do
             test -f "public/cli/${page}/index.html"
           done
           if grep -R -E 'href="[^"]+\.md([#?][^"]*)?"' public/cli; then
