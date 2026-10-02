@@ -440,8 +440,10 @@ history across invocations. Without `--pubkey`, `--identity`,
 `--identity-prefix`, or `--issuer`, it derives the signer policy from the
 GitHub or GitLab project the statement claims. That is a policy taken
 from an untrusted statement, which [Names](#names) warns does not check
-the user's intended identity: compare the reported project and version
-with the request, or pass the expected signer explicitly.
+the user's intended identity, so pass the expected signer explicitly.
+With or without one, compare the reported project and version with the
+request: a signer can sign other projects and older versions, and
+`packslip verify` does not know which one was asked for.
 
 ## The release statement
 
