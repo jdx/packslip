@@ -369,7 +369,8 @@ If you sign for artifacts another vendor publishes, pass
 `--attested-by repackager` and one `--evidence KIND[=DETAIL]` per check,
 such as `--evidence vendor-signature`. These flags have no `release.toml`
 equivalent. The document proves that you signed these digests and says
-what you checked; it proves nothing on the vendor's behalf. Consumers
+what you checked; it proves nothing on the vendor's behalf. It is a
+claim by your signer, which consumers must explicitly trust. Consumers
 rank it below a vendor packslip and do not replace a vendor's document
 with it without a person's approval. See
 [Repackager attestation](/release/v1/#repackager-attestation) for the

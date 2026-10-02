@@ -18,13 +18,14 @@ This document defines two predicates: `release/v1` describes one release;
 `releases/v1` indexes releases and carries mutable discovery metadata.
 Both are signed in-toto statements in sigstore bundles.
 
-A *vendor* is the project that builds and signs its own releases. A
-*consumer* is anything that verifies or installs releases, such as a
-package manager or an install script. A *packslip*, or release manifest,
-is the sigstore bundle published with a release; its *statement* is the
-in-toto statement inside it. A *release list*, or signed list, is a
-bundle whose statement has the `releases/v1` predicate. A *repackager*
-is a third party that signs a packslip for a vendor's files, as
+A *vendor* is the project whose releases a packslip describes, which
+normally builds and signs them itself. A *consumer* is anything that
+verifies or installs releases, such as a package manager or an install
+script. A *packslip*, or release manifest, is the sigstore bundle
+published with a release; its *statement* is the in-toto statement
+inside it. A *release list*, or signed list, is a bundle whose statement
+has the `releases/v1` predicate. A *repackager* is a third party that
+signs a packslip for a vendor's files, as
 [Repackager attestation](#repackager-attestation) describes.
 
 For a working example, start with the [guides](https://packslip.dev/docs/).
@@ -49,7 +50,7 @@ for readability; those placeholders are not valid release data.
 
 ## Goal
 
-A vendor describes a release once, in a signed document that any
+A publisher describes a release once, in a signed document that any
 consumer can verify against a trusted identity or key. The document lists
 artifacts and their digests, platforms, executable paths, resources, and
 provenance links. Artifacts may be archives, installers, bare executables,
@@ -113,14 +114,13 @@ nobody has to guess how a tag maps to a version. The identity pin is
 still the repository: any workflow of `oxc-project/oxc` may sign a
 packslip for `oxc-project/oxc/oxlint`.
 
-Each tool's bundle is named `packslip.<subpath>.sigstore.json`, with `/`
-in the subpath replaced by `-` (`packslip.oxlint.sigstore.json`,
-`packslip.crates-cli.sigstore.json`), so several tools can share one
-GitHub release. A repository's own packslip stays
-`packslip.sigstore.json`. Consumers do not trust the file name: they read
-the `packslip*.sigstore.json` assets of a release and keep the one whose
-`predicateType` is `release/v1` and whose `project` is the name they asked
-for, or the same tool of the repository renamed. A tool keeps its subpath
+When several tools share one GitHub release, each ships its own bundle,
+named `packslip.<subpath>.sigstore.json` with `/` in the subpath replaced
+by `-` (`packslip.oxlint.sigstore.json`, `packslip.crates-cli.sigstore.json`).
+A repository's own packslip stays `packslip.sigstore.json`. Consumers do
+not trust the file name: they read the `packslip*.sigstore.json` assets
+of a release and keep the one whose `predicateType` is `release/v1` and
+whose `project` is the name they asked for, or the same tool of the repository renamed. A tool keeps its subpath
 across a rename: `github.com/old/repo/tool` becomes
 `github.com/new/repo/tool`, never another tool of the repository.
 
@@ -168,9 +168,9 @@ signing when a supported CI identity is available.
 
 A key-signed bundle may be produced without a log entry
 (`packslip create --no-log`) for an air-gapped release. A consumer refuses
-such a bundle unless it has been told to accept unlogged bundles
-(`packslip verify --allow-unlogged` in the reference CLI), and it should
-record that choice per vendor, not globally.
+such a bundle unless it explicitly allows unlogged bundles
+(`packslip verify --allow-unlogged` in the reference CLI), and a
+repository should record that choice per vendor.
 
 A consumer that wants a dependency-free check has one: the DSSE signature
 of a key-signed bundle is a raw Ed25519 signature over the
@@ -185,14 +185,12 @@ For a keylessly signed project, a consumer compares the workflow that
 signed a release with the one that signed the last release it accepted.
 It treats a different workflow of the same repository as a changed signer
 and refuses the release until a person approves it
-([consumer rule 3](#consumer-rules)). A reusable workflow does not change
-the signer by itself: the certificate names the reusable workflow, so
-every job that calls it signs as that one file. A vendor that signs from
-more than one workflow file of its repository, though, such as separate
-stable and nightly release workflows or a backfill workflow beside the
-release one, would make every consumer ask a person to approve each
-change of signing workflow. Such a vendor can declare in its signed
-`identity` that consumers should hold it to the repository instead:
+([consumer rule 3](#consumer-rules)). A vendor whose releases are signed
+by more than one workflow of its repository, such as a reusable workflow
+shared by several release jobs, would make every consumer ask a person to
+approve each change of signing workflow. Such a vendor can declare in
+its signed `identity` that consumers should hold it to the repository
+instead:
 
 ```json
 "identity": {
@@ -215,10 +213,7 @@ the signer: the issuer, a certificate whose repository is the one pinned
 (by repository ID where the forge records one, as
 [Forge identity](#forge-identity) describes), and a workflow of that
 repository. It stops comparing the workflow's path with the last
-accepted signer. For a forge project, the signer is still a workflow of
-the project's own repository, as [consumer rule 1](#consumer-rules)
-requires, so a reusable workflow hosted in another repository cannot sign
-for it, with or without this field.
+accepted signer.
 
 Declaring it lowers what the consumer enforces, so it is a reduction in
 remembered trust like those in [consumer rule 3](#consumer-rules). A
@@ -290,8 +285,9 @@ later release with it:
   with no pin.
 
 A pin taken from an accepted release records the name it was signed under
-and its repository ID. A consumer that stored an owner ID in its pins, as
-an earlier revision of this section asked, ignores it when reading them.
+and its repository ID. A pin recorded by a consumer that also stored the
+owner's ID, as an earlier revision of this section asked, is read the
+same way, with that ID ignored.
 
 A consumer can hold more than one pin for a project, such as its own
 record and a lockfile's commitment. It holds each release to every one of
@@ -520,18 +516,18 @@ The following rules apply to the decoded release statement:
 - `source` says where the release was built from: `repo`, the repository
   URL (required when `source` is present); `commit`; and `tag`, as the
   vendor spells it. A `repo` resource requires `commit`, and a consumer
-  matches a requested tag against `tag` (see
-  [Matching a request](#matching-a-request)).
+  matches a requested tag against `tag` or the release-list entry's `tag`
+  (see [Matching a request](#matching-a-request)).
 - `os`, `arch`, `libc`, `format`, and `variant` are lowercase words of
   letters, digits, `_`, `-`, and `.`, starting with a letter or digit.
   The documented values are the ones consumers know; see
-  [Vocabularies](#vocabularies). An `os`, `arch`, `libc`, or `format`
-  value outside them is well-formed, but no consumer matches it to a host
-  or knows how to unpack it, so a vendor uses one only for a platform or
-  format this document has not named yet. An absent `os`, `arch`, or `libc` means the artifact does not
-  depend on it: a universal macOS binary has `os` but no `arch`; a
-  statically linked Linux executable, which loads no C library from the
-  host, has no `libc`; and a script or a jar has none of the three.
+  [Vocabularies](#vocabularies). A value outside them is well-formed but
+  matches no host and unpacks with nothing, so a vendor uses one only for
+  a platform or format this document has not named yet. An absent `os`,
+  `arch`, or `libc` means the artifact does not depend on it: a universal
+  macOS binary has `os` but no `arch`; a statically linked Linux
+  executable, which loads no C library from the host, has no `libc`; and
+  a script or a jar has none of the three.
 - `format` is the archive or installer type, or `raw` for a bare
   executable. Two artifacts that differ only in format carry the same
   build, and a consumer takes whichever it prefers. A vendor must not
@@ -592,8 +588,7 @@ rest, including the project-name grammar, the fixed `_type` and
 
 The documented `os`, `arch`, and `libc` values follow the components of
 Rust's target triples, so a vendor's build matrix maps onto them without
-a translation table. `variant` has no fixed vocabulary; the values in
-[its rule](#the-release-statement) are examples.
+a translation table.
 
 - `os`: `linux`, `darwin`, `windows`, `freebsd`, `netbsd`, `openbsd`,
   `illumos`, `android`, `ios`.
@@ -708,9 +703,9 @@ prefers them once scope and specificity have narrowed the entries (see
   artifact that has paths inside it, which a bare format does not; see
   [Scope and identity](#scope-and-identity).
 - `asset`: a separate release file. It is listed in `subject` with its
-  digest, so it verifies exactly as an artifact does, and the entry may
-  carry its download `url`. A skill directory ships this way as an
-  archive of its own.
+  digest and the entry carries its download `url`, so it verifies exactly
+  as an artifact does. A skill directory ships this way as an archive of
+  its own.
 - `repo`: a path in the source repository at `source.commit`, which pins
   its content. `source.commit` is required.
 - `exec`: an argv whose first element is a `bin` name and whose stdout is
@@ -719,9 +714,7 @@ prefers them once scope and specificity have narrowed the entries (see
   so it ranks last among sources, but for a completion it is the usual
   case: cobra, clap, oclif, and usage generate completions from the
   binary and ship no file. [Running an exec entry](#running-an-exec-entry)
-  says when a consumer runs it. A vendor that also has a static file
-  lists that too; among equally specific entries, a consumer takes the
-  static one before the `exec` entry wherever it appears in `resources`.
+  says when a consumer runs it. A vendor with a static file lists it first.
 
 ### Scope and identity
 
@@ -815,8 +808,7 @@ next entry.
 - `sbom`: a software bill of materials in `format`, `cyclonedx` or `spdx`,
   from an `archive`, `asset`, or `repo` source so that its digest or
   commit covers it. Never from `exec`. A release with one SBOM per
-  platform lists one entry per platform, scoped with `os`, `arch`, or
-  `libc`, or one per artifact, scoped with `artifact`.
+  platform lists one entry per `os` or per artifact's archive.
 - `desktop`: a freedesktop [desktop entry](https://specifications.freedesktop.org/desktop-entry-spec/latest/), for a Linux launcher. AppImage,
   deb, rpm, and the Windows installer formats carry their own.
 - `icon`: an icon file. A hicolor path (`share/icons/hicolor/512x512/...`)
@@ -1006,12 +998,11 @@ Documented kinds:
 - `none`: the repackager checked nothing, and the document rests on its
   signature alone.
 
-A repackager document proves that the repackager signed exactly these
-digests and says it checked the listed evidence. It is not a statement by
-the vendor and proves nothing on the vendor's behalf. Consumers rank it
-below a vendor document, and a consumer that already holds a vendor
-document for a project refuses to replace it with a repackager one
-without a person's approval.
+A repackager document proves that the repackager published exactly these
+digests and checked the listed evidence. It does not prove anything the
+vendor did not sign. Consumers rank it below a vendor document, and a
+consumer that already holds a vendor document for a project refuses to
+replace it with a repackager one without a person's approval.
 
 A mirror is a repackager whose documents carry the vendor's digests with
 the mirror's own URLs and `vendor-packslip` evidence. A consumer pointed at
@@ -1130,11 +1121,11 @@ A project on its own domain must publish the list: a consumer that finds
 none refuses the project rather than guessing at URLs.
 
 The list separates the name from where the bytes live: the identity is
-anchored to the domain, and the artifacts can be anywhere. A vendor whose
-domain serves files straight from a git repository, as a static-site host
-does, can keep the list and the bundles in that repository and point the
-artifact URLs wherever the bytes are, an LFS store included. No forge
-release API is involved.
+anchored to the domain, and the artifacts can be anywhere. A vendor with
+only a git repository keeps the list and the bundles in it, at paths its
+host serves as raw files, and points the artifact URLs wherever the bytes
+are, an LFS store included. Nothing about a forge's release API is
+required.
 
 The reference implementation gives the URL as `list_url`, for a project's
 own list and for one another publisher keeps for it (see
@@ -1284,10 +1275,8 @@ spelling once and keeps it; the tag keeps the vendor's own spelling.
   and a prerelease part means something else.
 
 Two releases must not share a version. A vendor whose spelling would
-collide, such as two releases on one day under a date scheme, needs a
-scheme with room for both, such as `YEAR.MONTH.N` with a counter in the
-patch place: build metadata does not order, and a fourth component has no
-spelling.
+collide, two releases on one day under a date scheme, adds a component it
+can order rather than build metadata.
 
 ### Tags
 
@@ -1316,7 +1305,8 @@ vendor spells it, with or without its leading `v`; a consumer matches it
 against `source.tag` or the list entry's `tag`, so a user who knows a
 release by the vendor's name still finds it. Eligible means not yanked,
 not a prerelease unless prereleases were asked for, and on the requested
-channel when one was given.
+channel when one was given. Rollback protection comes from the release
+list's `sequence`, not from anything a single release says.
 
 ### Latest
 
@@ -1360,10 +1350,10 @@ pointer falls directly back to semver selection, not to GitHub's pointer.
 Report when a declared recommendation is skipped and why; if no eligible
 release exists, fail. For example, if `latest` is `2.8.4` but `2.8.4` is
 yanked or too young, the consumer selects `3.0.0` when it is eligible. A
-vendor that must keep consumers off `3.0.0` yanks it in its signed list
-or relies on an admission policy
-([Lists from other publishers](#lists-from-other-publishers)); `latest`
-recommends a release but never excludes one.
+vendor that must exclude `3.0.0` must withdraw it or use an admission
+policy ([Lists from other publishers](#lists-from-other-publishers)),
+rather than relying on `latest`; `latest` recommends a release but never
+excludes one.
 
 Fallback does not turn verification failures into missing metadata.
 An invalid, expired, rolled-back, or unexpectedly missing signed list
@@ -1412,8 +1402,6 @@ installs. The rules, and the sections they cite, rely on this state:
   was accepted at all;
 - the choices a person made, such as an approved signer change, an
   allowed unlogged bundle, or trusting the vendor without a stamp.
-
-The numbers name the rules, not the order a consumer applies them.
 
 1. Pin the identity once.
    - For a forge project, the name gives the first pin: accept only the
@@ -1513,8 +1501,7 @@ Version 1 fixes:
 
 - The meaning of every field defined here. A field is never redefined,
   narrowed, or given a different default.
-- Field names and types, and the meaning of each vocabulary member
-  defined here.
+- Field names and types, and the vocabularies that constrain them.
 - The rules that decide which release and which artifact a consumer
   installs: [Versions](#versions), [Discovery](#discovery),
   [Selecting an artifact](#selecting-an-artifact), [Resources](#resources),

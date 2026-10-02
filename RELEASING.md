@@ -81,9 +81,11 @@ The actions and CLI share one version, including for action-only changes.
 release-plz counts only pull requests that change a file in the Cargo
 package. `action.yml`, `releases/action.yml`, and `scripts/` are in the
 package so that action changes count. The `exclude` list in `Cargo.toml`
-leaves out the site, `.github/`, `RELEASING.md`, and the release
-configuration; a pull request that changes only those files gets no
-changelog line and does not raise the version.
+leaves out the site, `.github/`, `RELEASING.md`, `CHANGELOG.md`,
+`cliff.toml`, and `release-plz.toml`; a pull request that changes only
+those files gets no changelog line and does not raise the version.
+`communique.toml`, `mise.toml`, and `mise.lock` are in the package, so a
+change to them counts, as a change under `scripts/` does.
 
 Give action changes conventional-commit titles such as `fix(action): ...`
 or `feat(action): ...`. A breaking action change raises the shared major
