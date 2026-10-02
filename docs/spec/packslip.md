@@ -436,7 +436,12 @@ and remembered consumer state, as [Discovery](#discovery) and
 `packslip verify` checks the supplied bundle and local files. It reports
 signing information, provenance links, resources, and host requirements,
 but does not fetch provenance, install resources, or maintain trust
-history across invocations.
+history across invocations. Without `--pubkey`, `--identity`,
+`--identity-prefix`, or `--issuer`, it derives the signer policy from the
+GitHub or GitLab project the statement claims. That is a policy taken
+from an untrusted statement, which [Names](#names) warns does not check
+the user's intended identity: compare the reported project and version
+with the request, or pass the expected signer explicitly.
 
 ## The release statement
 
