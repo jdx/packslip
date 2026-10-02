@@ -527,7 +527,12 @@ impl Check {
     ///
     /// A release that declares `pin_workflow: false` (see
     /// [`Check::pins_workflow`]) is held to the repository alone: any
-    /// workflow of it continues the signer.
+    /// workflow of it continues the signer. As for a pinned workflow,
+    /// `previous` must be the signer the consumer recorded for this
+    /// project: once the repository ID matched, nothing here can tell a
+    /// rename from a signer of another repository on the same forge, so
+    /// only the forge is compared. Without a repository ID, the
+    /// repository's name is compared too.
     pub fn continues_signer(&self, previous: &str) -> bool {
         let pin = self.pin.as_ref().filter(|_| self.by_id);
         if !self.pin_workflow {
@@ -1315,6 +1320,8 @@ mod tests {
             "https://github.com/jdx/hook/.github/workflows/other.yml@refs/tags/v0.1.0"
         ));
         // The forge is still pinned, and the signer must still be a workflow.
+        // `previous` is the project's recorded signer, so a rename is not
+        // told from another repository by name once the ID matched.
         assert!(!ok.continues_signer("https://gitlab.com/jdx/hk//.gitlab-ci.yml"));
         assert!(!ok.continues_signer("me@example.com"));
     }
