@@ -27,7 +27,9 @@ enabled as described below.
    publishes the GitHub release, moves the action's matching major tag
    (`v0` for 0.x releases, `v1` for 1.x releases, and so on), and rebuilds
    the signed release list at `https://packslip.dev/.well-known/packslip.json`
-   through `packslip-releases.yml`, which also re-signs it weekly.
+   through `packslip-releases.yml`, which also re-signs it weekly. Every
+   rebuild applies the withdrawals committed under `.github/packslip/`; see
+   [Withdraw a release or mark a security fix](#withdraw-a-release-or-mark-a-security-fix).
 
 ## Cutting a major version
 
@@ -59,6 +61,51 @@ The actions and CLI share one version, including for action-only changes.
 Cargo package so release-plz detects those changes.
 Use conventional commits such as `fix(action): ...` or `feat(action): ...`;
 breaking action changes affect the shared version too.
+
+## Withdraw a release or mark a security fix
+
+`packslip-releases.yml` builds the signed list from scratch on every run, so
+a withdrawal only lasts if every run repeats it. Two files in
+`.github/packslip/` hold them, and each run reads both from `main`, whatever
+ref triggered it:
+
+| File | One line per release | Effect on the list |
+| --- | --- | --- |
+| `yanked` | `TAG=REASON`, such as `v1.2.3=Incorrect Linux archive` | The release stays listed with status `yanked` and the reason. Consumers never select it and warn anyone who already has it. |
+| `security` | `TAG`, such as `v1.2.4` | The release is listed with `security: true`, which lets a consumer's minimum release age shorten for it. |
+
+Blank lines and lines starting with `#` are ignored, so put the reason for a
+security mark in a comment above its line. The action also accepts a bundle
+URL in place of a tag.
+
+1. Add the line to the file in a pull request titled like
+   `fix(ci): withdraw v1.2.3 from the packslip.dev list`.
+2. Merge it. A push to `main` that touches `.github/packslip/` runs
+   `packslip-releases.yml`, which signs and publishes a new list. Watch that
+   run finish; the weekly schedule and every later release then keep the
+   entry.
+3. Check the published list:
+
+   ```sh
+   curl -fsS https://packslip.dev/.well-known/packslip.json -o packslip.json
+   packslip verify packslip.json \
+     --issuer https://token.actions.githubusercontent.com \
+     --identity-prefix https://github.com/jdx/packslip/ --json |
+     jq '.predicate.releases[] | select(.status == "yanked" or .security)'
+   ```
+
+To restore a release or drop a security mark, remove its line the same way.
+
+Keep the release's bundle in the R2 bucket: the list has to keep naming a
+withdrawn release, and a line for a tag with no bundle fails the run with
+`is not among the --release entries`. A missing file also fails the run, so
+a rename or deletion cannot silently restore everything.
+
+This withdraws the release from the packslip.dev list only. It does not
+touch the GitHub release, the crates.io version, or the files in R2.
+`packslip-releases.yml` no longer takes `yank` or `security` dispatch inputs:
+a dispatched withdrawal lasted until the next scheduled or post-release run
+rebuilt the list. A manual dispatch now re-signs the list as it stands.
 
 ## Platforms
 

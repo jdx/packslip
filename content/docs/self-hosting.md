@@ -156,26 +156,81 @@ with `--key` instead.
 ## Keep the list current
 
 A consumer refuses an expired list, and for a project on its own domain
-that means refusing the project. Put the list job in its own workflow with
-three triggers, and call it from the release workflow after the release is
-public:
+that means refusing the project. Put the list job in its own workflow and
+call it from the release workflow after the release is public:
 
 ```yaml
 on:
   workflow_call:
   schedule:
     - cron: "0 6 * * 1"
+  push:
+    branches: [main]
+    paths:
+      - ".github/mytool/**"
   workflow_dispatch:
-    inputs:
-      yank:
-        description: "Releases to withdraw, one per line, as TAG=REASON"
-        default: ""
 ```
 
 A weekly run against a 30-day validity leaves room for a few failed runs.
-Pass the dispatch inputs through to the action's `yank` and `security`
-inputs to withdraw a release or mark one a security fix without a new
-release; the withdrawn release stays in the list with its status.
+The `push` trigger publishes a new list as soon as a withdrawal merges, and
+`workflow_dispatch` re-signs the list on demand.
+
+### Keep withdrawals in the repository
+
+Every run builds the list from scratch, from that run's `yank` and
+`security` inputs alone. A withdrawal given to one run, as a
+`workflow_dispatch` input for instance, is missing from the next scheduled
+or post-release list, and the release becomes eligible again. Commit the
+withdrawals instead and have every run pass them to the action. The files use
+the action's own format: `.github/mytool/yanked` holds one `TAG=REASON` per
+line, and `.github/mytool/security` one tag per line.
+
+```yaml
+steps:
+  # Read the withdrawals from the default branch. A run for a release tag
+  # checks out the tag, which can predate a withdrawal merged since.
+  - uses: actions/checkout@v5
+    with:
+      ref: main
+      path: withdrawals
+      sparse-checkout: .github/mytool
+      persist-credentials: false
+  - name: Read the withdrawals
+    id: withdrawn
+    run: |
+      set -euo pipefail
+      delimiter="mytool_$(openssl rand -hex 16)"
+      {
+        echo "yank<<$delimiter"
+        grep -Ev '^[[:space:]]*(#|$)' withdrawals/.github/mytool/yanked || [ $? -eq 1 ]
+        echo "$delimiter"
+        echo "security<<$delimiter"
+        grep -Ev '^[[:space:]]*(#|$)' withdrawals/.github/mytool/security || [ $? -eq 1 ]
+        echo "$delimiter"
+      } >> "$GITHUB_OUTPUT"
+  # ... fetch the published bundles, then:
+  - uses: jdx/packslip/releases@v1
+    with:
+      project: mytool.example.com
+      dir: lists
+      url-base: https://mytool.example.com
+      yank: ${{ steps.withdrawn.outputs.yank }}
+      security: ${{ steps.withdrawn.outputs.security }}
+```
+
+The action skips blank lines but would try to parse a comment as an entry,
+so the `grep` drops both; that lets the files carry a header and the reason
+for each security mark. A missing file fails the run, because `set -e` stops
+the script when `grep` cannot open it, rather than publishing a list that
+restores every withdrawn release.
+
+To withdraw `v1.2.3`, add `v1.2.3=Incorrect Linux archive` to `yanked` and
+merge. The release stays in the list with status `yanked`, and stays
+withdrawn through every later run until its line is removed. Keep its
+bundle in `dir`: an entry for a tag the directory does not hold fails the run.
+[packslip.dev's own workflow](https://github.com/jdx/packslip/blob/main/.github/workflows/packslip-releases.yml)
+does this, and its [procedure](https://github.com/jdx/packslip/blob/main/RELEASING.md#withdraw-a-release-or-mark-a-security-fix)
+is a worked example.
 
 ## Serve the files
 
@@ -216,5 +271,6 @@ the old project's signer starts afresh under the new name.
 | `is for github.com/owner/repo, not mytool.example.com` | A bundle from before the move is in the directory; describe that release again under the new name, or remove it. |
 | `is release v1.2.3 but sits under v1.2.4/` | The directory is named by the tag the bundle records; move it. |
 | `is not among the --release entries` | A `yank` or `security` entry names a tag or URL that is not in `dir`. |
+| A withdrawn release is eligible again after a scheduled or post-release run | The withdrawal was given to a single run. [Commit it](#keep-withdrawals-in-the-repository) so every run passes it. |
 | A consumer says the list expired | The scheduled run has not published one lately; check it, and dispatch it once by hand. |
 | A consumer refuses a backfilled release as a different signer | The backfill ran from another workflow file; run it from the one that signs releases, and have the consumer forget the pin it took. |

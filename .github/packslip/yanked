@@ -1,0 +1,10 @@
+# Releases withdrawn from https://packslip.dev/.well-known/packslip.json.
+#
+# One per line, as TAG=REASON (a bundle URL works in place of the tag). Every
+# run of packslip-releases.yml reads this file from main, so a withdrawal
+# stays in the list until its line is removed. Removing a line restores the
+# release. Do not delete the withdrawn release's bundle from the R2 bucket:
+# the list has to keep naming it, and a line for a tag with no bundle fails
+# the run.
+#
+# v1.2.3=Incorrect Linux archive

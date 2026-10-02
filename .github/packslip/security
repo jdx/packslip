@@ -1,0 +1,8 @@
+# Releases that fix a vulnerability, marked as such in
+# https://packslip.dev/.well-known/packslip.json.
+#
+# One per line, as a TAG (a bundle URL works in place of the tag). Every run
+# of packslip-releases.yml reads this file from main, so a mark stays in the
+# list until its line is removed. Put the reason in a comment above the line.
+#
+# v1.2.3
