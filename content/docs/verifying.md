@@ -42,6 +42,55 @@ belongs to the project the document names. It does **not** establish that
 this is the project or version you intended to install. Check those
 values against your request as well.
 
+## Pin a signer with its fingerprint
+
+Naming the repository and trusting the first release you see leaves a gap:
+if the name was taken over before you first looked, the first release is
+the impostor's. A project can close it by publishing a signer fingerprint
+where you read it apart from its releases, such as its README or a
+Dockerfile. It is `ps1_` and 26 characters that name the repository the
+project is signed from.
+
+A vendor prints it from a release it trusts:
+
+```sh
+packslip pin packslip.sigstore.json
+```
+
+```text
+ps1_snirenkjwr7m5ozgcufameodnm
+```
+
+`packslip pin` verifies the bundle first, as `packslip verify` does, with
+the policy the project's name implies or the identity flags you give it,
+and then prints the fingerprint of the repository the certificate was
+issued for. Run it on a release you trust: it names whichever repository
+signed the bundle it is given.
+
+A consumer then passes the fingerprint it read to `verify`:
+
+```sh
+packslip verify packslip.sigstore.json \
+  --pin ps1_snirenkjwr7m5ozgcufameodnm \
+  --artifact mytool-1.2.3-linux-x64.tar.gz
+```
+
+A release from a different repository, even one that took over the old
+name, is refused:
+
+```text
+verification failed: the release is signed by ps1_kwhjac5qpc45qetfh6ppwisi6a, but the pin is ps1_snirenkjwr7m5ozgcufameodnm
+```
+
+`--pin` checks the repository in addition to the identity policy, not
+instead of it, and it needs a keyless release whose certificate records a
+repository ID. The fingerprint covers the forge's issuer and repository ID
+only. It stays the same when the repository is renamed, moves to another
+owner, or changes its workflow, and it is the same for every tool in a
+monorepo. A key-signed project has no fingerprint; pin its key. See
+[Signer fingerprint](/release/v1/#signer-fingerprint) for how it is
+derived.
+
 ## Verify against a public key
 
 For a key-signed release, obtain the public key through a trusted channel:

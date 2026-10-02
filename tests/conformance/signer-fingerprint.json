@@ -1,0 +1,36 @@
+{
+  "rule": "https://packslip.dev/release/v1/#signer-fingerprint",
+  "description": "The signer fingerprint of a keyless project and how a consumer checks one. Every case has a `kind`. `derive`: the pin for an `issuer` and a `repository_id`, as the certificate records them; `expect` is the pin, or null when the inputs have no fingerprint (a missing or non-decimal repository ID). `parse`: whether the text in `pin` is a fingerprint at all; `expect` is `valid` or `invalid`, and only the one canonical spelling is valid. `check`: a `pin` against the certificate of a release that already verified, which carries an `issuer` and a `repository_id` (null when the certificate records none); `expect` is `match`, `mismatch` for another repository or issuer, or `no-repository-id` when the certificate gives nothing to compare. A `check` case names the `project` and `owner` the certificate was issued under only to show that neither is consulted.",
+  "cases": [
+    { "name": "a GitHub repository", "kind": "derive", "issuer": "https://token.actions.githubusercontent.com", "repository_id": "922514152", "expect": "ps1_snirenkjwr7m5ozgcufameodnm" },
+    { "name": "the lowest repository ID", "kind": "derive", "issuer": "https://token.actions.githubusercontent.com", "repository_id": "1", "expect": "ps1_kwhjac5qpc45qetfh6ppwisi6a" },
+    { "name": "a repository ID that needs 63 bits", "kind": "derive", "issuer": "https://token.actions.githubusercontent.com", "repository_id": "9223372036854775807", "expect": "ps1_uxq3cfok3pqqcejdej5otqujnu" },
+    { "name": "a GitLab project", "kind": "derive", "issuer": "https://gitlab.com", "repository_id": "278964", "expect": "ps1_5q3uiurqwpvl5pdvb4bo4ochre" },
+    { "name": "the same ID under another issuer is another pin", "kind": "derive", "issuer": "https://gitlab.com", "repository_id": "922514152", "expect": "ps1_5ay4zeayy432fq5mkpu6qzenxy" },
+    { "name": "an owner's ID is not a repository's", "kind": "derive", "issuer": "https://token.actions.githubusercontent.com", "repository_id": "216188", "expect": "ps1_i4m2li46eruhzse6x7yme52dxm" },
+    { "name": "any other issuer URL is hashed as given", "kind": "derive", "issuer": "https://example.com/oidc", "repository_id": "42", "expect": "ps1_3isywdnovhofgao6hy4xy6hkj4" },
+    { "name": "a certificate without a repository ID has no fingerprint", "kind": "derive", "issuer": "https://token.actions.githubusercontent.com", "repository_id": null, "expect": null, "reason": "Such a project needs an explicit identity and issuer instead." },
+    { "name": "an ID that is not decimal has none", "kind": "derive", "issuer": "https://token.actions.githubusercontent.com", "repository_id": "jdx/hk", "expect": null },
+
+    { "name": "the canonical spelling", "kind": "parse", "pin": "ps1_snirenkjwr7m5ozgcufameodnm", "expect": "valid" },
+    { "name": "another canonical pin", "kind": "parse", "pin": "ps1_5q3uiurqwpvl5pdvb4bo4ochre", "expect": "valid" },
+    { "name": "no prefix", "kind": "parse", "pin": "snirenkjwr7m5ozgcufameodnm", "expect": "invalid" },
+    { "name": "another version's prefix", "kind": "parse", "pin": "ps2_snirenkjwr7m5ozgcufameodnm", "expect": "invalid", "reason": "A consumer that does not know a version cannot tell what it commits to." },
+    { "name": "nothing after the prefix", "kind": "parse", "pin": "ps1_", "expect": "invalid" },
+    { "name": "one character short", "kind": "parse", "pin": "ps1_snirenkjwr7m5ozgcufameodn", "expect": "invalid" },
+    { "name": "one character long", "kind": "parse", "pin": "ps1_snirenkjwr7m5ozgcufameodnma", "expect": "invalid" },
+    { "name": "padded", "kind": "parse", "pin": "ps1_snirenkjwr7m5ozgcufameodnm======", "expect": "invalid", "reason": "The encoding is unpadded." },
+    { "name": "uppercase", "kind": "parse", "pin": "ps1_SNIRENKJWR7M5OZGCUFAMEODNM", "expect": "invalid", "reason": "Lowercase only, so a pin has one spelling." },
+    { "name": "a character outside the base32 alphabet", "kind": "parse", "pin": "ps1_snirenkjwr7m5ozgcufameodn1", "expect": "invalid", "reason": "RFC 4648 base32 has no 0, 1, 8 or 9." },
+    { "name": "a hex digit run, right length, wrong alphabet", "kind": "parse", "pin": "ps1_0123456789abcdef0123456789", "expect": "invalid" },
+    { "name": "leftover bits set in the last character", "kind": "parse", "pin": "ps1_snirenkjwr7m5ozgcufameodnn", "expect": "invalid", "reason": "26 characters carry 130 bits and the pin is 128; the last two must be zero or two spellings would name one pin." },
+    { "name": "surrounding whitespace", "kind": "parse", "pin": " ps1_snirenkjwr7m5ozgcufameodnm", "expect": "invalid" },
+
+    { "name": "the repository's own release", "kind": "check", "pin": "ps1_snirenkjwr7m5ozgcufameodnm", "issuer": "https://token.actions.githubusercontent.com", "repository_id": "922514152", "project": "github.com/jdx/hk", "owner": "jdx", "expect": "match" },
+    { "name": "after a rename", "kind": "check", "pin": "ps1_snirenkjwr7m5ozgcufameodnm", "issuer": "https://token.actions.githubusercontent.com", "repository_id": "922514152", "project": "github.com/jdx/hook", "owner": "jdx", "expect": "match", "reason": "The name is not part of the pin." },
+    { "name": "after a transfer to another owner", "kind": "check", "pin": "ps1_snirenkjwr7m5ozgcufameodnm", "issuer": "https://token.actions.githubusercontent.com", "repository_id": "922514152", "project": "github.com/someone-else/hk", "owner": "someone-else", "expect": "match", "reason": "The owner is not part of the pin, and Forge identity has a consumer follow a transfer." },
+    { "name": "a name recreated by someone else", "kind": "check", "pin": "ps1_snirenkjwr7m5ozgcufameodnm", "issuer": "https://token.actions.githubusercontent.com", "repository_id": "1017", "project": "github.com/jdx/hk", "owner": "jdx", "expect": "mismatch" },
+    { "name": "the same ID from another forge", "kind": "check", "pin": "ps1_snirenkjwr7m5ozgcufameodnm", "issuer": "https://gitlab.com", "repository_id": "922514152", "project": "gitlab.com/jdx/hk", "owner": "jdx", "expect": "mismatch" },
+    { "name": "a certificate from before IDs were recorded", "kind": "check", "pin": "ps1_snirenkjwr7m5ozgcufameodnm", "issuer": "https://token.actions.githubusercontent.com", "repository_id": null, "project": "github.com/jdx/hk", "owner": "jdx", "expect": "no-repository-id", "reason": "Nothing to compare is not a match." }
+  ]
+}

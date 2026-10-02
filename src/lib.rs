@@ -24,6 +24,7 @@ pub mod cli;
 #[cfg(feature = "create")]
 pub mod create;
 pub mod dsse;
+pub mod fingerprint;
 pub mod forge;
 #[cfg(feature = "linkage")]
 pub mod linkage;
@@ -34,6 +35,7 @@ pub mod model;
 pub mod sigstore;
 pub mod verify;
 
+pub use fingerprint::Fingerprint;
 #[cfg(feature = "manifest")]
 pub use manifest::Manifest;
 pub use model::{
