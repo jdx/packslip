@@ -72,9 +72,14 @@ pub enum Error {
     #[error("bundle has no transparency log entry; pass --allow-unlogged to accept one")]
     Unlogged,
     #[error(
-        "no identity to verify against for {0:?}: pass --identity, --identity-prefix, or --issuer"
+        "no identity to verify against for {0:?}: pass --identity, --identity-prefix, or --issuer for a keyless release, or --pubkey for a key-signed one"
     )]
     NoPolicy(String),
+    /// Like [`Error::NoPolicy`], for a command that has no key to pin.
+    #[error(
+        "no identity to verify against for {0:?}: pass --identity, --identity-prefix, or --issuer"
+    )]
+    NoIdentityPolicy(String),
 }
 
 #[cfg(feature = "sign")]
