@@ -188,6 +188,15 @@ two remembered signers, each with the pin recorded alongside it, for a
 no-downgrade check with no release at hand, such as regenerating a
 lockfile.
 
+A vendor that signs from a reusable workflow can ask consumers to hold
+it to its repository instead of one workflow (`packslip create
+--no-pin-workflow`). `accepted.check.pins_workflow()` is `false` for such
+a release, and `continues_signer` then accepts any workflow of the
+repository. Remember the value beside the signer: a release that declares
+`false` when you remembered `true` lowers what you enforce, so refuse it
+until a person accepts it, and a release that goes back to `true` is held
+to the last accepted workflow again.
+
 To decide how to verify before verifying, `packslip::peek_unverified`
 reads the project and version a bundle claims. Nothing in it is
 established until the bundle verifies.

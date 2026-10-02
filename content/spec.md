@@ -222,6 +222,52 @@ A consumer that wants a dependency-free check has one: the DSSE signature
 of a key-signed bundle is a raw Ed25519 signature over the
 pre-authentication encoding of the payload.
 
+### Reusable workflows
+
+A keyless consumer compares the workflow that signed a release with the
+one that signed the last release it accepted, and treats a different
+workflow of the same repository as a changed signer (see
+[Consumer rules](#consumer-rules)). A vendor whose releases are signed by
+more than one workflow of its repository, such as a reusable workflow
+shared by several release jobs, would send every consumer to a person
+with each change. It can declare that in the document:
+
+```json
+"identity": {
+  "scheme": "sigstore-oidc",
+  "key_id": "https://github.com/example/tool/.github/workflows/release.yml@refs/tags/v1.2.0",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "pin_workflow": false
+}
+```
+
+`pin_workflow` is `true` when absent, so a document that does not
+mention it is held to its workflow as before. It is a signed statement
+of the vendor's own, in a release or a release list, and it means nothing
+for `sigstore-key`, which has no workflow.
+
+With `pin_workflow: false`, a consumer still requires everything else of
+the signer: the issuer, a certificate whose repository is the one pinned
+(by repository ID where the forge records one), and a workflow of that
+repository. It stops comparing the workflow's path with the last
+accepted signer.
+
+Declaring it lowers what the consumer enforces, so it is a reduction in
+remembered trust like those in consumer rule 3. A consumer remembers the
+value beside the signer. A release that declares `false` when the
+remembered value is `true` is refused until a person accepts the change,
+and the consumer then remembers `false` and does not ask again. With no
+remembered signer, as on a first install, there is nothing to reduce. A
+release that declares `true` or nothing when the remembered value is
+`false` is not a reduction: the consumer holds it to the workflow of the
+last accepted signer again, and a different workflow is a changed signer
+as usual.
+
+A consumer written before this field existed ignores it, as it ignores
+any field it does not know, and keeps holding the vendor to its workflow.
+A vendor that sets it is therefore still sent to a person by those
+consumers when the workflow changes.
+
 ## What a verified packslip proves
 
 A verified packslip authenticates the named signer's statement about the
@@ -454,6 +500,7 @@ include `repo`. Resource entries must choose exactly one source field.
 | `predicate.identity.scheme` | string | required | `sigstore-oidc` or `sigstore-key`. |
 | `predicate.identity.key_id` | string | required | The certificate identity, or the key id in uppercase hex. |
 | `predicate.identity.issuer` | string | optional | The OIDC issuer, for `sigstore-oidc`. |
+| `predicate.identity.pin_workflow` | boolean | optional | For `sigstore-oidc`: `false` asks consumers to hold later releases to the signing repository, not to the workflow that signed this one. `true` when absent. See Reusable workflows. |
 | `predicate.attested_by` | string | optional | `vendor` (default) or `repackager`. |
 | `predicate.evidence[]` | array of object | optional | What a repackager checked: `{ kind, detail }`. |
 | `predicate.notes_url` | string | optional | URL of the release notes. |
@@ -1112,12 +1159,17 @@ continuity, no-downgrade policy, and release-list sequences across installs.
    saying so, whose `attested_by` went from vendor to repackager, or that
    dropped per-artifact provenance the last release carried. For a keyless
    signer, compare the workflow path, not the ref: a new tag of the same
-   workflow is the same signer. For a renamed or transferred repository, compare the
-   workflow's path inside the repository, and only when the repository
-   IDs show the same repository: the one the release's certificate
-   carries or, comparing two recorded signers such as a lockfile entry and
-   the one it replaces, the ID recorded with each. A changed repository ID
-   is a changed signer, even under the same identity.
+   workflow is the same signer. For a renamed or transferred repository,
+   compare the workflow's path inside the repository, and only when the
+   repository IDs show the same repository: the one the release's
+   certificate carries or, comparing two recorded signers such as a
+   lockfile entry and the one it replaces, the ID recorded with each. A
+   changed repository ID is a changed signer, even under the same
+   identity.
+   A release that declares `identity.pin_workflow: false` is compared by
+   repository alone; declaring it where the remembered value is `true`
+   is a reduction that needs a person's say-so, as Reusable workflows
+   says.
 4. Apply any minimum release age to the log's integration time, falling
    back to `published_at` only for an unlogged bundle you chose to accept.
 5. Use the project's release list: GitHub's releases endpoint with the

@@ -193,11 +193,13 @@ impl Signer {
                 scheme: crate::model::Scheme::SigstoreOidc,
                 key_id: oidc.identity.clone(),
                 issuer: Some(oidc.issuer.clone()),
+                pin_workflow: None,
             },
             Signer::Key { key, .. } => crate::model::Identity {
                 scheme: crate::model::Scheme::SigstoreKey,
                 key_id: key_id_hex(&key.public_key().key_id),
                 issuer: None,
+                pin_workflow: None,
             },
         }
     }

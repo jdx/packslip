@@ -24,6 +24,7 @@ Publish at the project's well-known location, or as a supplementary list on a Gi
 - **`-k --key <KEY>`** — Sign with this secret key instead of a CI identity
 - **`--sign <SIGN>`** — How to sign; defaults to key when --key is given, else oidc
 - **`--no-log`** — With --key: do not record the signature in Rekor
+- **`--no-pin-workflow`** — With keyless signing from a reusable workflow: declare that consumers should hold later releases to this repository, not to this signing workflow
 - **`-o --out <OUT>`** — Where to write the list
 
   **Default:** `packslip-releases.sigstore.json`
