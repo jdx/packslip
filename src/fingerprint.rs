@@ -2,9 +2,10 @@
 //! keyless project is signed from, such as
 //! `ps1_snirenkjwr7m5ozgcufameodnm`.
 //!
-//! A README or a Dockerfile can carry the fingerprint where a consumer
-//! reads it, so the consumer does not have to trust the first release it
-//! sees (see [`crate::forge`]). It is the first 128 bits of the SHA-256 of
+//! A vendor publishes the fingerprint where consumers can read it, such as
+//! its README or website, and a consumer records it in its own
+//! configuration, such as a Dockerfile or a lockfile, so it does not have
+//! to trust the first release it sees (see [`crate::forge`]). It is the first 128 bits of the SHA-256 of
 //! the OIDC issuer and the forge's repository ID, and nothing else: not the
 //! owner, the workflow, the ref, or a monorepo tool's subpath. A rename or a
 //! transfer leaves it unchanged, and a repository that took over a freed

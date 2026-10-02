@@ -1027,9 +1027,10 @@ pub struct Identity {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issuer: Option<String>,
     /// For `sigstore-oidc`, whether a consumer holds later releases to the
-    /// workflow that signed this one. `false` declares that the vendor
-    /// signs from a reusable workflow, so only the repository is pinned.
-    /// Absent means `true`.
+    /// workflow file that signed this one. `false` asks consumers to hold
+    /// them to the signing repository instead, for a vendor whose releases
+    /// are signed by more than one workflow of its repository. Absent means
+    /// `true`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pin_workflow: Option<bool>,
 }

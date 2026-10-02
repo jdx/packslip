@@ -4,42 +4,57 @@ description: Guides and reference for publishing and verifying packslip release 
 ---
 # Documentation
 
-Choose a path based on whether you publish software, install it, or build
-an integration. For the relationship between configuration, signing, and
-discovery, read [How packslip fits a release](/docs/release-workflow/).
+This page maps the packslip guides and reference for people who publish
+software, install it, or build a consumer such as an installer or mirror.
+Read the two pages under Start here first, then follow the section for what
+you do.
 
-## Try packslip {#guides}
+## Start here {#guides}
 
-[Getting started](/docs/getting-started/) creates and verifies a small local
-release. It needs no CI account or connection to the signing services once
-the CLI is installed.
+1. [How packslip fits a release](/docs/release-workflow/): the steps from
+   build to verified installation, and the three files involved.
+2. [Getting started](/docs/getting-started/): create and verify a small
+   release on your machine. It needs no CI account, and once the CLI is
+   installed it runs offline.
 
 ## Publish software
 
-Follow these guides in the order your release needs them:
+Start by adding the packslip GitHub Action to your release job. The other
+guides cover what a release needs beyond the action's defaults.
 
-1. [Artifact configuration](/docs/describing-releases/): describe platforms,
-   executable paths, and variants, using flags or a TOML manifest.
-2. [Resources](/docs/resources/) and [host requirements](/docs/host-requirements/):
-   describe additional files and what the host must provide.
-3. [Release recipes](/docs/recipes/): adapt a Rust, Go, monorepo, or desktop layout.
-4. [Publish with GitHub Actions](/docs/publishing/): sign and upload the bundle
-   from your release job.
-5. [Manage release lists](/docs/release-lists/): publish discovery metadata,
-   withdraw versions, and recommend a default release.
-6. [Host releases on your own domain](/docs/self-hosting/): name a project
-   after its download host and publish its releases and list there.
+- [Publish with GitHub Actions](/docs/publishing/): sign and upload the
+  bundle from your release job, with no signing key to manage.
+- [Artifact configuration](/docs/describing-releases/): set the platforms,
+  executable paths, and variants that file names do not say, with flags or
+  `release.toml`, and look up every `release.toml` key.
+- [Resources](/docs/resources/) and [Host requirements](/docs/host-requirements/):
+  ship completions, man pages, skills, and SBOMs, and say what the host
+  must provide.
+- [Release recipes](/docs/recipes/): complete configurations for a Rust,
+  Go, monorepo, or desktop release.
+- [Manage release lists](/docs/release-lists/): withdraw versions, mark
+  security fixes, and recommend a default release. A list is optional on
+  GitHub and required for a project on its own domain.
+- [Host releases on your own domain](/docs/self-hosting/): name a project
+  after its download host and publish its releases and list there.
 
 ## Install software or build a consumer
 
-- [Using packslip with mise](/docs/mise/) shows artifact installation,
-  completions, skills, and trust continuity in a consumer.
-- [Verify a release](/docs/verifying/) explains trusted identities, file
-  verification, and the additional policy an installer must enforce.
-- [Consumer rules](/release/v1/#consumer-rules) define the complete contract.
-  A successful CLI verification alone does not implement that contract.
+- [Verify a release](/docs/verifying/): pin a signer (by repository, signer
+  fingerprint, or public key), check downloaded files, and see what else a
+  consumer must enforce.
+- [Build an installer or mirror](/docs/installers/): find, verify, and
+  select releases in your own tool, follow the consumer rules, and use the
+  `packslip` crate as a library.
+- [Use packslip with mise](/docs/mise/): how mise installs a tool from its
+  packslip and keeps trusting the same signer across upgrades. It also
+  matches the tool's man pages, completions, and agent skills to the active
+  version.
+- [Consumer rules](/release/v1/#consumer-rules): the complete contract a
+  consumer implements. A successful `packslip verify` alone does not meet
+  it.
 
-## Reference
+## Reference {#reference}
 
 - [CLI reference](/cli/): every command, argument, and flag.
 - [Specification](/release/v1/): release statements, signing, discovery,
@@ -54,10 +69,18 @@ Follow these guides in the order your release needs them:
 
 | Term | Meaning |
 | --- | --- |
-| Artifact | A release file, such as an archive, installer, or executable. |
+| Project | The name a consumer asks for: a host and optional path with no URL scheme, such as `github.com/owner/repo` or `mytool.example.com`. |
+| Forge | A code host whose project names also say who is expected to sign: github.com or gitlab.com. A release of `github.com/owner/repo` is expected to be signed by a workflow of that repository. |
+| Vendor | A project that builds and signs its own releases, as opposed to a repackager, such as a mirror, that signs a document for another vendor's files. |
+| Consumer | Software that verifies or installs releases from their packslips, such as a package manager or a mirror. |
+| Artifact | A release file the statement lists for a consumer to select and download, such as an archive, installer, bare executable, or source tarball. Files that ship for another purpose, such as an SBOM or a man page, are resources; a file that is neither, such as a checksum file, is left out of the statement. |
 | Resource | An additional item, such as a completion script, man page, skill, or SBOM. |
 | Statement | The JSON document containing digests and release metadata. |
-| Bundle | The signed statement and its verification material, stored as `packslip.sigstore.json`. |
+| Bundle | A sigstore bundle: a signed statement and its verification material. A release's bundle is its packslip, or release manifest, published as `packslip.sigstore.json` (`packslip.<subpath>.sigstore.json` for one tool of a monorepo, with any `/` in the subpath written as `-`). A release list is a bundle too. |
+| TOML manifest | The optional input to `packslip create --manifest`, usually `release.toml`. It is not signed or published. |
 | Release list | A separate signed document that indexes releases and records mutable metadata such as withdrawals. |
-| Consumer | An installer, package manager, mirror, or other tool that reads and verifies packslips. |
-| Pin | The identity or public key a consumer has chosen to trust. |
+| Stamping host | A third party, such as a registry or scanning service, that publishes signed release lists of the versions it has checked. A consumer that trusts stamping hosts selects only versions one of them lists, unless the user chose to trust the vendor alone for that project. |
+| Keyless signing | Signing with a CI job's OIDC identity through sigstore. Fulcio issues a short-lived certificate naming the workflow, so there is no long-lived key to manage. |
+| Transparency log | Rekor, the public log that records sigstore signatures. A key-signed release created with `--no-log` has no log entry, and consumers must accept that explicitly (`verify --allow-unlogged`). |
+| Pin | What a consumer holds a project's releases to: an identity policy (issuer and identity or prefix), a public key, or a signer fingerprint. For a forge project, the consumer also remembers the repository ID of the releases it accepted. |
+| Signer fingerprint | `ps1_` followed by 26 characters, derived from the forge's issuer and the repository ID, that names the repository a keyless project is signed from. `packslip pin` prints it, and `packslip verify --pin` checks a release against it. |

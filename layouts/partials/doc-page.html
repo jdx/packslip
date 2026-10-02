@@ -23,18 +23,41 @@
       <summary>Browse this documentation</summary>
 
     {{ if eq .Section "docs" }}
+    {{/* Guides are grouped by the `group` front-matter param and ordered
+         by weight inside each group. The index link leads the first group.
+         A page with no group, or an unknown one, is listed last under
+         "Other guides" so it never drops out of the navigation. */}}
+    {{ $current := .RelPermalink }}
+    {{ with site.GetPage "/docs" }}
+    {{ $index := . }}
+    {{ $pages := .RegularPages.ByWeight }}
+    {{ $groups := slice
+      (dict "key" "start" "title" "Start")
+      (dict "key" "publish" "title" "Publish")
+      (dict "key" "consume" "title" "Install and verify")
+    }}
+    {{ $keys := slice }}
+    {{ range $groups }}{{ $keys = $keys | append .key }}{{ end }}
+    {{ $other := slice }}
+    {{ range $pages }}{{ if not (in $keys (.Params.group | default "")) }}{{ $other = $other | append . }}{{ end }}{{ end }}
+    {{ with $other }}{{ $groups = $groups | append (dict "key" "other" "title" "Other guides") }}{{ end }}
+    {{ range $groups }}
+    {{ $members := cond (eq .key "other") $other (where $pages "Params.group" .key) }}
+    {{ if or $members (eq .key "start") }}
     <div class="toc-group">
-      <div class="toc-title">Guides</div>
+      <div class="toc-title">{{ .title }}</div>
       <ul>
-        {{ $current := .RelPermalink }}
-        {{ with site.GetPage "/docs" }}
-        <li><a href="{{ .RelPermalink }}"{{ if eq $current .RelPermalink }} class="active" aria-current="page"{{ end }}>Documentation</a></li>
-        {{ range .RegularPages.ByWeight }}
-        <li><a href="{{ .RelPermalink }}"{{ if eq $current .RelPermalink }} class="active" aria-current="page"{{ end }}>{{ .Title }}</a></li>
+        {{ if eq .key "start" }}
+        <li><a href="{{ $index.RelPermalink }}"{{ if eq $current $index.RelPermalink }} class="active" aria-current="page"{{ end }}>Documentation</a></li>
         {{ end }}
+        {{ range $members }}
+        <li><a href="{{ .RelPermalink }}"{{ if eq $current .RelPermalink }} class="active" aria-current="page"{{ end }}>{{ .Title }}</a></li>
         {{ end }}
       </ul>
     </div>
+    {{ end }}
+    {{ end }}
+    {{ end }}
     {{ end }}
     <div class="toc-group">
       <div class="toc-title">On this page</div>

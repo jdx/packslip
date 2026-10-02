@@ -18,17 +18,35 @@ This document defines two predicates: `release/v1` describes one release;
 `releases/v1` indexes releases and carries mutable discovery metadata.
 Both are signed in-toto statements in sigstore bundles.
 
+A *vendor* is the project whose releases a packslip describes, which
+normally builds and signs them itself. A *consumer* is anything that
+verifies or installs releases, such as a package manager or an install
+script. A *packslip*, or release manifest, is the sigstore bundle
+published with a release; its *statement* is the in-toto statement
+inside it. A *release list*, or signed list, is a bundle whose statement
+has the `releases/v1` predicate. A *repackager* is a third party that
+signs a packslip for a vendor's files, as
+[Repackager attestation](#repackager-attestation) describes.
+
 For a working example, start with the [guides](https://packslip.dev/docs/).
 Implementers should read the [consumer rules](#consumer-rules) alongside
 the field definitions. JSON examples use abbreviated digests and commits
 for readability; those placeholders are not valid release data.
 
-- [Identity and signing](#names): project names, bundle encoding, and signers.
-- [Release data](#the-release-statement): artifacts, resources, and requirements.
-- [Discovery](#discovery) and [versions](#versions): finding and selecting releases.
-- [Consumer rules](#consumer-rules): verification, remembered trust, and installation.
-- [Stability](#stability): what version 1 fixes and what a revision may add.
-- [Tooling](#tooling): the reference implementation and task guides.
+- [Identity and signing](#names): project names, bundle encoding, signers,
+  forge identity, signer fingerprints, and what a verified packslip proves.
+- [Release data](#the-release-statement): artifacts, resources, host
+  requirements, extensions, and repackager documents.
+- [Discovery](#discovery) and [versions](#versions): finding and
+  selecting releases.
+- [Selecting an artifact](#selecting-an-artifact): choosing the file for
+  a host.
+- [Consumer rules](#consumer-rules): verification, remembered trust, and
+  installation.
+- [Stability](#stability): what version 1 fixes and what a revision may
+  add.
+- [Tooling](#tooling): the reference implementation, task guides, and the
+  [conformance vectors](https://github.com/jdx/packslip/tree/main/tests/conformance).
 
 ## Goal
 
@@ -38,9 +56,9 @@ artifacts and their digests, platforms, executable paths, resources, and
 provenance links. Artifacts may be archives, installers, bare executables,
 source tarballs, or other release files.
 
-The manifest lets consumers interpret the release without a per-vendor
-filename recipe or registry entry. It does not prescribe a package
-manager, download host, or installation directory.
+The release manifest lets consumers interpret the release without a
+per-vendor file name recipe or registry entry. It does not prescribe a
+package manager, download host, or installation directory.
 
 packslip uses an
 [in-toto statement](https://github.com/in-toto/attestation/blob/main/spec/v1/statement.md)
@@ -54,6 +72,8 @@ A project name is a host with an optional path, such as
 `github.com/jdx/mise`, `gitlab.com/group/tool`, or `mise.jdx.dev`.
 It has no URL scheme or trailing slash. The host is lowercase and contains
 at least one dot; path segments cannot be empty, `.` or `..`.
+A short-name alias such as `mise` for `github.com/jdx/mise` is a consumer
+convenience, not part of the format.
 
 The name is the location and, on a forge, says who may sign:
 
@@ -64,41 +84,152 @@ The name is the location and, on a forge, says who may sign:
 - `gitlab.com/<path>`: likewise, signed by a pipeline of that project
   through `https://gitlab.com`. GitLab subgroups make paths arbitrary
   depth, so the whole path names the repository.
-- Any other host: the vendor controls the domain and publishes a release
-  list at the well-known URL below, signed with the key or identity the
-  consumer pins.
+- Any other host, including a forge this version does not name: the
+  vendor controls the domain and publishes a release list at the
+  well-known URL [The signed list](#the-signed-list) defines, signed with
+  the key or identity the consumer pins.
 
 For a known forge, a consumer derives the initial signer policy from the
-project it intends to install. It must also check that the verified
-statement names that project, or the same repository under another name
-as [Forge identity](#forge-identity) allows. Deriving a policy only from
-an untrusted statement's claimed project does not check the user's
-intended identity. A forge name can change hands, so it locates the
-project; the forge's repository ID pins it.
-A short-name alias such as `mise` for `github.com/jdx/mise` is a consumer
-convenience, not part of the format.
+project it intends to install, not from the project an unverified
+statement claims: a policy taken from the statement accepts whatever
+repository the statement's author names, and so does not check the
+user's intended identity. After verifying, the consumer must also check
+that the statement names that project, or the same repository under
+another name as [Forge identity](#forge-identity) allows. A forge name
+can change hands, so the name locates the project and the forge's
+repository ID pins it.
 
 ### Monorepos
 
-A repository that releases several tools names each one with a subpath:
-`github.com/oxc-project/oxc/oxlint`,
+On `github.com`, a repository that releases several tools names each one
+with a subpath: `github.com/oxc-project/oxc/oxlint`,
 `github.com/bazelbuild/buildtools/buildifier`,
-`github.com/biomejs/biome/cli`. Each tool gets its own packslip per
-release, with its own `version`, and `source.tag` carries the real tag
-(`oxlint_v1.0.0`, `cli/v1.9.4`), so nobody has to guess how a tag maps to a
-version. The identity pin is still the repository: any workflow of
-`oxc-project/oxc` may sign a packslip for `oxc-project/oxc/oxlint`.
+`github.com/biomejs/biome/crates/cli`. On `gitlab.com` the whole path
+names the repository, as [Names](#names) says, so a GitLab project has no
+monorepo subpath.
+
+Each tool gets its own packslip per release, with its own `version`, and
+`source.tag` carries the real tag (`oxlint_v1.0.0`, `cli/v1.9.4`), so
+nobody has to guess how a tag maps to a version. The identity pin is
+still the repository: any workflow of `oxc-project/oxc` may sign a
+packslip for `oxc-project/oxc/oxlint`.
 
 When several tools share one GitHub release, each ships its own bundle,
 named `packslip.<subpath>.sigstore.json` with `/` in the subpath replaced
 by `-` (`packslip.oxlint.sigstore.json`, `packslip.crates-cli.sigstore.json`).
 A repository's own packslip stays `packslip.sigstore.json`. Consumers do
-not trust the file name: they read the `packslip*.sigstore.json` assets of
-a release and keep the one whose `predicateType` is `release/v1` and whose
-`project` is the name they asked for, or the same tool of the repository
-renamed. A tool keeps its subpath across a rename:
-`github.com/old/repo/tool` becomes `github.com/new/repo/tool`, never
-another tool of the repository.
+not trust the file name: they read the `packslip*.sigstore.json` assets
+of a release and keep the one whose `predicateType` is `release/v1` and
+whose `project` is the name they asked for, or the same tool of the repository renamed. A tool keeps its subpath
+across a rename: `github.com/old/repo/tool` becomes
+`github.com/new/repo/tool`, never another tool of the repository.
+
+## The file
+
+A release ships one file per project: a
+[sigstore bundle](https://github.com/sigstore/protobuf-specs) (v0.3). Its
+content is a [DSSE](https://github.com/secure-systems-lab/dsse) envelope of type
+`application/vnd.in-toto+json` carrying the statement that
+[The release statement](#the-release-statement) defines. Its
+verification material is the signer's [Fulcio](https://docs.sigstore.dev/certificate_authority/overview/)
+certificate or a public-key hint, plus the [Rekor](https://docs.sigstore.dev/logging/overview/)
+transparency log entry for the signature. The log entry may be left out
+only for a key-signed release made without network access; see
+[Signing](#signing).
+
+The signature covers the DSSE payload bytes, so consumers do not
+canonicalize the JSON before verification. `packslip show` decodes and
+pretty-prints the statement without verifying it; `packslip show --raw`
+prints the signed payload followed by a newline. The payload can also be
+decoded with `jq -r .dsseEnvelope.payload BUNDLE | base64 -d`.
+General-purpose sigstore tools can read the bundle; consumers must also
+validate the packslip predicate and apply this specification's rules.
+
+## Signing
+
+A packslip is signed under one of two schemes, named in
+`identity.scheme`. Both produce the same bundle format. Prefer keyless
+signing when a supported CI identity is available.
+
+- `sigstore-oidc`: keyless. A CI job with an id-token permission signs
+  with its own identity; Fulcio issues a short-lived certificate naming
+  the workflow that ran, and Rekor logs the signature. There is no key to
+  manage. `packslip create` signs this way unless given `--key`. It takes
+  the token from `SIGSTORE_ID_TOKEN` when that is set, or else from the
+  CI job's ambient credential (GitHub Actions, GitLab CI, and the other
+  providers sigstore's clients detect), and fails when it finds neither.
+- `sigstore-key`: a long-lived Ed25519 key. `packslip keygen` writes the
+  secret key as a hex seed and the public key in minisign's public-key
+  format, which is the file consumers pin. The bundle carries a
+  public-key hint and the Rekor entry, whose verifier is the public key.
+  This scheme suits vendors who release outside a CI system with OIDC, or
+  who want a stable key their consumers pin. Consumers pin the public
+  key, never the hint.
+
+A key-signed bundle may be produced without a log entry
+(`packslip create --no-log`) for an air-gapped release. A consumer refuses
+such a bundle unless it explicitly allows unlogged bundles
+(`packslip verify --allow-unlogged` in the reference CLI), and a
+repository should record that choice per vendor.
+
+A consumer that wants a dependency-free check has one: the DSSE signature
+of a key-signed bundle is a raw Ed25519 signature over the
+pre-authentication encoding of the payload, with payload type
+`application/vnd.in-toto+json`. The consumer still verifies the Rekor
+entry as [consumer rule 2](#consumer-rules) requires, unless it chose to
+accept an unlogged bundle.
+
+### Reusable workflows
+
+For a keylessly signed project, a consumer compares the workflow that
+signed a release with the one that signed the last release it accepted.
+It treats a different workflow of the same repository as a changed signer
+and refuses the release until a person approves it
+([consumer rule 3](#consumer-rules)). A vendor whose releases are signed
+by more than one workflow of its repository, such as a reusable workflow
+shared by several release jobs, would make every consumer ask a person to
+approve each change of signing workflow. Such a vendor can declare in
+its signed `identity` that consumers should hold it to the repository
+instead:
+
+```json
+"identity": {
+  "scheme": "sigstore-oidc",
+  "key_id": "https://github.com/example/tool/.github/workflows/release.yml@refs/tags/v1.2.0",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "pin_workflow": false
+}
+```
+
+`pin_workflow` defaults to `true`, so a document that omits it is held to
+its signing workflow. `packslip create --no-pin-workflow` and
+`packslip releases --no-pin-workflow` write `false`; both refuse the flag
+with `--key`. The field is a signed statement of the vendor's own, in a
+release or a release list, and it means nothing for `sigstore-key`, which
+has no workflow.
+
+With `pin_workflow: false`, a consumer still requires everything else of
+the signer: the issuer, a certificate whose repository is the one pinned
+(by repository ID where the forge records one, as
+[Forge identity](#forge-identity) describes), and a workflow of that
+repository. It stops comparing the workflow's path with the last
+accepted signer.
+
+Declaring it lowers what the consumer enforces, so it is a reduction in
+remembered trust like those in [consumer rule 3](#consumer-rules). A
+consumer remembers the value beside the signer. A release that declares
+`false` when the remembered value is `true` is refused until a person
+approves it, and the consumer then remembers `false` and does not ask
+again. With no remembered signer, as on a first install, there is nothing
+to reduce. A release that declares `true` or nothing when the remembered
+value is `false` is not a reduction: the consumer holds it to the
+workflow of the last accepted signer again, and a different workflow is a
+changed signer as usual.
+
+A consumer written before this field existed ignores it, as it ignores
+any field it does not know, and keeps holding the vendor to its workflow.
+Those consumers therefore still refuse a release from a changed workflow
+until a person approves it, even when the vendor sets the field.
 
 ### Forge identity
 
@@ -120,13 +251,13 @@ or GitLab CI job, from the job's OIDC token:
 | Source Repository Owner URI | `1.3.6.1.4.1.57264.1.16` | server URL + `repository_owner` | server URL + `namespace_path` |
 | Source Repository Owner Identifier | `1.3.6.1.4.1.57264.1.17` | `repository_owner_id` | `namespace_id` |
 
-Each is a DER UTF8String; an empty value means the forge gave none. The
-repository ID survives a rename and a transfer. The owner extensions say
-who owned the repository when the certificate was issued; they are not
-part of a project's identity, and a consumer does not remember or compare
-them. Only a repository's current owner can transfer it, and that owner
-already signs its releases, so a transfer shows nothing that signing did
-not. The IDs speak for a packslip only when the Source Repository URI is
+Each value is a DER UTF8String; an empty value means the forge supplied
+none. The repository ID survives a rename and a transfer. The owner
+extensions record who owned the repository when the certificate was
+issued. They are not part of a project's identity, and a consumer neither
+remembers nor compares them: only a repository's current owner can
+transfer it, and that owner already controls what the repository signs.
+The IDs speak for a packslip only when the Source Repository URI is
 the repository its `project` names and the signer is a workflow of that
 repository.
 
@@ -148,42 +279,47 @@ later release with it:
 - **Different repository.** A repository ID other than the pinned one.
   Refuse it, even under the requested name: that is what a name
   recreated after a rename, a transfer, or a deletion looks like.
-- A statement for another name with no ID to compare, on either side, is
-  refused, as it would be with no pin.
+- **No ID to compare.** A certificate that carries no IDs, from before
+  Fulcio recorded them, is checked by name alone. A statement for another
+  name with no ID to compare, on either side, is refused, as it would be
+  with no pin.
 
 A pin taken from an accepted release records the name it was signed under
 and its repository ID. A pin recorded by a consumer that also stored the
-owner's ID is read the same way, with that ID ignored.
+owner's ID, as an earlier revision of this section asked, is read the
+same way, with that ID ignored.
 
 A consumer can hold more than one pin for a project, such as its own
 record and a lockfile's commitment. It holds each release to every one of
 them, and a refusal says which one the release disagreed with.
 
-With no pin, the consumer has only the forge's word. GitHub's
-`GET /repos/<owner>/<repo>` redirects a renamed or transferred
-repository's old name to the repository and returns its `id`, and a
-consumer may take that as the expected repository ID.
-
-First use is trust on first use: when the name was recreated before the
-consumer first saw it, the forge answers for the new repository, and
-nothing in the release says otherwise. A lockfile that records the repository ID carries the pin to
-every machine that reads it. A certificate that carries no IDs, from
-before Fulcio recorded them, is checked by name alone.
+With no pin, the consumer has only the forge's word, and first use is
+trust on first use. GitHub's `GET /repos/<owner>/<repo>` redirects a
+renamed or transferred repository's old name to the repository and
+returns its `id`, and a consumer may take that as the expected repository
+ID. If the name was recreated before the consumer first saw it, the forge
+answers for the new repository and nothing in the release says otherwise.
+Two things limit that exposure. A lockfile that records the repository ID carries the pin
+to every machine that reads it, and a
+[signer fingerprint](#signer-fingerprint) the project publishes lets a
+consumer pin the repository before its first install.
 
 The reference implementation reads the extensions as
-`sigstore::source_repository`, classifies a release as above in
+`sigstore::source_repository`, classifies a release into these cases in
 `forge::check`, and verifies and classifies a bundle in one call with
 `verify_forge`. `forge::same_workflow` compares two signers a consumer
-recorded, with the repository ID recorded alongside each, for rule 3 of the
-[Consumer rules](#consumer-rules) when no release is at hand.
+recorded, with the repository ID recorded alongside each, for
+[consumer rule 3](#consumer-rules) when no release is at hand.
 
 ### Signer fingerprint
 
-A project can publish a short name for the repository it is signed from,
-where its consumers read it apart from its releases: a README, a
-Dockerfile, a lockfile. A consumer that starts from it does not have to
-trust the first release it sees (see [Consumer rules](#consumer-rules)).
-The name is the signer fingerprint:
+A signer fingerprint is a short, fixed name for the repository a keyless
+project is signed from. The project publishes it where users read it
+independently of its releases, such as its README or install
+instructions, and a user can record it in a Dockerfile or a consumer's
+lockfile.
+A consumer that starts from it does not have to trust the first release
+it sees (see [Consumer rules](#consumer-rules)). It looks like this:
 
 ```text
 ps1_snirenkjwr7m5ozgcufameodnm
@@ -208,40 +344,47 @@ records, taken as they are, with no case or slash normalization:
 
 For GitHub repository `jdx/hk`, whose ID is `922514152`, the input is
 `packslip-signer-v1`, a zero byte, `https://token.actions.githubusercontent.com`,
-a zero byte, and `922514152`, and the fingerprint is the one above. The
-128 bits are 130 once encoded, so the last character's two low bits are
-zero, and text that sets them is not a fingerprint: each has one spelling.
+a zero byte, and `922514152`, and the fingerprint is
+`ps1_snirenkjwr7m5ozgcufameodnm`.
 
-The fingerprint leaves out everything about the signer that can change
-while the repository stays the same, and the repository's own name:
+Twenty-six base32 characters hold 130 bits, so the last character carries
+two padding bits, which are zero. Text whose last character sets either
+bit is not a fingerprint, so each fingerprint has exactly one spelling.
+
+The fingerprint leaves out the repository's name, its monorepo subpaths,
+and everything about the signer that can change while the repository
+stays the same:
 
 - **Owner.** A repository keeps its ID when it moves to another owner, so
   its fingerprint does too. A consumer does not remember or compare
   owners, as [Forge identity](#forge-identity) says, and the fingerprint
   adds none.
 - **Name.** The ID survives a rename, so a pin does not go stale with one.
-- **Workflow and ref.** Replacing the release workflow, or a new tag of
-  it, is not a different repository. Whether the workflow changed is the
-  signer-continuity check of [Consumer rules](#consumer-rules), which the
-  fingerprint neither performs nor replaces.
+- **Workflow and ref.** A replaced release workflow, or a release signed
+  from a new tag, still comes from the same repository. Whether the
+  workflow changed is the signer-continuity check of
+  [Consumer rules](#consumer-rules), which the fingerprint neither
+  performs nor replaces.
 - **Monorepo subpath.** The subpath is part of the project, which says
   which tool, and not of the signer: every tool of a repository is signed
   from the same repository, so one fingerprint covers them, and the
   project name in the statement says which one a release is.
 
-A repository that is deleted, and whose name is then taken by someone
-else, has a different ID and so a different fingerprint. That is what
-makes it a pin.
+When a repository is deleted and someone else creates one under its
+name, the new repository has a new ID and so a different fingerprint.
+That is what makes the fingerprint a pin.
 
-A project whose certificate records no repository ID, because it predates
-the extension or the issuer does not give one, has no fingerprint, and
-neither does one signed with a key. It is pinned with an identity and an
-issuer, or a public key, as [Consumer rules](#consumer-rules) says. A
-repository ID that is not a string of decimal digits has none either.
+A release has no fingerprint when it is signed with a key, when its
+certificate records no repository ID (because it predates the extension
+or the issuer does not give one), or when the recorded ID is not a string
+of decimal digits. A project whose releases have no fingerprint is pinned
+with an identity and issuer, or a public key, as
+[Consumer rules](#consumer-rules) says.
 
 A consumer that holds a fingerprint checks it against a release after
-verifying the bundle as [Signing](#signing) says, using only what the
-verified certificate records, never what the statement says of itself:
+verifying the bundle ([consumer rule 2](#consumer-rules)), using only
+what the verified certificate records, never what the statement says of
+itself:
 
 1. Read the issuer and the Source Repository Identifier from the
    certificate. A certificate that records no repository ID matches no
@@ -254,10 +397,11 @@ verified certificate records, never what the statement says of itself:
    statement names, and the signer a workflow of it. The fingerprint says
    which repository; these say the statement is about it.
 
-A pin that is not 26 lowercase base32 characters after `ps1_`, or does not
-start with `ps1_`, is refused as a pin, not ignored and not treated as
-"no pin". A consumer that sees a prefix it does not know, such as `ps2_`,
-does not guess at what it commits to.
+A pin that does not start with `ps1_`, is not 26 lowercase base32
+characters after it, or whose last character sets a padding bit, is
+refused as a pin, not ignored and not treated as "no pin". A consumer that
+sees a prefix it does not know, such as `ps2_`, does not guess at what it
+commits to.
 
 The fingerprint is a commitment, not a secret. It is long enough that
 nobody can find another repository with the same one, and short enough to
@@ -267,102 +411,11 @@ trusts. It does not belong in a packslip, which cannot vouch for its own
 signer.
 
 The [conformance vectors](https://github.com/jdx/packslip/tree/main/tests/conformance)
-for the fingerprint give inputs, their pins, texts that are not pins, and
-matches and mismatches. The reference implementation computes one with
-`Fingerprint::of_signer`, checks one with `Fingerprint::verify`, prints a
-release's with `packslip pin`, and checks a release against one with
-`packslip verify --pin`.
-
-## The file
-
-A release ships one file per project: a
-[sigstore bundle](https://github.com/sigstore/protobuf-specs) (v0.3). Its
-content is a [DSSE](https://github.com/secure-systems-lab/dsse) envelope of type
-`application/vnd.in-toto+json` carrying the statement below. Its
-verification material is the signer's [Fulcio](https://docs.sigstore.dev/certificate_authority/overview/)
-certificate or a public-key hint, plus the [Rekor](https://docs.sigstore.dev/logging/overview/)
-transparency log entry for the signature. Only an air-gapped key-signed release omits the log entry;
-see Signing.
-
-The signature covers the DSSE payload bytes, so consumers do not
-canonicalize the JSON before verification. `packslip show` decodes and
-pretty-prints the statement without verifying it; `packslip show --raw`
-prints the signed payload followed by a newline. The payload can also be
-decoded with `jq -r .dsseEnvelope.payload BUNDLE | base64 -d`.
-General-purpose sigstore tools can read the bundle; consumers must also
-validate the packslip predicate and apply this specification's rules.
-
-## Signing
-
-Both schemes use the same bundle format. Prefer keyless signing when a
-supported CI identity is available.
-
-- `sigstore-oidc`: keyless. A CI job with an id-token permission signs
-  with its own identity; Fulcio issues a short-lived certificate naming
-  the workflow that ran, and Rekor logs the signature. There is no key to
-  manage. `packslip create` does this by default when it finds an ambient
-  CI credential (GitHub Actions, GitLab CI, and the others sigstore's
-  clients know) or a token in `SIGSTORE_ID_TOKEN`.
-- `sigstore-key`: a long-lived Ed25519 key from `packslip keygen`, kept
-  in minisign's key-file format. The bundle carries a public-key hint and
-  the Rekor entry, whose verifier is the public key. For vendors who
-  release outside a CI system with OIDC, or who want a stable key their
-  consumers pin. Consumers pin the public key, never the hint.
-
-A key-signed bundle may be produced without a log entry
-(`create --no-log`) for an air-gapped release. Consumers refuse such a
-bundle unless they explicitly allow it (`verify --allow-unlogged`), and a
-repository should record that choice per vendor.
-
-A consumer that wants a dependency-free check has one: the DSSE signature
-of a key-signed bundle is a raw Ed25519 signature over the
-pre-authentication encoding of the payload.
-
-### Reusable workflows
-
-A keyless consumer compares the workflow that signed a release with the
-one that signed the last release it accepted, and treats a different
-workflow of the same repository as a changed signer (see
-[Consumer rules](#consumer-rules)). A vendor whose releases are signed by
-more than one workflow of its repository, such as a reusable workflow
-shared by several release jobs, would send every consumer to a person
-with each change. It can declare that in the document:
-
-```json
-"identity": {
-  "scheme": "sigstore-oidc",
-  "key_id": "https://github.com/example/tool/.github/workflows/release.yml@refs/tags/v1.2.0",
-  "issuer": "https://token.actions.githubusercontent.com",
-  "pin_workflow": false
-}
-```
-
-`pin_workflow` is `true` when absent, so a document that does not
-mention it is held to its workflow as before. It is a signed statement
-of the vendor's own, in a release or a release list, and it means nothing
-for `sigstore-key`, which has no workflow.
-
-With `pin_workflow: false`, a consumer still requires everything else of
-the signer: the issuer, a certificate whose repository is the one pinned
-(by repository ID where the forge records one), and a workflow of that
-repository. It stops comparing the workflow's path with the last
-accepted signer.
-
-Declaring it lowers what the consumer enforces, so it is a reduction in
-remembered trust like those in consumer rule 3. A consumer remembers the
-value beside the signer. A release that declares `false` when the
-remembered value is `true` is refused until a person accepts the change,
-and the consumer then remembers `false` and does not ask again. With no
-remembered signer, as on a first install, there is nothing to reduce. A
-release that declares `true` or nothing when the remembered value is
-`false` is not a reduction: the consumer holds it to the workflow of the
-last accepted signer again, and a different workflow is a changed signer
-as usual.
-
-A consumer written before this field existed ignores it, as it ignores
-any field it does not know, and keeps holding the vendor to its workflow.
-A vendor that sets it is therefore still sent to a person by those
-consumers when the workflow changes.
+for the fingerprint give inputs, their fingerprints, texts that are not
+fingerprints, and matches and mismatches. The reference implementation
+computes one with `Fingerprint::of_signer`, checks one with
+`Fingerprint::verify`, prints a release's with `packslip pin`, and checks
+a release against one with `packslip verify --pin`.
 
 ## What a verified packslip proves
 
@@ -371,10 +424,10 @@ release. A downloaded file whose digest matches the statement is the file
 the signer described. A logged signature also has a verified integration
 time. An explicitly accepted unlogged signature has no such log evidence.
 
-The manifest does not establish how an artifact was built or whether it
-is safe. Linked SLSA provenance must be fetched and verified separately
-against the builder's identity and the consumer's policy. A provenance
-URL alone establishes no build level.
+The release manifest does not establish how an artifact was built or
+whether it is safe. Linked SLSA provenance must be fetched and verified
+separately against the builder's identity and the consumer's policy. A
+provenance URL alone establishes no build level.
 
 Resources from `archive` and `asset` sources are covered by signed
 digests. A `repo` resource is pinned by the source commit. An `exec`
@@ -386,12 +439,20 @@ withdrawal, or prevent rollback. Those checks require discovery metadata
 and remembered consumer state, as [Discovery](#discovery) and
 [Consumer rules](#consumer-rules) define.
 
-`packslip verify` checks the supplied bundle and local files. It reports
-signing information, provenance links, resources, and host requirements,
-but does not fetch provenance, install resources, or maintain trust
-history across invocations.
+`packslip verify` checks one bundle and any local files passed with
+`--artifact`. It reports the signer, provenance links, resources, and host
+requirements. It does not fetch provenance, install resources, or keep
+trust history between runs. Without `--pubkey`, `--identity`,
+`--identity-prefix`, or `--issuer`, it derives the signer policy from the
+GitHub or GitLab project the statement claims, so the caller still checks
+that the reported project and version are the ones it asked for (see
+[Names](#names)).
 
 ## The release statement
+
+A release statement is an in-toto statement with `predicateType`
+`https://packslip.dev/release/v1`. This one describes a mise release with
+one Linux x86_64 archive, its resources, and an SBOM asset:
 
 ```json
 {
@@ -447,25 +508,34 @@ The following rules apply to the decoded release statement:
   artifact or a resource's `asset`, and neither list contains a duplicate.
   At least one artifact is required. `sha256` is required and is 64
   lowercase hex characters; `sha512` is optional and 128.
-- `project` is a name as defined above. `version` is [semver 2.0.0](https://semver.org/spec/v2.0.0.html); its
-  prerelease part, if any, says whether the release is a prerelease and
-  which channel it is on. See Versions. `published_at` is [RFC 3339](https://www.rfc-editor.org/rfc/rfc3339) UTC.
+- `project` is a name as [Names](#names) defines. `version` is
+  [semver 2.0.0](https://semver.org/spec/v2.0.0.html); its prerelease
+  part, if any, says whether the release is a prerelease and which
+  channel it is on. See [Versions](#versions). `published_at` is
+  [RFC 3339](https://www.rfc-editor.org/rfc/rfc3339) UTC.
+- `source` says where the release was built from: `repo`, the repository
+  URL (required when `source` is present); `commit`; and `tag`, as the
+  vendor spells it. A `repo` resource requires `commit`, and a consumer
+  matches a requested tag against `tag` or the release-list entry's `tag`
+  (see [Matching a request](#matching-a-request)).
 - `os`, `arch`, `libc`, `format`, and `variant` are lowercase words of
   letters, digits, `_`, `-`, and `.`, starting with a letter or digit.
-  The documented values are the ones consumers know; see Vocabularies. A
-  value outside them is well-formed but matches no host and unpacks with
-  nothing, so a vendor uses one only for a platform or format this
-  document has not named yet. An absent `os`, `arch`, or `libc` means the
-  artifact does not depend on it: a universal macOS binary has `os` and
-  no `arch`, a statically linked Linux executable, which loads no C
-  library from the host, has no `libc`, and a script or a jar has none of
-  the three.
+  The documented values are the ones consumers know; see
+  [Vocabularies](#vocabularies). A value outside them is well-formed but
+  matches no host and unpacks with nothing, so a vendor uses one only for
+  a platform or format this document has not named yet. An absent `os`,
+  `arch`, or `libc` means the artifact does not depend on it: a universal
+  macOS binary has `os` but no `arch`; a statically linked Linux
+  executable, which loads no C library from the host, has no `libc`; and
+  a script or a jar has none of the three.
 - `format` is the archive or installer type, or `raw` for a bare
   executable. Two artifacts that differ only in format carry the same
   build, and a consumer takes whichever it prefers. A vendor must not
   publish two artifacts that agree on `os`, `arch`, `libc`, `variant`,
   and `format`; `packslip create` refuses to, and a consumer that finds
   such a pair refuses to choose.
+- `size` is the artifact's length in bytes, checked with its digest;
+  `url`, when present, is where to download it.
 - `variant` tells apart builds that share `os`, `arch`, and `libc`:
   `fips`, `baseline`, `debug`, `installer`, `source`. A consumer selects
   only artifacts without a variant unless asked for one.
@@ -482,37 +552,43 @@ The following rules apply to the decoded release statement:
   written the same way, so names compare without adding or stripping
   anything. The reference implementation reads an older document that
   wrote `name` with `.exe` as if it had not.
-- `requires` states what the host must already provide: `os_min` in the
-  OS's own terms (`12` for macOS Monterey, `10.0.17763` for Windows),
-  `glibc_min` for a `gnu` Linux build, `libs`, the shared libraries the
-  executables load, and `bin`, the commands they run. See Host
-  requirements.
+- `requires` states what the host must already provide: `os_min`, the
+  lowest OS version in the OS's own terms (`12` for macOS Monterey,
+  `10.0.17763` for Windows); `glibc_min`, for a `gnu` Linux build;
+  `libs`, the shared libraries the executables load; and `bin`, the
+  commands they run. See [Host requirements](#host-requirements).
 - `provenance` holds URLs of [SLSA build provenance](https://slsa.dev/spec/v1.0/provenance)
-  statements for that artifact. The packslip proves the manifest; verified
-  provenance proves the build, at whatever [SLSA build level](https://slsa.dev/spec/v1.0/levels)
+  statements for that artifact. The packslip proves what the release
+  statement says; verified provenance proves the build, at whatever [SLSA build level](https://slsa.dev/spec/v1.0/levels)
   its builder establishes.
 - `resources` lists what the release ships besides its executables, each
-  entry a `kind` and one source. See Resources.
+  entry a `kind` and one source. See [Resources](#resources).
 - `notes_url` points at the release notes.
 - `extensions` carries what the specification has no field for, keyed by
-  who defines it. See Extensions.
+  who defines it. See [Extensions](#extensions).
 - `identity` says how the document is signed and by whom, so a consumer
   can check what it pinned against what it received. For `sigstore-oidc`,
   `key_id` is the certificate's subject identity (a workflow URI for CI, an
   email for a person) and `issuer` the OIDC issuer. For `sigstore-key`,
-  `key_id` is the key id in uppercase hex.
-- `attested_by` is `vendor` (default) or `repackager`. See below.
+  `key_id` is the public key's minisign key ID: 16 uppercase hex digits,
+  as the `.pub` file's comment prints it. See [Signing](#signing).
+- `attested_by` is `vendor` (default) or `repackager`; a repackager says
+  what it checked in `evidence`. See
+  [Repackager attestation](#repackager-attestation).
 
 The JSON schema is printed by `packslip schema` and published at
-`https://packslip.dev/schema/release-v1.json`. It enforces everything
-above that a schema can: the value patterns, the semver grammar, the
-digest lengths. The validator in the reference implementation enforces
-the rest.
+`https://packslip.dev/schema/release-v1.json`. It checks field types and
+required fields, the token patterns, the semver grammar, and the digest
+lengths. The validator in the reference implementation enforces the
+rest, including the project-name grammar, the fixed `_type` and
+`predicateType`, at least one artifact, and the cross-references between
+`subject`, `artifacts`, and resources.
 
 ### Vocabularies
 
-After Rust's target triples, so that a vendor's build matrix maps onto
-them without a table:
+The documented `os`, `arch`, and `libc` values follow the components of
+Rust's target triples, so a vendor's build matrix maps onto them without
+a translation table.
 
 - `os`: `linux`, `darwin`, `windows`, `freebsd`, `netbsd`, `openbsd`,
   `illumos`, `android`, `ios`.
@@ -536,9 +612,10 @@ formats the consumer handles, and no consumer handles an absent one, so
 an artifact without it could never be selected: it would claim a place
 in the release while being unusable. A vendor whose file name says
 nothing states the format outright, and a file that is not an artifact
-at all -- a shared library, a header, a checksum sidecar -- is left out
-of `artifacts` rather than published as one. The value is not a closed
-set; a vendor may name a type this specification does not, and consumers
+at all (a shared library, a header, a checksum sidecar) is left out of
+`artifacts` rather than published as one. The value is not a closed set:
+a vendor may name a type this specification does not, as the token rule
+in [The release statement](#the-release-statement) says, and consumers
 skip what they cannot open.
 
 ### Field reference
@@ -572,35 +649,36 @@ include `repo`. Resource entries must choose exactly one source field.
 | `artifacts[].url` | string | optional | Download URL. |
 | `artifacts[].format` | string | required | Archive, compression, or installer type, or `raw` for a bare executable. |
 | `artifacts[].bin[]` | array of string or object | optional | Executables inside the artifact: a path from the archive root, or `{ path, name }` when the PATH name differs. A name is the command as typed, without `.exe`. |
-| `artifacts[].requires` | object | optional | What the host must provide. See Host requirements. |
+| `artifacts[].requires` | object | optional | What the host must provide. See [Host requirements](#host-requirements). |
 | `requires.os_min` | string | optional | Minimum OS version in the OS's own terms. |
 | `requires.glibc_min` | string | optional | Minimum glibc for a `gnu` Linux build. |
 | `requires.libs[]` | array of string | optional | Shared libraries loaded from the host, by loader name (`libssl.so.3`, `vcruntime140.dll`). Read from the executables by `packslip create`; empty means none needed, absent means unchecked. |
 | `requires.bin[]` | array of object | optional | Commands the executables need on PATH: `{ name, min? }`, a bare name and the lowest version that works. |
 | `artifacts[].provenance[]` | array of string | optional | URLs of SLSA build provenance statements for this artifact. |
-| `predicate.resources[]` | array of object | optional | What ships besides the executables. See Resources. |
+| `predicate.resources[]` | array of object | optional | What ships besides the executables. See [Resources](#resources). |
 | `resources[].kind` | string | required | `completion`, `man`, `cli-spec`, `skill`, `sbom`, `desktop`, `icon`, `app`, or a kind consumers may not know yet. |
-| `resources[].artifact` | string | optional | Exact artifact filename. Limits this resource to that artifact and outranks platform-only scope. |
+| `resources[].artifact` | string | optional | Exact artifact file name. Limits this resource to that artifact and outranks platform-only scope. |
 | `resources[].os`, `arch`, `libc` | string | optional | Limit the entry to artifacts of that platform, when layouts differ. |
 | `resources[].archive` | string | one source | Path inside the selected artifact, from the archive root. |
 | `resources[].asset` | string | one source | Name of a separate release file, listed in `subject` with its digest. |
 | `resources[].url` | string | optional | Download URL of the asset. Only with `asset`. |
 | `resources[].repo` | string | one source | Path in the source repository at `source.commit`, which is then required. |
-| `resources[].exec[]` | array of string | one source | An argv whose first element is a `bin` name and whose stdout is the file. See Running an exec entry. |
+| `resources[].exec[]` | array of string | one source | An argv whose first element is a `bin` name and whose stdout is the file. See [Running an exec entry](#running-an-exec-entry). |
 | `resources[].env` | object of string | optional | Environment variables for the command, with `{shell}` substituted in values as in the argv. Only with `exec`. |
 | `resources[].shell` | string | completion | The shell a static completion is for. |
 | `resources[].shells[]` | array of string | completion | Every shell an `exec` completion generates, substituted for `{shell}` in the argv. |
 | `resources[].format` | string | cli-spec, sbom | The spec format (`usage`) or the SBOM format (`cyclonedx`, `spdx`). |
 | `resources[].bin` | string | cli-spec, completion, man | The executable the entry is for, by its `bin` name. Required for a `cli-spec`; for a `completion` or `man`, required when the release has more than one executable, and meaning that one when it has one. |
 | `resources[].name` | string | skill | The skill's name. |
+| `predicate.identity` | object | required | How the document is signed and by whom. See [Signing](#signing). |
 | `predicate.identity.scheme` | string | required | `sigstore-oidc` or `sigstore-key`. |
-| `predicate.identity.key_id` | string | required | The certificate identity, or the key id in uppercase hex. |
+| `predicate.identity.key_id` | string | required | The certificate identity, or the minisign key ID in uppercase hex. |
 | `predicate.identity.issuer` | string | optional | The OIDC issuer, for `sigstore-oidc`. |
-| `predicate.identity.pin_workflow` | boolean | optional | For `sigstore-oidc`: `false` asks consumers to hold later releases to the signing repository, not to the workflow that signed this one. `true` when absent. See Reusable workflows. |
-| `predicate.attested_by` | string | optional | `vendor` (default) or `repackager`. |
-| `predicate.evidence[]` | array of object | optional | What a repackager checked: `{ kind, detail }`. |
+| `predicate.identity.pin_workflow` | boolean | optional | For `sigstore-oidc`: `false` asks consumers to hold later releases to the signing repository, not to the workflow that signed this one. `true` when absent. See [Reusable workflows](#reusable-workflows). |
+| `predicate.attested_by` | string | optional | `vendor` (default) or `repackager`. See [Repackager attestation](#repackager-attestation). |
+| `predicate.evidence[]` | array of object | optional | What a repackager checked: `{ kind, detail? }`. |
 | `predicate.notes_url` | string | optional | URL of the release notes. |
-| `extensions` | object | optional | Vendor- or consumer-defined data, keyed by who defines it, on the release, each artifact, each resource, the release list, and each list entry. See Extensions. |
+| `extensions` | object | optional | Vendor- or consumer-defined data, keyed by who defines it, on the release, each artifact, each resource, the release list, and each list entry. See [Extensions](#extensions). |
 
 ## Resources
 
@@ -609,14 +687,21 @@ release: completions, man pages, CLI specifications, agent skills, SBOMs,
 and desktop integration files. Each entry has a `kind` and exactly one
 source.
 
+An artifact with `bin` is something a command-line package manager
+installs. A release whose resources include `desktop` or `app` is something
+a desktop launcher installs. Many applications are both, and the entries say
+so without a category that would misfile them.
+
 ### Source types
 
-After applying scope and specificity, consumers prefer sources in this order:
+A resource comes from one of four sources, listed in the order a consumer
+prefers them once scope and specificity have narrowed the entries (see
+[Scope and identity](#scope-and-identity)):
 
 - `archive`: a path inside the artifact the consumer selected, from the
   true archive root. The artifact's digest already covers it. Only for an
   artifact that has paths inside it, which a bare format does not; see
-  Scope and identity.
+  [Scope and identity](#scope-and-identity).
 - `asset`: a separate release file. It is listed in `subject` with its
   digest and the entry carries its download `url`, so it verifies exactly
   as an artifact does. A skill directory ships this way as an archive of
@@ -628,8 +713,8 @@ After applying scope and specificity, consumers prefer sources in this order:
   environment. Nothing verifies the output beyond the executable itself,
   so it ranks last among sources, but for a completion it is the usual
   case: cobra, clap, oclif, and usage generate completions from the
-  binary and ship no file. What matters is when it runs, and Running an
-  exec entry says so. A vendor with a static file lists it first.
+  binary and ship no file. [Running an exec entry](#running-an-exec-entry)
+  says when a consumer runs it. A vendor with a static file lists it first.
 
 ### Scope and identity
 
@@ -637,16 +722,15 @@ Layouts differ by platform more often than by file, so an entry may carry
 `os`, `arch`, or `libc` to say which artifacts it describes; an entry
 without them describes every artifact. A resource applies to the selected
 artifact when each field it carries equals the artifact's. An entry may
-also name `artifact`, the exact filename in `artifacts`, when archives for
+also name `artifact`, the exact file name in `artifacts`, when archives for
 the same platform have different layouts or a resource belongs to one
 variant. That artifact must exist and match any platform scope on the
-entry. An artifact-specific entry outranks every platform-only entry for
-the same resource; among equally scoped entries the platform specificity
-and source ordering below apply. For example, a man page that a `fips`
-variant keeps at a different path from the ordinary `tool-linux-x64.tar.xz`
-can name each archive rather than claiming one layout for the platform. A
-TOML manifest spells this as `artifact = "tool-linux-x64.tar.xz"` inside
-`[[resource]]`.
+entry. For example, a man page that a `fips` variant keeps at a different
+path from the ordinary `tool-linux-x64.tar.xz` can name each archive
+rather than claiming one layout for the platform. The
+[TOML manifest](https://packslip.dev/docs/describing-releases/#use-a-toml-manifest)
+that `packslip create` reads spells this as
+`artifact = "tool-linux-x64.tar.xz"` inside `[[resource]]`.
 
 An `archive` entry never applies to an artifact whose `format` is bare:
 `raw`, `gz`, `xz`, `zst`, or `bz2`. Such an artifact is the executable
@@ -662,22 +746,30 @@ the same thing when they share a `kind` and an identity: `bin` and
 `shell` for a completion, `bin` and `format` for a `cli-spec`, `name` for
 a skill,
 `format` for an SBOM, and for every other kind the file name of the
-source, or the kind alone for an `exec` source. Among the entries for one
-thing that apply to the selected artifact, a consumer takes the most
-specific (the one naming the most of `os`, `arch`, and `libc`), and only
-then applies the source order above. Entries for different things never
-hide one another: a skill scoped to `linux` beside an unscoped skill of
-another name leaves that skill in place, and a zsh completion for one
-platform says nothing about the bash one. The reference implementation
-provides this as `select_resources`.
+source, or the kind alone for an `exec` source. Entries for different
+things never hide one another: a skill scoped to `linux` beside an
+unscoped skill of another name leaves that skill in place, and a zsh
+completion for one platform says nothing about the bash one.
 
-Within the same identity, specificity, and source type, entries are tried
-in their order in `resources`. This final tie-breaker is an ordered list
-of alternatives: the first usable entry wins, and a consumer stops fetching
-or running lower-priority entries once that need is satisfied. For example,
-two equally scoped `repo` entries for one skill try the first directory,
-then the second only if the first is unavailable. A verification failure
-still refuses the release; it is not a reason to try an alternative.
+For each thing, a consumer chooses among its entries in this order. The
+reference implementation provides this as `select_resources`.
+
+1. Keep the entries that apply to the selected artifact.
+2. Of those, keep the most specific. An entry that names `artifact`
+   outranks every entry scoped only by platform; among entries equally
+   scoped by `artifact`, the entries naming the most of `os`, `arch`, and
+   `libc` win.
+3. Try what is left by source, in the order [Source types](#source-types)
+   and [Fallback and verification](#fallback-and-verification) give.
+4. Try entries with the same source type in their order in `resources`.
+   This final tie-breaker is an ordered list of alternatives: the first
+   usable entry wins, and a consumer stops fetching or running
+   lower-priority entries once it has that thing.
+
+For example, two equally scoped `repo` entries for one skill try the
+first directory, then the second only if the first is unavailable. A
+verification failure refuses the release; it is never a reason to try the
+next entry.
 
 ### Resource kinds
 
@@ -707,9 +799,9 @@ still refuses the release; it is not a reason to try an alternative.
 - `skill`: an agent skill in the [Agent Skills](https://agentskills.io) format: a directory holding
   `SKILL.md` and whatever it references, named by `name`. From an
   `archive` or `repo` source the path is that directory. As an `asset` the
-  skill is an archive of the directory's contents, with `SKILL.md` at the
-  archive root or under one top-level directory, which the consumer
-  strips as it does for an artifact; nothing else is at the root. With
+  skill is an archive of the directory's contents, with `SKILL.md` either
+  at the archive root or inside a single top-level directory, which the
+  consumer strips; nothing else is at the root. With
   `exec`, the command prints a single `SKILL.md`. A consumer counts a
   skill as present only once `SKILL.md` is in place, so a half-fetched
   directory never passes for one.
@@ -726,13 +818,13 @@ still refuses the release; it is not a reason to try an alternative.
 
 ### Fallback and verification
 
-For any one need, a consumer takes the first source it can use in the
-order above: an `archive` or `asset` entry, then `repo`, then one derived
-from a `cli-spec`, and only then `exec`. Static `cli-spec` sources use the
-same `archive`, `asset`, `repo` ordering, with document order breaking ties
-within each source type. It ignores kinds and sources it
-does not know, so a vendor may ship a `font` or a kind of its own before
-the specification names it.
+For any one thing, a consumer takes the first source it can use in the
+order [Source types](#source-types) gives: an `archive` or `asset` entry,
+then `repo`, then one derived from a `cli-spec`, and only then `exec`.
+Static `cli-spec` sources use the same `archive`, `asset`, `repo`
+ordering, with document order breaking ties within each source type. A
+consumer ignores kinds and sources it does not know, so a vendor may ship
+a `font` or a kind of its own before the specification names it.
 
 A resource is an extra, and the executables are installed with or without
 it. A consumer that cannot fetch one, because the asset or the repository
@@ -740,42 +832,40 @@ file is not there or the network fails, reports that and finishes the
 install without it; a later attempt may fetch it. A resource that arrives
 with a digest other than the one `subject` gives, or a repository file
 that is not what `source.commit` holds, is another matter: that is a
-broken release or a tampered one, and the consumer refuses it as it would
-an artifact.
-
-An artifact with `bin` is something a command-line package manager
-installs. A release whose resources include `desktop` or `app` is something
-a desktop launcher installs. Many applications are both, and the entries say
-so without a category that would misfile them.
+broken release or a tampered one, and the consumer refuses the release,
+as it would for an artifact with a wrong digest.
 
 ### Running an exec entry
 
 An `exec` entry runs a release executable. For completions, consumers run
 it on demand when the shell first requests completion, without additional
-permission beyond installation. Cache successful output for the release,
-executable, and shell so repeated requests do not rerun the command.
+permission beyond installation. A consumer caches successful output per
+release, executable, and shell, so repeated requests do not rerun the
+command.
 
 Other exec resources, such as a generated skill written to disk, run at
 install time only if the user has allowed vendor code to run then. Without
-that permission, treat the entry as absent rather than failing the
-installation. Consumers may also generate completions at install time
-under the same permission.
+that permission, the consumer treats the entry as absent rather than
+failing the installation. Consumers may also generate completions at
+install time under the same permission.
 
-In either case, run the command with the release's executables on PATH, in
-a directory of its own that is not the user's project, with no standard
-input, with standard error discarded, and under a timeout of its choosing;
-a few seconds suits a completion. `{shell}` in the argv and in `env`
-values is replaced by the shell being asked for, and `env` is added to an
-environment that is otherwise the consumer's. A non-zero exit, a timeout,
-or empty output means the entry is absent this time and may be tried
-again later.
+In either case, the consumer runs the command with the release's
+executables on PATH, in a directory of its own that is not the user's
+project, with no standard input, with standard error discarded, and under
+a timeout it chooses; a few seconds suits a completion. `{shell}` in the
+argv and in `env` values is replaced by the shell being asked for, and
+`env` is added to an environment that is otherwise the consumer's. A
+non-zero exit, a timeout, or empty output means the entry is absent this
+time and may be tried again later.
 
 ## Host requirements
 
 `requires` describes what the host must provide before the software can
 run. It uses operating-system loader names and command names, rather than
 package names, so consumers can check requirements without a shared
-registry. Alongside `os_min` and `glibc_min`, it supports:
+registry. It has four fields: `os_min`, the lowest OS version in the OS's
+own terms; `glibc_min`, the lowest glibc for a `gnu` Linux build; and two
+lists, `libs` and `bin`:
 
 - `libs` lists the shared libraries the executables load from the host,
   each by the name the loader resolves: a soname on Linux and FreeBSD
@@ -789,22 +879,23 @@ registry. Alongside `os_min` and `glibc_min`, it supports:
   list from the executables named in `bin`, so it says what the bytes
   say, and a consumer holding the artifact can read the same list; the
   signed one lets it check before downloading. An empty list means the
-  executables were read and need nothing beyond the baseline. An absent
-  one means nothing was checked, as for an installer `create` does not
-  open or an executable that is a script.
+  executables were read and need no library beyond those left out above.
+  An absent one means nothing was checked, as for an installer `create`
+  does not open or an executable that is a script.
 - `bin` lists the commands the executables run and cannot work without,
-  each a bare name as the executable invokes it (`java`, `python3`,
-  `git`; no directory, no `.exe`) with an optional `min`, the lowest
-  version that works, compared
-  as a numeric lower bound, so `17` means 17.0.0 and later, including
-  21. A consumer compares dot-separated nonnegative integer components
-  numerically, padding missing components with zero; `2.10` exceeds
-  `2.9`. If either spelling cannot be compared this way, the check is
-  unknown and the consumer warns rather than guessing. The vendor
-  declares these; nothing in a binary says it runs `java`. Only hard
-  requirements belong here; an optional integration goes under
-  `extensions`. A required command may not be one the release itself
+  each a bare name as the executable invokes it (`java`, `python3`, `git`;
+  no directory, no `.exe`) with an optional `min`, the lowest version that
+  works. The vendor declares these; nothing in a binary says it runs
+  `java`. Only hard requirements belong here; an optional integration goes
+  under `extensions`. A required command may not be one the release itself
   provides.
+
+`min`, `glibc_min`, and `os_min` are numeric lower bounds, so a `min` of
+`17` means 17.0.0 and later, including 21. A consumer compares
+dot-separated nonnegative integer components numerically, padding missing
+components with zero; `2.10` exceeds `2.9`. If either spelling cannot be
+compared this way, the check is unknown and the consumer warns rather
+than guessing.
 
 A consumer checks `requires` before installing, and what it does with a
 requirement the host does not meet depends on whether the executables can
@@ -818,7 +909,8 @@ run without it:
 - A command in `bin` that is missing or below its `min` means only the
   paths that call it fail, and the user may be about to install it. The
   consumer installs, warns, and names the command and the version it
-  needs, as a tool it can install where it can.
+  needs; where the consumer can install that command itself, it presents
+  the command as something it can install.
 
 An unknown check result produces a warning, not a refusal. This includes
 unreadable versions and loaders the consumer cannot query. Select the
@@ -832,12 +924,12 @@ which is the dynamic linker's cache and search path on Linux
 directories on macOS, and PATH with the system directory on Windows; a
 command by looking its name up on PATH, with `.exe` on Windows, and
 running it with `--version` to read a version. Compare `min`,
-`glibc_min`, and `os_min` as numeric lower bounds using the rule above,
-against the command, glibc, and OS versions respectively. A version
-probe that fails or has an unrecognized spelling leaves the check unknown.
+`glibc_min`, and `os_min` against the command, glibc, and OS versions
+respectively. A version probe that fails or has an unrecognized spelling
+leaves the check unknown.
 
-That is the boundary. `requires` names what the host must have, by names
-the OS itself resolves. It does not name other projects, versions of
+`requires` names what the host must have, by names the OS itself
+resolves. It does not name other projects, versions of
 them, or where to get them: that needs a namespace only a registry has,
 and a package manager's install hints go under `extensions`. Two things
 this version leaves out on purpose, to be added if vendors need them: a
@@ -876,11 +968,12 @@ keeps working beside it.
 
 ## Repackager attestation
 
-A repository, registry, or mirror that describes a vendor's artifacts, and
-whose vendor publishes no packslip, may sign one itself with
-`"attested_by": "repackager"`. The `project` still names the vendor's
-project and the artifacts are still the vendor's files, but `identity` is
-the repackager's, and `evidence` says what it checked before signing:
+A package repository (such as an apt or AUR repository), registry, or
+mirror that describes a vendor's artifacts, and whose vendor publishes no
+packslip, may sign one itself with `"attested_by": "repackager"`. The
+`project` still names the vendor's project and the artifacts are still
+the vendor's files, but `identity` is the repackager's, and `evidence`
+says what it checked before signing:
 
 ```json
 "attested_by": "repackager",
@@ -890,21 +983,26 @@ the repackager's, and `evidence` says what it checked before signing:
 ]
 ```
 
-Documented kinds: `pkgbuild-checksums` (digests matched the packaging the
-repackager maintains), `checksum-file-over-tls` (the vendor's checksum
-file, unsigned), `apt-release-gpg` (an apt index signed with the given
-key), `vendor-signature` (a detached signature the vendor publishes),
-`vendor-packslip` (the vendor's own packslip, verified; `detail` is its
-sha256), `github-attestation` (GitHub artifact attestations verified),
-`provenance-verified` (SLSA provenance verified against the builder),
-`scan` (the artifacts were scanned; `detail` points at the report),
-`none`.
+Documented kinds:
+
+- `pkgbuild-checksums`: digests matched the packaging the repackager
+  maintains.
+- `checksum-file-over-tls`: the vendor's checksum file, unsigned.
+- `apt-release-gpg`: an apt index signed with the given key.
+- `vendor-signature`: a detached signature the vendor publishes.
+- `vendor-packslip`: the vendor's own packslip, verified; `detail` is the
+  sha256 of the vendor's bundle file.
+- `github-attestation`: GitHub artifact attestations verified.
+- `provenance-verified`: SLSA provenance verified against the builder.
+- `scan`: the artifacts were scanned; `detail` points at the report.
+- `none`: the repackager checked nothing, and the document rests on its
+  signature alone.
 
 A repackager document proves that the repackager published exactly these
 digests and checked the listed evidence. It does not prove anything the
 vendor did not sign. Consumers rank it below a vendor document, and a
 consumer that already holds a vendor document for a project refuses to
-replace it with a repackager one without a human's say-so.
+replace it with a repackager one without a person's approval.
 
 A mirror is a repackager whose documents carry the vendor's digests with
 the mirror's own URLs and `vendor-packslip` evidence. A consumer pointed at
@@ -913,12 +1011,14 @@ and verify the vendor's document if it wants both.
 
 ## Discovery
 
-Publish the bundle next to the artifacts: as a release asset, or under the
-version directory of a download site.
+Publish the bundle next to the artifacts: as a release asset, or in that
+release's own directory on a download site.
 
-Consumers discover releases through a signed list or GitHub's releases
-endpoint. A signed list can also record withdrawals and a recommended
-version. GitHub projects may supplement endpoint discovery with one.
+Consumers find a project's releases through its
+[signed list](#the-signed-list) or, for a GitHub project, its
+[releases endpoint](#github). A signed list can also withdraw releases and
+recommend a version, so a GitHub project may publish one beside its
+endpoint.
 
 ### The signed list
 
@@ -954,14 +1054,9 @@ A signed list is a bundle of the same shape as a packslip, with the
 }
 ```
 
-Each subject is a listed packslip's URL with the digest of that file, so
-the list pins the exact documents it points at. `expires_at` and
-`sequence` are borrowed from TUF's timestamp role: a consumer refuses a
-list that has expired, or whose sequence is lower than one it has already
-accepted, so a mirror cannot freeze or roll back the vendor's view.
-
-Each entry carries the release's `version`, its `tag` as the vendor
-spells it, and `published_at`, copied from the packslip. It may carry
+Each entry carries the release's `version` and `published_at` and, when
+the packslip has a `source.tag`, its `tag` as the vendor spells it, all
+copied from the packslip. It may carry
 `status: "yanked"` with a `status_reason` when the release was withdrawn,
 `security: true` when it fixes a vulnerability, and, on a list from
 someone other than the vendor, `evidence` saying what the publisher
@@ -972,12 +1067,44 @@ an exact semver string matching an entry's `version`, including any build
 metadata. It is not a tag, range, or per-release flag. A pointer to a
 version absent from the list makes the list invalid. Its target may be
 yanked or otherwise ineligible; that does not invalidate the list, and
-Latest below defines the fallback. `packslip releases --latest 2.8.4`
-sets it. Omitting the option omits the pointer.
+[Latest](#latest) defines the fallback.
+
+The fields of a release list:
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `_type` | string | required | Always `https://in-toto.io/Statement/v1`. |
+| `subject[]` | array | required | One entry per listed packslip. |
+| `subject[].name` | string | required | The packslip's URL, as its entry's `packslip` gives it. |
+| `subject[].digest.sha256` | string | required | SHA-256 of the bundle file, lowercase hex. |
+| `subject[].digest.sha512` | string | optional | SHA-512 of the bundle file, lowercase hex. |
+| `predicateType` | string | required | Always `https://packslip.dev/releases/v1`. |
+| `predicate.project` | string | required | The project the list is for. See [Names](#names). |
+| `predicate.generated_at` | string | required | When the list was produced, RFC 3339 UTC. |
+| `predicate.expires_at` | string | required | When the list goes stale, RFC 3339 UTC. A consumer refuses an expired list. |
+| `predicate.sequence` | integer | required | A nonnegative counter. A consumer refuses a list whose sequence is lower than one it has accepted. |
+| `predicate.latest` | string | optional | The vendor's recommended default: the exact `version` of an entry. See [Latest](#latest). |
+| `predicate.identity` | object | required | How the list is signed, with the fields a release statement's `identity` has. See [Field reference](#field-reference). |
+| `predicate.releases[]` | array | required | The listed releases, in any order. |
+| `releases[].version` | string | required | Semver 2.0.0, copied from the packslip. |
+| `releases[].tag` | string | optional | The packslip's `source.tag`. |
+| `releases[].published_at` | string | required | RFC 3339 UTC, copied from the packslip. |
+| `releases[].packslip` | string | required | URL of the release's bundle. The subject of that name carries its digest. |
+| `releases[].status` | string | optional | `yanked` when the release was withdrawn. |
+| `releases[].status_reason` | string | optional | Why it was withdrawn. |
+| `releases[].security` | boolean | optional | The release fixes a vulnerability. |
+| `releases[].evidence[]` | array of object | optional | On a list from someone other than the vendor, what the publisher checked: `{ kind, detail? }`, with the kinds [Repackager attestation](#repackager-attestation) documents. |
+| `extensions` | object | optional | On the list and on each entry. See [Extensions](#extensions). |
+
+Each subject is a listed packslip's URL with the digest of that file, so
+the list pins the exact documents it points at. `expires_at` and
+`sequence` are borrowed from TUF's timestamp role: a consumer refuses a
+list that has expired, or whose sequence is lower than one it has already
+accepted, so a mirror cannot freeze or roll back the vendor's view.
 
 The list is published at
 
-```
+```text
 https://<host>/.well-known/packslip/<path>.json
 ```
 
@@ -987,18 +1114,11 @@ host. For `mise.jdx.dev` that is
 `https://mise.jdx.dev/.well-known/packslip.json`; for `jdx.dev/mise`,
 `https://jdx.dev/.well-known/packslip/mise.json`; for
 `github.com/jdx/mise`, `https://github.com/.well-known/packslip/jdx/mise.json`,
-which github.com does not serve, and the next section says what a
+which github.com does not serve, and [GitHub](#github) says what a
 consumer does there. A forge that does serve it needs nothing else.
 
-The reference implementation gives the URL as `list_url`, for a project's
-own list and for one another publisher keeps for it (see Lists from other
-publishers), and the path of a GitHub repository's supplementary list as
-`github_list_path`.
-
 A project on its own domain must publish the list: a consumer that finds
-none refuses the project rather than guessing at URLs. `packslip releases`
-produces the list from local copies of the released bundles; the JSON
-schema is at `https://packslip.dev/schema/releases-v1.json`.
+none refuses the project rather than guessing at URLs.
 
 The list separates the name from where the bytes live: the identity is
 anchored to the domain, and the artifacts can be anywhere. A vendor with
@@ -1007,11 +1127,20 @@ host serves as raw files, and points the artifact URLs wherever the bytes
 are, an LFS store included. Nothing about a forge's release API is
 required.
 
+The reference implementation gives the URL as `list_url`, for a project's
+own list and for one another publisher keeps for it (see
+[Lists from other publishers](#lists-from-other-publishers)), and the path
+of a GitHub repository's supplementary list as `github_list_path`.
+`packslip releases` produces the list from local copies of the released
+bundles, and its `--latest` option sets the list-level `latest`; without
+the option, the list has none. The JSON schema is at
+`https://packslip.dev/schema/releases-v1.json`.
+
 ### GitHub
 
-For `github.com/<owner>/<repo>[/<tool>]` the list is the repository's
-releases endpoint, which every consumer can read without the vendor
-publishing anything more:
+For `github.com/<owner>/<repo>[/<subpath>]`, the repository's releases
+endpoint takes the place of a signed list, and every consumer can read it
+without the vendor publishing anything more:
 
 - A release counts when it is not a draft and carries a packslip whose
   `project` matches, or names the same repository renamed, as
@@ -1019,34 +1148,40 @@ publishing anything more:
   repository's API and release URLs from the old name to the new one, so
   a consumer asking for the old name reaches the renamed repository's
   releases.
-- Its tag names its version, as Versions defines: the version, optionally
-  after a `v`, and optionally after the tool's subpath, its last segment,
-  or the repository name plus a separator. A consumer lists versions from
-  tags without downloading a bundle per release, and on install verifies
-  the packslip and refuses it when its `version` differs. A tag that names
-  no version is invisible here.
+- Its tag names its version as [Tags](#tags) defines. A consumer lists
+  versions from tags without downloading a bundle per release, and on
+  install verifies the packslip and refuses it when its `version` differs.
+  A tag that names no version is invisible here.
 - The endpoint's order and its prerelease flag are not consulted; the
-  version says both.
+  version says both. GitHub's latest-release pointer is used only as an
+  unsigned recommendation, as [Latest](#latest) says.
 
-The repository may also carry a signed list, at `.well-known/packslip.json`
-or `.well-known/packslip/<tool>.json` on its default branch, which GitHub
-serves at `https://raw.githubusercontent.com/<owner>/<repo>/HEAD/<path>`.
-It is signed by the same identity the packslips are, and it is
-supplementary: a version it names is taken as it says, yanked or flagged,
-and pinned to the packslip digest it gives; a version it omits still comes
-from the endpoint. So a vendor touches it only to withdraw a release, to
-mark a security fix, recommend a default with `latest`, or list a release
-whose tag names no version, and a vendor that never needs those never
-writes it. Withdrawing a release
-this way works on a repository with immutable releases, where the release
-and its packslip cannot be deleted.
+The repository may also carry a signed list on its default branch:
+`.well-known/packslip.json`, or `.well-known/packslip/<subpath>.json` for
+a monorepo tool (`.well-known/packslip/crates/cli.json` for
+`github.com/biomejs/biome/crates/cli`). GitHub serves the file at
+`https://raw.githubusercontent.com/<owner>/<repo>/HEAD/<path>`. It is
+signed by the same identity the packslips are, and it is
+supplementary. For a version it lists, the entry decides: its `tag`,
+`status`, and `security` apply, and the consumer accepts only the packslip
+with the digest the list gives. A version it omits still comes from the
+endpoint.
+
+A vendor writes one only to withdraw a release, mark a security fix,
+recommend a default with `latest`, or list a release whose tag names no
+version; a vendor that needs none of those never writes it. Withdrawing a
+release this way works on a repository with immutable releases, where the
+release and its packslip cannot be deleted.
 
 Once a consumer has accepted a supplementary signed list for a project,
 a missing list is an error, not a return to endpoint-only discovery.
 Otherwise removing the list would undo its withdrawals without a newer
-signed statement. A vendor retiring its entries publishes a fresh,
-unexpired list with a nondecreasing sequence; a user may explicitly
-forget the remembered list policy for that project.
+signed statement. Because a consumer also refuses an expired list
+([The signed list](#the-signed-list)), a published list has to be
+re-signed before each `expires_at`, whether or not a release shipped. A
+vendor retiring its entries publishes a fresh, unexpired list with a
+nondecreasing sequence; a user may explicitly forget the remembered list
+policy for that project.
 
 ### Lists from other publishers
 
@@ -1055,31 +1190,38 @@ service publishes lists under its own host, one per vendor project it
 covers, at the well-known path with the vendor's project name:
 `https://registry.example/.well-known/packslip/github.com/jdx/mise.json`,
 which `list_url` gives for a publisher that is not the project's host.
-A consumer configures which such hosts it trusts, one setting per host.
+A consumer trusts such a host only by configuration, with a pin for each
+host it trusts.
 
 Each entry points at a packslip and pins its digest. The packslip may be
 the vendor's own, signed by the vendor's identity, or a repackager
-document the publisher signed; either is verified against the pin its
-own `project` and `attested_by` imply. The list's signature proves who
-selected these releases and what the entry's `evidence` says they
-checked, not who built them. A consumer that trusts such a host selects
-only versions the host lists, which is how a registry that scans releases
-before admitting them, or an organization that curates versions, applies
-its judgement without a per-tool recipe.
+document the publisher signed. A vendor document is verified against the
+vendor's pin, which its `project` implies, and a repackager document
+against the pin its own `project` and `attested_by` imply. The list's
+signature proves who selected these releases and what the entry's
+`evidence` says they checked, not who built them. A consumer that trusts
+one or more such hosts selects only versions at least one of them lists,
+which is how a registry that scans releases before admitting them, or an
+organization that curates versions, applies its judgment without a
+per-tool recipe.
 
-Such a list is a stamp on the releases it names. A consumer that trusts
-one or more stamping hosts treats a version none of them lists as not
-released: it is not offered and not installed, however valid the vendor's
-own document is. Any one trusted host's non-yanked stamp suffices. A host
-withdrawing its own stamp does not veto another trusted host's approval; an operator that
-needs one host to control admission configures that host alone. A vendor
-withdrawal still excludes the version regardless of stamps. A user who
-trusts a vendor outright says so for that project alone, and the
-consumer then takes the vendor's document under the vendor's pin with no
-stamp at all. A stamping host signs with whichever scheme fits it: a
-service that stamps continuously holds a key, a registry that stamps
-from a repository signs keylessly, and the consumer pins the host either
-way.
+Such a list is a stamp on the releases it names, and a host that
+publishes one is a stamping host. A consumer that trusts stamping hosts
+applies these rules:
+
+- A version none of them lists is not released: it is not offered and
+  not installed, however valid the vendor's own document is.
+- Any one trusted host's non-yanked stamp suffices. A host withdrawing its
+  own stamp does not veto another trusted host's approval; an operator
+  that needs one host to control admission configures that host alone.
+- A vendor withdrawal still excludes the version regardless of stamps.
+- A user who trusts a vendor outright says so for that project alone, and
+  the consumer then takes the vendor's document under the vendor's pin
+  with no stamp at all.
+
+A stamping host signs with whichever scheme fits it: a service that
+stamps continuously holds a key, a registry that stamps from a repository
+signs keylessly, and the consumer pins the host either way.
 
 ## Versions
 
@@ -1092,11 +1234,12 @@ does a consumer. The tag can be spelled however the vendor likes
 Version ordering, prerelease status, and channels follow from the signed
 version string:
 
-- Order is semver precedence. A backport such as 20.19.1 published after
-  22.0.0 still ranks below it, and range constraints (`^1.2`) have meaning.
-  Build metadata takes no part, as semver says. The order of the release
-  list, GitHub's or the vendor's, is not consulted. A vendor may separately
-  recommend a default for `latest`, as Latest defines.
+- Order is semver precedence, so a range such as `^1.2` has a meaning. A
+  backport such as 20.19.1, published after 22.0.0, still ranks below it.
+  Build metadata takes no part, as semver says. The order of GitHub's
+  releases endpoint or of a signed list is not consulted. A vendor may
+  separately recommend a default for `latest`, as [Latest](#latest)
+  defines.
 - A prerelease is a version with a prerelease part: `1.2.0-rc.1` is one,
   `1.2.0` is not. Consumers skip prereleases unless asked for them.
   Promoting a release candidate means cutting the final version, not
@@ -1108,77 +1251,21 @@ version string:
   only releases on it, ranked by precedence. The names are the vendor's;
   packslip defines none.
 
-Eligible means not yanked, not a prerelease unless prereleases were asked
-for, and on the requested channel when one was given. A requested version
-matches as a prefix on dot-separated components, so `20` and `3.12` mean
-what people expect and `1.2.0-beta` means the betas of 1.2.0. A request
-may also be the tag as the vendor spells it, with or without its leading
-`v`; a consumer matches it against `source.tag` or the list entry's `tag`,
-so a user who knows a release by the vendor's name still finds it.
-Rollback protection comes from the release list's `sequence`, not from
-anything a single release says.
-
 Prerelease and channel metadata are derived rather than stored as
 separate fields. This avoids contradictions with the signed version or
 editable forge metadata. Withdrawals and default recommendations belong
 in discovery metadata, where they can change without replacing a signed
 release manifest.
 
-### Latest
-
-An unconstrained `latest` request (including a consumer's default install
-request) asks for the vendor's recommended eligible release. Ordering
-and recommendation are separate: a vendor may publish `3.0.0` while
-recommending `2.8.4`. Exact versions, version prefixes, ranges, and channel
-requests continue to use their matching rules and semver precedence;
-the default pointer does not reorder them.
-
-Consumers choose a recommendation in this order:
-
-1. Use `latest` from the vendor's accepted signed release list, if present.
-   On GitHub this includes the supplementary list. The list must pass its
-   normal signature, identity, expiry, and sequence checks first.
-2. For a GitHub project without a signed `latest`, use the release returned
-   by GitHub's [latest release endpoint](https://docs.github.com/en/rest/releases/releases#get-the-latest-release).
-   Resolve its tag through the normal discovery rules, including a signed
-   list entry's `tag` mapping. It must belong to the requested project;
-   a repository-wide pointer to another tool is not a recommendation for
-   this one. This is an unsigned discovery hint, not proof of authenticity
-   or a sequence-protected recommendation.
-3. Elsewhere, without a signed pointer there is no recommendation.
-
-Select the recommendation only if it passes the same checks as any other
-candidate: verified release signature and identity, manifest version and
-digest consistency, no vendor yank, prerelease policy, minimum release
-age, configured stamping policy, and artifact/host eligibility. A pointer
-never admits a release a consumer would otherwise refuse. Pointers on
-third-party stamping lists do not replace the vendor's recommendation;
-those lists determine which candidates are admitted.
-
-If there is no recommendation, or its target is absent from discovery or
-excluded by eligibility policy, select the highest eligible semver from
-the normal candidate set. An ineligible signed pointer falls directly
-back to semver selection, not to GitHub's pointer. Report when a declared
-recommendation is skipped and why; if no eligible release exists, fail.
-For example, if `latest` is `2.8.4` but it is yanked or too young, `3.0.0`
-may be selected if it is eligible. Vendors who must exclude `3.0.0` must
-withdraw it or use an admission policy, rather than relying on `latest`.
-
-Fallback does not turn verification failures into missing metadata.
-An invalid, expired, rolled-back, or unexpectedly missing signed list
-remains an error; a candidate with a bad signature or inconsistent digest
-or version remains an error. A GitHub latest endpoint response indicating
-no latest release supplies no pointer; other fetch errors remain errors.
-Changing or removing a signed recommendation requires publishing a new
-list with an increased sequence, without replacing any release manifest.
-
 ### Spelling a version
 
 A vendor whose versions are not semver as written picks the semver
 spelling once and keeps it; the tag keeps the vendor's own spelling.
 
-- A prefix (`jq-1.7.1`, `release-1.2.3`) is the tag's business and is
-  not part of the version.
+- A prefix belongs to the tag, not the version: `jq-1.7.1` is version
+  `1.7.1`. [Tags](#tags) lists the prefixes a consumer strips on its own;
+  a tag with any other prefix, such as `release-1.2.3`, needs a signed
+  list entry to map it.
 - A missing patch component is `0`: `4.1` is `4.1.0`.
 - Leading zeros go: `25.07.1` is `25.7.1`, and a date `2026.08.31` is
   the calver `2026.8.31`. A date with dashes, `2026-08-31`, is respelled
@@ -1195,17 +1282,86 @@ can order rather than build metadata.
 
 A forge release's tag names its version when, after removing an optional
 prefix and an optional `v`, what remains is the version, or spells it as
-the rules above say. The prefix is the tool's subpath, the last segment
-of the subpath, or the repository name, followed by `/`, `-`, `_`, or
-`@`. So `v1.2.3` names `1.2.3`; `oxlint_v1.0.0` names `1.0.0` for
-`github.com/oxc-project/oxc/oxlint`; `cli/v1.9.4` names `1.9.4` for
-`github.com/biomejs/biome/crates/cli`; `jq-1.7.1` names `1.7.1` for
-`github.com/jqlang/jq`; `v4.1` names `4.1.0`.
+[Spelling a version](#spelling-a-version) says. The prefix is the tool's
+subpath, the last segment of the subpath, or the repository name,
+followed by `/`, `-`, `_`, or `@`. So `v1.2.3` names `1.2.3`;
+`oxlint_v1.0.0` names `1.0.0` for `github.com/oxc-project/oxc/oxlint`;
+`cli/v1.9.4` names `1.9.4` for `github.com/biomejs/biome/crates/cli`;
+`jq-1.7.1` names `1.7.1` for `github.com/jqlang/jq`; `v4.1` names `4.1.0`.
 
-A consumer derives a version from a tag only to list releases without
+A consumer reads a version from a tag only to list releases without
 fetching every bundle. The packslip is the authority: when its `version`
-is not what the tag named, the consumer refuses the release. If a tag cannot be mapped to a version, the vendor publishes a signed
-list with an explicit version and tag mapping.
+is not what the tag named, the consumer refuses the release. A tag that
+names no version, such as `nightly` or `release-1.2.3`, hides its release
+from tag listing. To list that release, the vendor publishes a signed
+list whose entry maps its tag to its version.
+
+### Matching a request
+
+A requested version matches as a prefix on dot-separated components, so
+`20` matches every `20.x.y` release, `3.12` every `3.12.x`, and
+`1.2.0-beta` the betas of 1.2.0. A request may also be the tag as the
+vendor spells it, with or without its leading `v`; a consumer matches it
+against `source.tag` or the list entry's `tag`, so a user who knows a
+release by the vendor's name still finds it. Eligible means not yanked,
+not a prerelease unless prereleases were asked for, and on the requested
+channel when one was given. Rollback protection comes from the release
+list's `sequence`, not from anything a single release says.
+
+### Latest
+
+An unconstrained `latest` request (including a consumer's default install
+request) asks for the vendor's recommended eligible release. Ordering
+and recommendation are separate: a vendor may publish `3.0.0` while
+recommending `2.8.4`. Exact versions, version prefixes, ranges, and channel
+requests use their own [matching rules](#matching-a-request) and semver
+precedence; the recommendation does not reorder them.
+
+Consumers choose a recommendation in this order:
+
+1. Use `latest` from the vendor's accepted signed release list, if it has
+   one; on GitHub, that is the repository's supplementary list. The list
+   must pass its normal signature, identity, expiry, and sequence checks
+   first.
+2. For a GitHub project without a signed `latest`, use the release returned
+   by GitHub's [latest release endpoint](https://docs.github.com/en/rest/releases/releases#get-the-latest-release).
+   Resolve its tag through the normal discovery rules, including a signed
+   list entry's `tag` mapping. It must belong to the requested project;
+   a repository-wide pointer to another tool is not a recommendation for
+   this one. This is an unsigned discovery hint, not proof of authenticity
+   or a sequence-protected recommendation.
+3. Elsewhere, without a signed pointer there is no recommendation.
+
+A recommendation is verified like any other candidate: its release
+signature and identity, and its release manifest's version and digest
+consistency. A verification failure is an error, not a reason to fall
+back. A verified recommendation is selected only if it also passes the
+same checks as any other candidate: no vendor yank, prerelease policy,
+minimum release age, configured stamping policy, and artifact/host
+eligibility. A pointer
+never admits a release a consumer would otherwise refuse. Pointers on
+third-party stamping lists do not replace the vendor's recommendation;
+those lists determine which candidates are admitted.
+
+If there is no recommendation, or its target is absent from discovery or
+excluded by eligibility policy, select the eligible release with the
+highest precedence from the normal candidate set. An ineligible signed
+pointer falls directly back to semver selection, not to GitHub's pointer.
+Report when a declared recommendation is skipped and why; if no eligible
+release exists, fail. For example, if `latest` is `2.8.4` but `2.8.4` is
+yanked or too young, the consumer selects `3.0.0` when it is eligible. A
+vendor that must exclude `3.0.0` must withdraw it or use an admission
+policy ([Lists from other publishers](#lists-from-other-publishers)),
+rather than relying on `latest`; `latest` recommends a release but never
+excludes one.
+
+Fallback does not turn verification failures into missing metadata.
+An invalid, expired, rolled-back, or unexpectedly missing signed list
+remains an error; a candidate with a bad signature or inconsistent digest
+or version remains an error. A GitHub latest endpoint response indicating
+no latest release supplies no pointer; other fetch errors remain errors.
+Changing or removing a signed recommendation requires publishing a new
+list with an increased sequence, without replacing any release manifest.
 
 ## Selecting an artifact
 
@@ -1234,69 +1390,105 @@ implementation exposes this selection as `select_artifact`.
 
 These rules apply to the complete consumer workflow, not just signature
 verification. Consumers must preserve enough state to enforce signer
-continuity, no-downgrade policy, and release-list sequences across installs.
+continuity, no-downgrade policy, and release-list sequences across
+installs. The rules, and the sections they cite, rely on this state:
 
-1. Pin the identity once. For a forge project, the name gives the first
-   pin: accept only the forge's issuer and an identity under the
-   repository, and remember the repository ID its certificate records.
-   From then on that ID pins the project, as
-   [Forge identity](#forge-identity) says: a renamed or transferred
-   repository keeps its pin, and a recreated name does not inherit it.
-   Where the project publishes a [signer fingerprint](#signer-fingerprint)
-   that the consumer has read apart from its releases, that is the first
-   pin, and no release has to be trusted on first use. For other
-   projects, pin the public key or identity from a list of pins you
-   maintain, or from the well-known list on first use. A list from another
-   publisher is trusted per host, by configuration. Never take a key from
-   the document itself, and never trust a bundle's key hint.
+- the pins: the signer and its repository ID, any signer fingerprint or
+  lockfile commitment the consumer holds, and the remembered
+  `pin_workflow` value;
+- the trust properties of the last accepted release: its
+  `identity.scheme`, `attested_by`, and provenance;
+- the highest release-list `sequence` accepted, and whether a signed list
+  was accepted at all;
+- the choices a person made, such as an approved signer change, an
+  allowed unlogged bundle, or trusting the vendor without a stamp.
+
+1. Pin the identity once.
+   - For a forge project, the name gives the first pin: accept only the
+     forge's issuer and an identity under the repository, and remember the
+     repository ID its certificate records. From then on that ID pins the
+     project, as [Forge identity](#forge-identity) says: a renamed or
+     transferred repository keeps its pin, and a recreated name does not
+     inherit it.
+   - Where the project publishes a [signer fingerprint](#signer-fingerprint)
+     that the consumer has read apart from its releases, that fingerprint
+     is also part of the first pin: the consumer checks releases against
+     it as [Signer fingerprint](#signer-fingerprint) says, so no release
+     has to be trusted on first use.
+   - For other projects, pin the public key or identity from a list of
+     pins the consumer maintains, or from the well-known list on first use.
+   - A list from another publisher is trusted per host, by configuration.
+   - Never take a key from the document itself, and never trust a bundle's
+     key hint.
 2. Verify the bundle: signature, certificate chain and log entry as
-   sigstore defines them, then the statement's structure, then the
-   subject digest of every artifact or asset you downloaded, and the size
-   of every artifact.
-3. Enforce no-downgrade: refuse a release whose `identity.scheme` is
-   weaker than the last accepted one, whose signer changed without a human
-   saying so, whose `attested_by` went from vendor to repackager, or that
-   dropped per-artifact provenance the last release carried. For a keyless
-   signer, compare the workflow path, not the ref: a new tag of the same
-   workflow is the same signer. For a renamed or transferred repository,
-   compare the workflow's path inside the repository, and only when the
-   repository IDs show the same repository: the one the release's
+   sigstore defines them, then the statement's structure, then, for a
+   forge project, that the statement names the requested project or the
+   same repository renamed, as [Names](#names) and
+   [Forge identity](#forge-identity) say, then the subject digest of every
+   artifact or asset the consumer downloaded, and the size of every
+   artifact. Refuse a bundle without a log entry unless unlogged bundles
+   were explicitly allowed, as [Signing](#signing) says.
+3. Enforce no-downgrade. Compared with the last release accepted for the
+   project, refuse a release:
+   - whose `identity.scheme` is weaker;
+   - whose signer changed without a person's approval;
+   - whose `attested_by` went from vendor to repackager;
+   - that dropped per-artifact provenance the last release carried.
+
+   For a keyless signer, compare the workflow path, not the ref: a new tag
+   of the same workflow is the same signer. For a renamed or transferred
+   repository, compare the workflow's path inside the repository, and only
+   when the repository IDs show the same repository: the one the release's
    certificate carries or, comparing two recorded signers such as a
    lockfile entry and the one it replaces, the ID recorded with each. A
    changed repository ID is a changed signer, even under the same
-   identity.
-   A release that declares `identity.pin_workflow: false` is compared by
-   repository alone; declaring it where the remembered value is `true`
-   is a reduction that needs a person's say-so, as Reusable workflows
-   says.
+   identity. A release that declares `identity.pin_workflow: false` is
+   compared by repository alone; declaring it where the remembered value
+   is `true` is a reduction that is refused until a person approves it, as
+   [Reusable workflows](#reusable-workflows) says.
 4. Apply any minimum release age to the log's integration time, falling
-   back to `published_at` only for an unlogged bundle you chose to accept.
-5. Use the project's release list: GitHub's releases endpoint with the
-   repository's signed list if it has one, or the signed list at the
-   well-known URL; refuse a project that has neither. Refuse a signed
-   list that has expired or whose `sequence` is below the last one
-   accepted; never select a yanked entry; skip prereleases unless asked
-   for them; rank by semver precedence; refuse a packslip whose version is
-   not the one its tag or list entry named. When you trust stamping
-   hosts, select only versions one of them lists, unless the user chose
-   the vendor alone for that project.
-6. Select one artifact as Selecting an artifact says. Refuse to guess
-   between two artifacts that tie.
-7. Check `requires` against the host before installing, as Host
-   requirements says: refuse when a library, glibc, or OS version means
-   the executables cannot start, warn when a command is missing or too
-   old, and report either in your own terms. Fail on nothing you cannot
-   check. Check the artifact selected by rule 6; requirements do not
-   resolve an ambiguous selection.
-8. For each thing the resources describe, as Resources defines one, keep
-   the entries whose scope fits the selected artifact and the most
-   specific of those, then take the most verifiable source offered in the
-   order Resources gives; run an `exec` completion on demand, when a shell
-   first asks, and cache it; run any other `exec` entry only if the user
-   has chosen to run vendor code at install time; ignore kinds you do not
-   know. A
-   resource you cannot fetch is reported, not fatal; one whose digest is
-   not the one the document signed fails the install.
+   back to `published_at` only for an unlogged bundle the consumer chose
+   to accept.
+5. Use the project's discovery metadata:
+   - For a GitHub project, read its releases endpoint and, if the
+     repository has one, its supplementary list; otherwise read the signed
+     list at the well-known URL. Refuse a project that has neither, and
+     refuse when a signed list accepted before is now missing, as
+     [GitHub](#github) says.
+   - Refuse a signed list that has expired or whose `sequence` is below
+     the last one accepted.
+   - Never select a yanked entry; skip prereleases unless asked for them;
+     rank by semver precedence, and take the vendor's recommendation for
+     an unconstrained request as [Latest](#latest) says.
+   - Refuse a packslip whose digest is not the one the list pins, or whose
+     version is not the one its tag or list entry named.
+   - When the consumer trusts stamping hosts, select only versions one of
+     them lists, unless the user chose the vendor alone for that project,
+     as [Lists from other publishers](#lists-from-other-publishers) says.
+6. Select one artifact as [Selecting an artifact](#selecting-an-artifact)
+   says. Refuse to guess between two artifacts that tie.
+7. Check `requires` against the host before installing, as
+   [Host requirements](#host-requirements) says: refuse when a library,
+   glibc, or OS version means the executables cannot start, warn when a
+   command is missing or too old, and report either in the consumer's own
+   terms. Treat a requirement the consumer cannot check as a warning,
+   never a refusal. Check the artifact selected by rule 6; requirements do
+   not resolve an ambiguous selection.
+8. Install resources as [Resources](#resources) says:
+   - For each thing the resources describe, keep the entries whose scope
+     fits the selected artifact and the most specific of those, as
+     [Scope and identity](#scope-and-identity) says, then take the most
+     verifiable source offered, in the order
+     [Source types](#source-types) and
+     [Fallback and verification](#fallback-and-verification) give.
+   - Run an `exec` completion on demand, when a shell first asks, and
+     cache it; run any other `exec` entry only if the user has chosen to
+     run vendor code at install time, as
+     [Running an exec entry](#running-an-exec-entry) says.
+   - Ignore kinds the consumer does not know.
+   - Report a resource the consumer cannot fetch, and finish the install
+     without it; fail the install for one whose digest is not the one the
+     document signed.
 
 ## Stability
 
@@ -1337,28 +1529,42 @@ signed under `release/v1`, and nothing obliges a vendor to move.
 
 Two versions are in play and they are not the same number. The format is
 version 1, as the predicate types say. The reference implementation is a
-crate, a CLI, and an action that share one semver version of their own;
-that version may reach 2 while the format stays at 1. The
-[conformance vectors](https://github.com/jdx/packslip/tree/main/tests/conformance)
-are the executable form of the rules above: an implementation that
-disagrees with a vector disagrees with this specification.
+crate, a CLI, and two GitHub Actions that share one semver version of
+their own; that version may reach 2 while the format stays at 1.
+
+The [conformance vectors](https://github.com/jdx/packslip/tree/main/tests/conformance)
+are the executable form of the rules they cover: artifact and resource
+selection, tag versions, statement validity, forge identity, and the
+signer fingerprint. An implementation that disagrees with a vector
+disagrees with this specification. Apart from the forge identity
+vectors, which carry the remembered pin in each case, they do not cover
+the consumer rules that depend on state a consumer keeps between
+installs, such as no-downgrade and release-list sequence.
 
 ## Tooling
 
 The [packslip repository](https://github.com/jdx/packslip) contains the
-reference Rust library, CLI, and composite GitHub Action. The CLI creates
-and verifies bundles; consumers implement discovery, installation, and
+reference Rust library, the CLI, and two composite GitHub Actions: one
+publishes a release's packslip
+([action.yml](https://github.com/jdx/packslip/blob/main/action.yml)) and
+one builds and signs a release list
+([releases/action.yml](https://github.com/jdx/packslip/blob/main/releases/action.yml)).
+The CLI creates and verifies release and list bundles and prints signer
+fingerprints; consumers implement discovery, selection, installation, and
 persistent policy around those operations.
 
 | Task | Guide | Command reference |
 | --- | --- | --- |
-| Create a first manifest | [Getting started](https://packslip.dev/docs/getting-started/) | [create](https://packslip.dev/cli/create/) |
-| Publish from GitHub | [GitHub Actions](https://packslip.dev/docs/publishing/) | [Action definition](https://github.com/jdx/packslip/blob/main/action.yml) |
-| Describe release files | [Artifacts and resources](https://packslip.dev/docs/describing-releases/) | [create](https://packslip.dev/cli/create/) |
-| Verify downloads | [Verification](https://packslip.dev/docs/verifying/) | [verify](https://packslip.dev/cli/verify/) |
-| Inspect a statement without verification | [Verification](https://packslip.dev/docs/verifying/#understand-the-result) | [show](https://packslip.dev/cli/show/) |
+| Create a first packslip | [Getting started](https://packslip.dev/docs/getting-started/) | [create](https://packslip.dev/cli/create/) |
 | Generate an Ed25519 key | [Getting started](https://packslip.dev/docs/getting-started/#create-a-sample-release) | [keygen](https://packslip.dev/cli/keygen/) |
-| Publish discovery metadata | [Release lists](https://packslip.dev/docs/release-lists/) | [releases](https://packslip.dev/cli/releases/) |
+| Publish from GitHub | [Publish with GitHub Actions](https://packslip.dev/docs/publishing/) | [action.yml](https://github.com/jdx/packslip/blob/main/action.yml) |
+| Describe release files | [Artifact configuration](https://packslip.dev/docs/describing-releases/), [Resources](https://packslip.dev/docs/resources/), [Host requirements](https://packslip.dev/docs/host-requirements/), [Release recipes](https://packslip.dev/docs/recipes/) | [create](https://packslip.dev/cli/create/) |
+| Publish discovery metadata | [Manage release lists](https://packslip.dev/docs/release-lists/) | [releases](https://packslip.dev/cli/releases/) |
+| Host releases on your own domain | [Host releases on your own domain](https://packslip.dev/docs/self-hosting/) | [releases/action.yml](https://github.com/jdx/packslip/blob/main/releases/action.yml) |
+| Verify downloads | [Verify a release](https://packslip.dev/docs/verifying/) | [verify](https://packslip.dev/cli/verify/) |
+| Pin a keyless signer by fingerprint | [Verify a release](https://packslip.dev/docs/verifying/#pin-a-signer-with-its-fingerprint) | [pin](https://packslip.dev/cli/pin/), [verify](https://packslip.dev/cli/verify/) `--pin` |
+| Inspect a statement without verification | [Verify a release](https://packslip.dev/docs/verifying/#understand-the-result) | [show](https://packslip.dev/cli/show/) |
+| Build a consumer or mirror | [Build an installer or mirror](https://packslip.dev/docs/installers/) | — |
 | Export JSON schemas | [Documentation](https://packslip.dev/docs/#reference) | [schema](https://packslip.dev/cli/schema/) |
 | Check another implementation | [Conformance vectors](https://github.com/jdx/packslip/tree/main/tests/conformance) | — |
 

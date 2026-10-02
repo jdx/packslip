@@ -1,4 +1,5 @@
-//! The `packslip` binary: create, verify, show, releases, keygen, schema.
+//! The `packslip` binary: create, releases, verify, pin, show, keygen,
+//! schema, completion, and version.
 
 use std::path::{Path, PathBuf};
 
@@ -34,9 +35,10 @@ pub fn bundle_name(project: &str) -> String {
 
 /// A signed release manifest: what shipped, and how to verify it
 ///
-/// A vendor runs `packslip create` in its release job to publish one signed
-/// document listing every artifact. Consumers verify it with `packslip
-/// verify` against a pinned identity or key. See https://packslip.dev.
+/// A vendor runs `packslip create` in its release job to sign one document
+/// listing every artifact, then uploads it beside them. Consumers check that
+/// document, and the files they download, with `packslip verify` against a
+/// pinned identity, key, or signer fingerprint. See https://packslip.dev.
 #[derive(usage_rs::Cli)]
 #[usage(completion = true)]
 #[usage(
@@ -68,7 +70,16 @@ enum Commands {
 }
 
 /// Generate a self-contained shell completion script
+///
+/// Print the script to stdout. Redirect it to a file where your shell loads
+/// completions, as in the example. The script asks the installed packslip
+/// for candidates, so it needs no other tool and keeps working after
+/// upgrades.
 #[derive(Debug, usage_rs::Args)]
+#[usage(example(
+    "mkdir -p ~/.local/share/bash-completion/completions && packslip completion bash > ~/.local/share/bash-completion/completions/packslip",
+    header = "Install bash completions for your user"
+))]
 struct Completion {
     /// Shell to generate completions for
     #[usage(
@@ -107,13 +118,21 @@ impl RunWith<BinInfo> for Usage {
     }
 }
 
-/// Generate an Ed25519 key pair for the sigstore-key scheme
+/// Generate an Ed25519 key pair for key-signed releases (sigstore-key)
 ///
-/// Writes a secret seed to --out (mode 0600 on Unix) and a minisign-format
-/// public key beside it with a .pub extension. Refuses to overwrite either
-/// file. Keep the secret private; distribute the public key to consumers.
-/// A supported CI OIDC identity can sign without a long-lived key.
+/// Write a new secret key to --out (a hex Ed25519 seed, mode 0600 on Unix)
+/// and its public key, in minisign format, to the same path with the
+/// extension replaced by .pub: --out release.key writes release.key and
+/// release.pub. Refuses to overwrite either file.
+///
+/// Sign with `packslip create --key release.key`, and give consumers
+/// release.pub for `packslip verify --pubkey`. Keep the secret key private.
+/// A CI job with an OIDC identity can sign keyless and needs no key.
 #[derive(Debug, usage_rs::Args)]
+#[usage(example(
+    "packslip keygen --out release.key",
+    header = "Write release.key and release.pub"
+))]
 struct Keygen {
     /// Where to write the secret key
     #[usage(short = 'o', long, default = "packslip.key")]
@@ -173,10 +192,13 @@ impl RunWith<BinInfo> for Keygen {
 /// Print the JSON schema for a decoded release statement
 ///
 /// Use --releases for the release-list statement schema. These schemas
-/// describe the in-toto payload, not the enclosing sigstore bundle.
+/// describe the in-toto payload, not the enclosing sigstore bundle. Both are
+/// published at https://packslip.dev/schema/release-v1.json and
+/// https://packslip.dev/schema/releases-v1.json.
 #[derive(Debug, usage_rs::Args)]
 struct Schema {
-    /// The releases/v1 list instead of the release/v1 statement
+    /// Print the releases/v1 list schema instead of the release/v1 statement
+    /// schema
     #[usage(long)]
     releases: bool,
 }
@@ -198,7 +220,7 @@ impl RunWith<BinInfo> for Schema {
 /// Print the statement inside a bundle, without verifying it
 #[derive(Debug, usage_rs::Args)]
 struct Show {
-    /// The packslip.sigstore.json (or release list) to read
+    /// Release bundle or release list to read
     #[usage(value_hint = usage_rs::ValueHint::FilePath)]
     bundle: PathBuf,
     /// Print the signed payload followed by a newline, without pretty-printing
@@ -296,125 +318,193 @@ fn signer(key: &Option<PathBuf>, sign: Option<SignWith>, no_log: bool) -> Result
 
 /// Create and sign a packslip for a release
 ///
-/// Hash local artifacts, infer platforms and formats from filenames, and
-/// write a signed bundle to --out. Use --manifest for per-artifact paths,
-/// formats, requirements, and scoped resources. No files are uploaded.
+/// Hash local artifacts, infer platforms and formats from file names, and
+/// write the signed bundle (packslip.sigstore.json, or a per-tool name for a
+/// GitHub monorepo tool; see --out) into the --out directory. Use --manifest
+/// for per-artifact paths, formats, requirements, and scoped resources. No
+/// files are uploaded.
 ///
-/// Signing uses a supported CI OIDC identity by default. Use --key to
-/// sign with an Ed25519 key instead. Signatures are logged to Rekor unless
-/// a key-signed release explicitly uses --no-log.
+/// By default, create signs keyless with an OIDC token: the one in
+/// SIGSTORE_ID_TOKEN when it is set, or else the CI job's own identity,
+/// which on GitHub Actions needs the `id-token: write` permission. Pass --key
+/// to sign with a key from `packslip keygen` instead. Either way, the
+/// signature is recorded in the Rekor transparency log. With --key, --no-log
+/// skips the log entry, and consumers must then accept the release with
+/// --allow-unlogged.
 ///
-/// Examples and configuration: https://packslip.dev/docs/describing-releases/
+/// The TOML manifest and more examples:
+/// https://packslip.dev/docs/describing-releases/
 #[derive(Debug, usage_rs::Args)]
+#[usage(
+    example(
+        "packslip create \\\n        --project github.com/owner/mytool \\\n        --version 1.2.3 \\\n        --bin mytool \\\n        --url-base https://github.com/owner/mytool/releases/download/v1.2.3 \\\n        --out dist \\\n        dist/mytool-1.2.3-linux-x64.tar.gz \\\n        dist/mytool-1.2.3-darwin-arm64.tar.gz",
+        header = "Sign keyless in a CI job"
+    ),
+    example(
+        "packslip create --manifest release.toml --out dist",
+        header = "Describe the artifacts in a TOML manifest"
+    ),
+    example(
+        "packslip create \\\n        --project mytool.example.com \\\n        --version 1.2.3 \\\n        --bin mytool \\\n        --url-base https://mytool.example.com/v1.2.3 \\\n        --key release.key \\\n        --out dist \\\n        dist/mytool-1.2.3-linux-x64.tar.gz",
+        header = "Sign with a key from packslip keygen"
+    )
+)]
 struct Create {
     /// The project's name: a host path such as github.com/owner/repo, or
     /// github.com/owner/repo/tool for one tool of a monorepo. Required
-    /// unless the manifest names it
-    #[usage(long)]
+    /// unless the manifest sets it
+    #[usage(long, help_heading = "Input")]
     project: Option<String>,
-    /// Semver release version, such as 1.2.3. Required unless set in the manifest
-    #[usage(long)]
+    /// Semver release version, such as 1.2.3. Required unless the manifest
+    /// sets it
+    #[usage(long, help_heading = "Input")]
     version: Option<String>,
-    /// Artifact files, optionally as path[:os/arch[/libc]|:any][@variant].
-    /// An arch or libc of any leaves it out, for a build that runs on
-    /// every one. Added to those the manifest lists
+    /// Files to describe, each as PATH, PATH:OS/ARCH[/LIBC], or PATH:any,
+    /// with an optional @VARIANT
+    ///
+    /// Without a platform suffix, create infers the platform from the file
+    /// name. Give any as ARCH or LIBC to leave that field out, for a build
+    /// that runs on every architecture or C library; PATH:any leaves out OS,
+    /// ARCH, and LIBC. These files join the manifest's artifacts; a file the
+    /// manifest lists under the same file name keeps its manifest entry, and
+    /// its platform suffix and @VARIANT here are ignored.
     artifacts: Vec<String>,
     /// A TOML manifest giving per-artifact executables, formats,
-    /// requirements, platforms, and the release's resources; see
-    /// https://packslip.dev/docs/describing-releases/
-    #[usage(short = 'm', long, value_hint = usage_rs::ValueHint::FilePath)]
+    /// requirements, platforms, and the release's resources; its artifact and
+    /// asset paths are relative to the working directory, not to the
+    /// manifest. See
+    /// https://packslip.dev/docs/describing-releases/#use-a-toml-manifest
+    #[usage(short = 'm', long, value_hint = usage_rs::ValueHint::FilePath, help_heading = "Input")]
     manifest: Option<PathBuf>,
     /// Sign with this secret key instead of a CI identity
-    #[usage(short = 'k', long, value_hint = usage_rs::ValueHint::FilePath)]
+    #[usage(short = 'k', long, value_hint = usage_rs::ValueHint::FilePath, help_heading = "Signing")]
     key: Option<PathBuf>,
-    /// How to sign; defaults to key when --key is given, else oidc
-    #[usage(long)]
+    /// How to sign: oidc (keyless) or key (needs --key). Optional; inferred
+    /// from whether --key is given
+    #[usage(long, help_heading = "Signing")]
     sign: Option<SignWith>,
     /// With --key: do not record the signature in Rekor. Consumers must
     /// then opt in with --allow-unlogged
-    #[usage(long)]
+    #[usage(long, help_heading = "Signing")]
     no_log: bool,
-    /// Directory for the signed bundle (does not copy artifacts)
-    #[usage(short = 'o', long, default = ".")]
+    /// Directory to write the bundle into, created if missing
+    ///
+    /// The bundle is packslip.sigstore.json, or packslip.TOOL.sigstore.json
+    /// for a tool in a GitHub monorepo, such as github.com/owner/repo/TOOL (a
+    /// deeper path has each / replaced by -). An existing bundle is
+    /// replaced. Artifacts are not copied.
+    #[usage(short = 'o', long, default = ".", help_heading = "Output")]
     out: PathBuf,
-    /// Download URL prefix for the artifacts
-    #[usage(long)]
+    /// Download URL prefix: each artifact and resource asset gets
+    /// PREFIX/FILENAME unless --url or the manifest gives its URL
+    #[usage(long, help_heading = "Download URLs")]
     url_base: Option<String>,
     /// Download URL for one artifact or resource asset, as FILENAME=URL (repeatable)
-    #[usage(long)]
+    #[usage(long, help_heading = "Download URLs")]
     url: Vec<String>,
     /// Format of one artifact whose name does not say, as FILENAME=FORMAT:
     /// an archive (tar.xz, tar.gz, tar.zst, tar.bz2, tgz, tar, zip, 7z), a
     /// single compressed executable (gz, xz, zst, bz2), an installer (deb,
     /// rpm, dmg, pkg, msi, msix, exe, appimage), raw for a bare
     /// executable, or a type of your own (repeatable)
-    #[usage(long)]
+    #[usage(long, help_heading = "Artifacts")]
     format: Vec<String>,
-    /// Source repository URL
-    #[usage(long)]
+    /// Source repository URL, such as https://github.com/owner/repo
+    #[usage(long, help_heading = "Source")]
     source_repo: Option<String>,
-    /// Source commit
-    #[usage(long)]
+    /// Commit the release was built from; needs --source-repo or the
+    /// manifest's source.repo. A resource with a repo: source requires it,
+    /// and consumers read that file at this commit
+    #[usage(long, help_heading = "Source")]
     commit: Option<String>,
-    /// Source tag
-    #[usage(long)]
+    /// Git tag of the release, such as v1.2.3; needs --source-repo or the
+    /// manifest's source.repo
+    ///
+    /// Consumers that list a GitHub project's versions from its tags do not
+    /// see the release when the tag does not name the release's version,
+    /// unless a signed release list names the release. create warns when that
+    /// happens.
+    #[usage(long, help_heading = "Source")]
     tag: Option<String>,
     /// RFC 3339 publish time; defaults to now
-    #[usage(long)]
+    #[usage(long, help_heading = "Release metadata")]
     published_at: Option<String>,
     /// URL of the release notes
-    #[usage(long)]
+    #[usage(long, help_heading = "Release metadata")]
     notes_url: Option<String>,
     /// Release-level extension as NAME=JSON, where NAME is who defines it
     /// (a consumer such as mise, or a domain the vendor controls) and JSON
     /// is its value. Example: 'example.com={"build_id":"20260901.3"}'
     /// (repeatable)
-    #[usage(long)]
+    #[usage(long, help_heading = "Release metadata")]
     extension: Vec<String>,
-    /// Executable inside every artifact, as PATH or NAME=PATH; for a bare
-    /// executable, the name it gets on PATH (repeatable)
-    #[usage(long)]
+    /// Executable in every artifact: a NAME to find inside each archive, a
+    /// PATH from the archive root, or NAME=PATH when the command's name
+    /// differs from the file's (repeatable)
+    ///
+    /// A PATH includes any top-level directory of the archive. For a bare
+    /// executable, give the command name it installs as.
+    #[usage(long, help_heading = "Artifacts")]
     bin: Vec<String>,
-    /// Something else the release ships, as
-    /// KIND[/QUALIFIER][@os[/arch[/libc]]]=SOURCE:VALUE where SOURCE is
-    /// archive (a path inside every archive), asset (a
-    /// separate release file, by local path), repo (a path at --commit),
-    /// or exec (a command whose stdout is the file). Kinds: completion/SHELL
-    /// (or completion/SHELL,SHELL with exec and a {shell} placeholder),
-    /// man[/BIN], cli-spec/FORMAT[/BIN], skill/NAME, sbom/FORMAT, desktop, icon,
-    /// app. An @ scope limits the entry to the artifacts of that platform,
-    /// for a layout that differs across them; the manifest also scopes to
-    /// one exact artifact. Examples:
+    /// Another file the release ships, such as a completion script, man
+    /// page, or SBOM, as KIND[/QUALIFIER][@OS[/ARCH[/LIBC]]]=SOURCE:VALUE
+    /// (repeatable)
+    ///
+    /// SOURCE is archive (a path inside the artifact, from its root), asset
+    /// (a separate release file, by local path), repo (a path in the source
+    /// repository at --commit), or exec (a command whose stdout is the file;
+    /// leading NAME=value words set its environment).
+    ///
+    /// Known kinds: completion/SHELL[/BIN] (completion/SHELL,SHELL[/BIN]
+    /// with exec and a {shell} placeholder), man[/BIN],
+    /// cli-spec/FORMAT[/BIN], skill/NAME, sbom/FORMAT, desktop, icon, app.
+    /// Any other kind takes at most one qualifier, its name.
+    ///
+    /// An @ scope limits the entry to the artifacts of that platform, for a
+    /// layout that differs across them; release.toml can also limit an
+    /// entry to one artifact. Examples:
     /// 'completion/zsh=archive:share/zsh/site-functions/_tool',
-    /// 'man@linux=archive:share/man/man1/tool.1' (repeatable)
-    #[usage(long)]
+    /// 'man@linux=archive:share/man/man1/tool.1'. See
+    /// https://packslip.dev/docs/resources/#write-a-resource-entry
+    #[usage(long, help_heading = "Resources")]
     resource: Vec<String>,
     /// Provenance URL for an artifact, as FILENAME=URL, or bare URLs in
-    /// the order the artifacts are given (repeatable)
-    #[usage(long)]
+    /// the order of the ARTIFACTS arguments (repeatable)
+    #[usage(long, help_heading = "Artifacts")]
     provenance: Vec<String>,
     /// Who makes the claim: vendor (default) or repackager
-    #[usage(long)]
+    #[usage(long, help_heading = "Repackagers")]
     attested_by: Option<AttestorArg>,
     /// What a repackager checked, as KIND or KIND=DETAIL (repeatable)
-    #[usage(long)]
+    #[usage(long, help_heading = "Repackagers")]
     evidence: Vec<String>,
     /// Record only sha256, not sha512 as well
-    #[usage(long)]
+    #[usage(long, help_heading = "Artifacts")]
     no_sha512: bool,
     /// A command the executables need on PATH, as bin:NAME or bin:NAME@MIN
     /// where MIN is the lowest version that works. Example: bin:java@17
     /// (repeatable)
-    #[usage(long)]
+    #[usage(long, help_heading = "Artifacts")]
     require: Vec<String>,
-    /// Do not open the artifacts to record the shared libraries their
-    /// executables load from the host
-    #[usage(long)]
+    /// Do not read the executables for the shared libraries and C library
+    /// they load from the host
+    ///
+    /// With this flag, create still finds each --bin inside the archives but
+    /// does not derive requires.libs; a libs list in release.toml is recorded
+    /// as written, unchecked. A Linux artifact whose platform and file name
+    /// give no C library is recorded as gnu, even a static build.
+    #[usage(long, help_heading = "Artifacts")]
     no_libs: bool,
-    /// With keyless signing from a reusable workflow: declare that
-    /// consumers should hold later releases to this repository, not to
-    /// this signing workflow
-    #[usage(long)]
+    /// Keyless only: write identity.pin_workflow: false, so consumers hold
+    /// later releases to the signing repository instead of to the workflow
+    /// file that signs this one
+    ///
+    /// For a vendor whose releases are signed by more than one workflow of
+    /// its repository. The signer must still be a workflow of that
+    /// repository. A consumer that last accepted a release without the flag
+    /// refuses the first one with it until a person approves it. See
+    /// https://packslip.dev/release/v1/#reusable-workflows
+    #[usage(long, help_heading = "Signing")]
     no_pin_workflow: bool,
 }
 
@@ -985,25 +1075,40 @@ fn valid_platform(platform: &str) -> bool {
 
 /// Create and sign a project's release list
 ///
-/// Read local release bundles and write a signed index with their digests,
-/// versions, expiry, and sequence. Repeat --release for every entry to keep;
-/// this command does not append to a previous list or upload the output.
+/// Read local copies of released bundles and write a signed release list:
+/// each bundle's URL, digest, version, tag, and publish time, plus the
+/// list's sequence and expiry. The bundles are read, not verified, so give
+/// copies you trust. Repeat --release for every entry to keep; the command
+/// does not append to an earlier list or upload anything.
 ///
-/// Publish at the project's well-known location, or as a supplementary
-/// list on a GitHub repository's default branch. See
+/// Publish the list at https://HOST/.well-known/packslip/PATH.json for a
+/// project named HOST/PATH, or at https://HOST/.well-known/packslip.json for
+/// a project named after a bare host. github.com does not serve that path,
+/// so a github.com project commits the list to its default branch instead,
+/// as its supplementary list: .well-known/packslip.json, or
+/// .well-known/packslip/TOOL.json for a monorepo tool. See
 /// https://packslip.dev/docs/release-lists/.
 #[derive(Debug, usage_rs::Args)]
+#[usage(example(
+    "packslip releases \\\n        --project mytool.example.com \\\n        --sequence 1 --valid-for 30d \\\n        --latest 1.2.3 \\\n        --release https://mytool.example.com/v1.2.3/packslip.sigstore.json=releases/1.2.3/packslip.sigstore.json \\\n        --key release.key \\\n        --out site/.well-known/packslip.json",
+    header = "List one key-signed release of a self-hosted project"
+))]
 struct Releases {
-    /// The project's name, which every listed packslip must carry
+    /// The project's name, which every --release bundle must name
     #[usage(long)]
     project: String,
-    /// Increases with every list published
+    /// This list's sequence number, which increases with every list you
+    /// publish; consumers refuse a list whose sequence is lower than one
+    /// they have accepted
     #[usage(long)]
     sequence: u64,
-    /// Recommend this exact listed version for unconstrained latest requests
+    /// Recommend this version for an unconstrained latest request, without
+    /// reordering versions; it must exactly match the version of a --release
+    /// entry
     #[usage(long)]
     latest: Option<String>,
-    /// How long the list stays current: 30d, 12h, 2w
+    /// How long until the list expires, as a number and a unit (s, m, h, d,
+    /// or w), such as 30d
     #[usage(long, default = "30d")]
     valid_for: String,
     /// RFC 3339 generation time; defaults to now
@@ -1013,10 +1118,12 @@ struct Releases {
     /// local copy to read (repeatable)
     #[usage(long, required = true)]
     release: Vec<String>,
-    /// Mark a listed release withdrawn, as URL=REASON (repeatable)
+    /// Withdraw a listed release, as URL=REASON, with URL exactly as given
+    /// to --release (repeatable)
     #[usage(long)]
     yank: Vec<String>,
-    /// Mark a listed release as a security fix, by URL (repeatable)
+    /// Mark a listed release as a security fix, by its --release URL
+    /// (repeatable)
     #[usage(long)]
     security: Vec<String>,
     /// What a publisher other than the vendor checked about a listed
@@ -1024,20 +1131,23 @@ struct Releases {
     #[usage(long)]
     evidence: Vec<String>,
     /// Sign with this secret key instead of a CI identity
-    #[usage(short = 'k', long, value_hint = usage_rs::ValueHint::FilePath)]
+    #[usage(short = 'k', long, value_hint = usage_rs::ValueHint::FilePath, help_heading = "Signing")]
     key: Option<PathBuf>,
-    /// How to sign; defaults to key when --key is given, else oidc
-    #[usage(long)]
+    /// How to sign: oidc (keyless) or key (needs --key). Optional; inferred
+    /// from whether --key is given
+    #[usage(long, help_heading = "Signing")]
     sign: Option<SignWith>,
-    /// With --key: do not record the signature in Rekor
-    #[usage(long)]
+    /// With --key: do not record the signature in Rekor. Consumers must
+    /// then opt in with --allow-unlogged
+    #[usage(long, help_heading = "Signing")]
     no_log: bool,
-    /// With keyless signing from a reusable workflow: declare that
-    /// consumers should hold later releases to this repository, not to
-    /// this signing workflow
-    #[usage(long)]
+    /// Keyless only: write identity.pin_workflow: false into the list, as
+    /// `packslip create --no-pin-workflow` does for a release. See
+    /// https://packslip.dev/release/v1/#reusable-workflows
+    #[usage(long, help_heading = "Signing")]
     no_pin_workflow: bool,
-    /// Where to write the list
+    /// Where to write the list; consumers fetch it only from its .well-known
+    /// path, never under this default name
     #[usage(short = 'o', long, default = "packslip-releases.sigstore.json")]
     out: PathBuf,
 }
@@ -1139,50 +1249,86 @@ fn parse_duration(s: &str) -> Result<std::time::Duration> {
 ///
 /// Check the signature, log evidence, and statement structure. With
 /// --artifact, also check local files against signed digests and artifact
-/// sizes. Without it, only the bundle is checked. Verification failures
-/// exit with status 1; no remote artifacts or provenance are fetched.
+/// sizes. Without it, only the bundle is checked. Nothing is downloaded:
+/// remote artifacts and linked provenance are not fetched.
 ///
-/// Pin a keyless signer with --identity or --identity-prefix and --issuer,
-/// or a signing key with --pubkey. Without an explicit pin, derive the
-/// policy from the document's claimed GitHub or GitLab project. With --pin,
-/// also require the signing repository to have that signer fingerprint.
-/// Consumers must separately match the project and version to their
-/// intended request.
-/// For release lists, expiry and remembered sequence checks are the
-/// consumer's responsibility. See https://packslip.dev/docs/verifying/.
+/// Choose what to trust. By default, the identity policy comes from the
+/// project the document claims, if it is on github.com or gitlab.com: that
+/// forge's issuer and any workflow of that repository. Any other project
+/// needs --pubkey or an identity flag. For a keyless release, --issuer with
+/// --identity-prefix (any workflow of a repository, such as
+/// https://github.com/owner/repo/) or --identity (one exact certificate
+/// identity, including its ref) replaces the derived policy, and only the
+/// flags you pass are checked: --issuer alone accepts any signer from that
+/// issuer. For a key-signed release, pass --pubkey. --pin adds a check on
+/// top of the identity policy: the signing repository must have that signer
+/// fingerprint.
+///
+/// Then match the verified project and version to what you meant to
+/// install. For a release list, the command does not check the expiry or
+/// compare the sequence with an earlier list. See
+/// https://packslip.dev/docs/verifying/.
 #[derive(Debug, usage_rs::Args)]
+#[usage(
+    exit_code(0, "The bundle verified, and every --artifact matched it"),
+    exit_code(
+        1,
+        "Verification failed, or an input was unusable: a file could not be read, a key or fingerprint is malformed, or the trust flags conflict or are missing"
+    ),
+    exit_code(2, "The command line is invalid"),
+    example(
+        "packslip verify packslip.sigstore.json \\\n        --identity-prefix https://github.com/owner/repo/ \\\n        --issuer https://token.actions.githubusercontent.com \\\n        --artifact mytool-1.2.3-linux-x64.tar.gz",
+        header = "Verify a GitHub release against its repository"
+    ),
+    example(
+        "packslip verify packslip.sigstore.json \\\n        --pin ps1_snirenkjwr7m5ozgcufameodnm \\\n        --artifact hk-x86_64-unknown-linux-gnu.tar.gz",
+        header = "Verify hk 2.3.0 against its signer fingerprint"
+    ),
+    example(
+        "packslip verify packslip.sigstore.json \\\n        --pubkey release.pub \\\n        --artifact mytool-1.2.3-linux-x64.tar.gz",
+        header = "Verify a key-signed release"
+    )
+)]
 struct Verify {
     /// Local release bundle or signed release list to verify
     #[usage(value_hint = usage_rs::ValueHint::FilePath)]
     bundle: PathBuf,
     /// The pinned public key file, or its base64 line
-    #[usage(short = 'p', long)]
+    #[usage(short = 'p', long, help_heading = "Trust")]
     pubkey: Option<String>,
-    /// The exact certificate identity a keyless signer must have
-    #[usage(long)]
+    /// The exact certificate identity a keyless signer must have, including
+    /// its ref, such as
+    /// https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3
+    #[usage(long, help_heading = "Trust")]
     identity: Option<String>,
     /// A prefix the certificate identity must start with, such as
     /// https://github.com/owner/repo/
-    #[usage(long)]
+    #[usage(long, help_heading = "Trust")]
     identity_prefix: Option<String>,
-    /// The OIDC issuer a keyless signer must have
-    #[usage(long)]
+    /// The OIDC issuer a keyless signer must have; pass it with --identity
+    /// or --identity-prefix, since alone it accepts any signer from that
+    /// issuer
+    #[usage(long, help_heading = "Trust")]
     issuer: Option<String>,
     /// The signer fingerprint (ps1_...) the certificate's repository must
     /// have, as `packslip pin` prints it
-    #[usage(long)]
+    #[usage(long, help_heading = "Trust")]
     pin: Option<String>,
     /// Accept a bundle without a transparency log entry
-    #[usage(long)]
+    #[usage(long, help_heading = "Trust")]
     allow_unlogged: bool,
     /// A sigstore trusted_root.json to use instead of the embedded one
-    #[usage(long, value_hint = usage_rs::ValueHint::FilePath)]
+    #[usage(long, value_hint = usage_rs::ValueHint::FilePath, help_heading = "Trust")]
     trusted_root: Option<PathBuf>,
-    /// Local artifacts or resource assets to check (repeatable; not downloaded)
+    /// A downloaded artifact or resource asset to check against the bundle,
+    /// matched by file name, so keep the name it was published under
+    /// (repeatable)
     #[usage(short = 'a', long)]
     artifact: Vec<PathBuf>,
-    /// Print the result as JSON
-    #[usage(short = 'J', long)]
+    /// Print the verified report as JSON, with source_repository when the
+    /// signing certificate records one; for a release list, print the
+    /// verified list statement
+    #[usage(short = 'J', long, help_heading = "Output")]
     json: bool,
 }
 
@@ -1470,7 +1616,7 @@ fn signer_fingerprint(
     bound_to_project(project, signer, issuer, source)?;
     Fingerprint::of_signer(issuer, source).ok_or_else(|| {
         format!(
-            "{project}'s certificate records no repository ID, so it has no signer fingerprint; pin it with --identity and --issuer instead"
+            "{project}'s certificate records no repository ID, so it has no signer fingerprint; pin it with --identity-prefix and --issuer instead"
         )
     })
 }
@@ -1489,39 +1635,60 @@ fn match_fingerprint(
 
 /// Print the signer fingerprint of a project's keyless releases
 ///
-/// Verify a release bundle, then print the signer fingerprint of the
-/// repository its certificate comes from: `ps1_` and 26 characters. A
-/// README or Dockerfile can carry it, and `packslip verify --pin` checks a
-/// release against it. It names the forge's issuer and repository ID only,
-/// so it survives renaming the repository, moving it to another owner, and
-/// changing the workflow, and it does not carry over to a repository that
-/// takes over the old name. A key-signed project, and a certificate that
-/// records no repository ID, have none. Run this on a release you trust: it
-/// names whichever repository signed the bundle it is given.
+/// Verify a release bundle and print the signer fingerprint of the
+/// repository that signed it: `ps1_` and 26 characters. Run it on a release
+/// you already trust, because it fingerprints whichever repository signed
+/// the bundle it is given. A vendor publishes the fingerprint where
+/// consumers can read it without trusting a release, such as its README,
+/// and a consumer records it in its own configuration, such as a Dockerfile
+/// or CI workflow; `packslip verify --pin` then checks a release against it.
 ///
-/// Verification is the same as `packslip verify`: the policy is the one the
+/// The fingerprint is derived from the forge's issuer and repository ID
+/// only. It stays the same when the repository is renamed, moves to another
+/// owner, or signs from another workflow, and a repository that later takes
+/// over the old name gets a different one. Only keyless releases whose
+/// certificate records a repository ID have one; for a key-signed release,
+/// pin the key with `packslip verify --pubkey`.
+///
+/// Verification works as in `packslip verify`: the policy is the one the
 /// project's name implies unless --identity, --identity-prefix, or --issuer
-/// say otherwise. See https://packslip.dev/docs/verifying/.
+/// replace it. See https://packslip.dev/docs/verifying/.
 #[derive(Debug, usage_rs::Args)]
+#[usage(
+    exit_code(0, "Printed the signer fingerprint"),
+    exit_code(
+        1,
+        "Verification failed, the release has no signer fingerprint, or an input was unusable"
+    ),
+    exit_code(2, "The command line is invalid"),
+    example(
+        "packslip pin packslip.sigstore.json",
+        header = "Print the fingerprint of a release you already trust"
+    )
+)]
 struct Pin {
     /// Local release bundle to verify and fingerprint
     #[usage(value_hint = usage_rs::ValueHint::FilePath)]
     bundle: PathBuf,
-    /// The exact certificate identity a keyless signer must have
-    #[usage(long)]
+    /// The exact certificate identity a keyless signer must have, including
+    /// its ref, such as
+    /// https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3
+    #[usage(long, help_heading = "Trust")]
     identity: Option<String>,
     /// A prefix the certificate identity must start with, such as
     /// https://github.com/owner/repo/
-    #[usage(long)]
+    #[usage(long, help_heading = "Trust")]
     identity_prefix: Option<String>,
-    /// The OIDC issuer a keyless signer must have
-    #[usage(long)]
+    /// The OIDC issuer a keyless signer must have; pass it with --identity
+    /// or --identity-prefix, since alone it accepts any signer from that
+    /// issuer
+    #[usage(long, help_heading = "Trust")]
     issuer: Option<String>,
     /// Accept a bundle without a transparency log entry
-    #[usage(long)]
+    #[usage(long, help_heading = "Trust")]
     allow_unlogged: bool,
     /// A sigstore trusted_root.json to use instead of the embedded one
-    #[usage(long, value_hint = usage_rs::ValueHint::FilePath)]
+    #[usage(long, value_hint = usage_rs::ValueHint::FilePath, help_heading = "Trust")]
     trusted_root: Option<PathBuf>,
 }
 

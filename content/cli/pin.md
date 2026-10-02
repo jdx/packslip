@@ -5,17 +5,37 @@
 
 Print the signer fingerprint of a project's keyless releases
 
-Verify a release bundle, then print the signer fingerprint of the repository its certificate comes from: `ps1_` and 26 characters. A README or Dockerfile can carry it, and `packslip verify --pin` checks a release against it. It names the forge's issuer and repository ID only, so it survives renaming the repository, moving it to another owner, and changing the workflow, and it does not carry over to a repository that takes over the old name. A key-signed project, and a certificate that records no repository ID, have none. Run this on a release you trust: it names whichever repository signed the bundle it is given.
+Verify a release bundle and print the signer fingerprint of the repository that signed it: `ps1_` and 26 characters. Run it on a release you already trust, because it fingerprints whichever repository signed the bundle it is given. A vendor publishes the fingerprint where consumers can read it without trusting a release, such as its README, and a consumer records it in its own configuration, such as a Dockerfile or CI workflow; `packslip verify --pin` then checks a release against it.
 
-Verification is the same as `packslip verify`: the policy is the one the project's name implies unless --identity, --identity-prefix, or --issuer say otherwise. See https://packslip.dev/docs/verifying/.
+The fingerprint is derived from the forge's issuer and repository ID only. It stays the same when the repository is renamed, moves to another owner, or signs from another workflow, and a repository that later takes over the old name gets a different one. Only keyless releases whose certificate records a repository ID have one; for a key-signed release, pin the key with `packslip verify --pubkey`.
+
+Verification works as in `packslip verify`: the policy is the one the project's name implies unless --identity, --identity-prefix, or --issuer replace it. See https://packslip.dev/docs/verifying/.
 
 ## Arguments
 - **`<BUNDLE>`** — Local release bundle to verify and fingerprint
 
 ## Flags
-- **`--identity <IDENTITY>`** — The exact certificate identity a keyless signer must have
+- **`-h --help`** — Print help
+
+## Trust
+- **`--identity <IDENTITY>`** — The exact certificate identity a keyless signer must have, including its ref, such as https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3
 - **`--identity-prefix <IDENTITY_PREFIX>`** — A prefix the certificate identity must start with, such as https://github.com/owner/repo/
-- **`--issuer <ISSUER>`** — The OIDC issuer a keyless signer must have
+- **`--issuer <ISSUER>`** — The OIDC issuer a keyless signer must have; pass it with --identity or --identity-prefix, since alone it accepts any signer from that issuer
 - **`--allow-unlogged`** — Accept a bundle without a transparency log entry
 - **`--trusted-root <TRUSTED_ROOT>`** — A sigstore trusted_root.json to use instead of the embedded one
-- **`-h --help`** — Print help
+
+## Exit Status
+
+| Code | Meaning |
+| ---- | ------- |
+| `0` | Printed the signer fingerprint |
+| `1` | Verification failed, the release has no signer fingerprint, or an input was unusable |
+| `2` | The command line is invalid |
+
+## Examples
+
+**Print the fingerprint of a release you already trust**
+
+```
+packslip pin packslip.sigstore.json
+```

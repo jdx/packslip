@@ -184,7 +184,7 @@
           "type": "string"
         },
         "pin_workflow": {
-          "description": "For `sigstore-oidc`, whether a consumer holds later releases to the\nworkflow that signed this one. `false` declares that the vendor\nsigns from a reusable workflow, so only the repository is pinned.\nAbsent means `true`.",
+          "description": "For `sigstore-oidc`, whether a consumer holds later releases to the\nworkflow file that signed this one. `false` asks consumers to hold\nthem to the signing repository instead, for a vendor whose releases\nare signed by more than one workflow of its repository. Absent means\n`true`.",
           "type": [
             "boolean",
             "null"

@@ -4,14 +4,20 @@ packslip is a stable format at version 1 and a Rust reference
 implementation of it. For a bug report or format feedback, open an
 [issue](https://github.com/jdx/packslip/issues) with the use case and,
 where possible, a small release layout that demonstrates it. A proposal
-that changes what version 1 fixes is a version 2 proposal; the
+that changes anything version 1 holds fixed is a version 2 proposal; the
 specification's [Stability](https://packslip.dev/release/v1/#stability)
-section says where that line falls.
+section draws the line.
 
 ## Set up the repository
 
-Use Rust 1.95 or newer. The documentation tools are pinned in `mise.toml`
-and `mise.lock`.
+You need Rust 1.95 or newer from rustup (this repository's `mise.toml`
+does not pin Rust), and mise 2026.9.7 or newer. `mise install` installs the versions
+pinned in `mise.toml` and `mise.lock`: Hugo, usage, and shellcheck for the
+docs and lint tasks, Communiqué for release notes, and mr-boxington
+(`mbx`). In this repository mise wraps `cargo` so that it builds through
+`mbx`, which makes `target/` a symlink into `~/.cache/mbx`.
+`mise run docs:check` also needs Python 3.9 or newer, a POSIX shell, and
+`tar`.
 
 ```sh
 mise install
@@ -31,21 +37,32 @@ toolchain, for example `RUSTUP_TOOLCHAIN=1.95.0 mise run docs`.
 | CLI help | Command and argument documentation in `src/main.rs` and `src/cli.rs` |
 | Schema and validation | `src/model.rs` |
 | Conformance vectors | `tests/conformance/` (see its README) |
-| Creation and verification | `src/create.rs`, `src/verify.rs`, `src/sigstore.rs` |
+| Creation and verification | `src/create.rs`, `src/verify.rs`, `src/sigstore.rs`; key signing in `src/dsse.rs` and `src/minisign.rs` |
+| `release.toml` manifests | `src/manifest.rs` |
+| Archives and `requires.libs` | `src/archive.rs`, `src/linkage.rs` |
+| Forge identity and signer fingerprints | `src/forge.rs`, `src/fingerprint.rs` |
+| Agent skill, published with every release | `skills/packslip/SKILL.md`; update it with the guides when CLI flags or action inputs change |
 | GitHub Actions | `action.yml`, `releases/action.yml`, and `scripts/install-packslip.sh`, which both run |
+| Test fixtures | `tests/fixtures/` (see its README) |
+| Release example on the homepage and quickstart | `docs/examples/release-excerpt.json` |
 | The site's Worker | `wrangler.jsonc`, `cloudflare/worker.js` |
-| Site layout and styling | `layouts/`, `static/style.css` |
-| Release process | `RELEASING.md`, `.github/workflows/`, `release-plz.toml` |
+| Site layout and styling | `layouts/`, `static/style.css`, `static/docs.js` |
+| Social preview images | `layouts/partials/social-image.html`, `assets/social/` (see its README) |
+| Release process | `RELEASING.md`, `.github/workflows/`, `release-plz.toml`, `cliff.toml` (changelog), `communique.toml` (release notes), `scripts/describe-release.sh` (packslip.dev's own packslip) |
 
-`content/spec.md`, `content/cli/`, `packslip.usage.kdl`, and
-`static/schema/` are generated. Edit their source and regenerate them;
-direct edits will be overwritten.
+`mise run render` generates `content/spec.md`, `content/cli/`,
+`packslip.usage.kdl`, `packslip.1`, and `static/schema/`. Do not edit
+them directly: edit their sources and run `mise run render` again, because
+the next render overwrites any direct edit. release-plz adds each
+release's section to `CHANGELOG.md` from the merged pull request titles;
+edit that file by hand only when
+[publishing a version release-plz would not propose](RELEASING.md#publishing-a-version-release-plz-would-not-propose).
 
 A change to a rule the [conformance vectors](tests/conformance/README.md)
 cover changes the vectors too, in the same pull request. They are the
 specification in executable form, so a vector that has to be edited to
 keep the tests passing is a signal: either the change is a specification
-change, or the vector was describing behaviour the specification does not
+change, or the vector was describing behavior the specification does not
 require. Say which in the pull request.
 
 ## Preview and build the docs
@@ -54,55 +71,104 @@ require. Say which in the pull request.
 mise run docs        # Regenerate and serve with Hugo.
 mise run docs:build  # Regenerate and build into public/.
 mise run docs:check  # Build, check links, and run offline examples.
-mise run lint        # Shellcheck the scripts the actions and workflows run.
 ```
 
-`mise run render` regenerates the CLI reference, usage spec, JSON schemas,
-and specification page without starting Hugo. Commit those generated
-changes with their source changes. Handwritten guides live outside the
-generated CLI directory so regeneration preserves them.
+`mise run render` regenerates the
+[generated files](#find-the-right-source) without starting Hugo. It
+deletes and recreates `content/cli/`, so keep handwritten pages in
+`content/docs/`.
+
+`site.yml` deploys packslip.dev on every push to `main`, separately from
+releases. A merged guide or specification change is live at once, and the
+CLI reference shows `main`'s commands, which can be ahead of the latest
+release. Before building, the workflow writes the current GitHub star
+count to `data/github.json`; local previews use the checked-in value.
 
 Keep guides focused on tasks and examples. Put normative format rules
 in the specification and command details in CLI help. Check examples
 against the implementation, distinguish draft integrations from shipped
 features, and use site paths such as `/docs/verifying/` for internal links.
-Preserve existing specification anchors when reorganizing sections.
 
-The site workflow updates the GitHub star count in `data/github.json`
-before building, then deploys the built site as the packslip.dev Worker's
-static assets. Local previews use the checked-in value.
+Preserve existing anchors when reorganizing sections, because other sites
+link to them and `mise run docs:check` sees only links within this one.
+`docs/spec/packslip.md` is also rendered on GitHub, so keep the exact text
+of any heading that others link to, and never add `{#id}` there. In
+`content/docs/`, give a renamed heading its old anchor with `{#old-id}`.
 
 ## Check a change
 
-For documentation changes, run `mise run docs:check` and inspect the affected
-pages in a browser. The check validates local links, anchors, and assets;
-runs the four marked quickstart blocks from Markdown; and creates and
-verifies the recipe manifests using sample archives. It uses temporary
-directories and unlogged keys, without uploading files or logging signatures.
-The homepage and quickstart share `docs/examples/release-excerpt.json`,
-which is checked against the generated quickstart statement.
-It needs Python 3.9 or newer, a POSIX shell, and `tar`.
-
-Use `<!-- docs-test: quickstart -->` before each executable walkthrough
-block. Installation commands are not run by this check. Recipe TOML blocks
-use `<!-- docs-test: recipe NAME -->`; maintain their sample archive layouts
-in `scripts/check-docs.py` when changing a recipe. Recipe checks validate
-configuration and archive layout, not language builds or platform signing.
-
-For Rust changes, run the checks used by CI:
+Before you open a pull request, run what CI runs:
 
 ```sh
 cargo fmt --all -- --check
 cargo clippy --all-features --all-targets -- -D warnings
 cargo test --all-features
-mise run render
+# The verify-only build that library consumers use:
+cargo clippy --no-default-features --all-targets -- -D warnings
+cargo test --no-default-features
+mise run lint        # Shellcheck the scripts the actions and workflows run.
+mise run docs:check  # Also runs `mise run render`.
 mise exec -- usage lint packslip.usage.kdl
-mise run docs:check
+git status --short   # Lists generated files to commit.
 ```
 
-CI checks that regeneration leaves the working tree unchanged. Signing
-integration jobs run on `main`, where a CI identity is available. Local
-key-signed tests can use `--no-log` with `--allow-unlogged` to avoid
-publishing test signatures to Rekor.
+CI sets `RUSTFLAGS=-D warnings`, so any compiler warning fails CI. CI also
+fails if `mise run render` changes a committed file, so commit regenerated
+files with the source change that caused them.
+`cargo test --all-features` includes `tests/action.rs`, which runs
+`action.yml`'s create step against a mock CLI; `cargo test --test action`
+runs it alone. The `signing` job runs only on pushes to `main`, where a CI
+identity is available. It signs both keylessly and with a key, records
+both signatures in the public Rekor log, and runs the releases action.
+zizmor audits the workflows on every pull request.
+
+For documentation changes, also inspect the affected pages in a browser.
+`mise run docs:check` fails when a local link, anchor, or asset is
+missing, when a page has no H1 or more than one, when a page repeats an
+`id`, or when inline markup is followed by a space and then punctuation.
+It also fails when one of the guide URLs listed in `scripts/check-docs.py`
+stops resolving; if you rename or move a guide, list its old path under
+`aliases` in the front matter. The check then runs the quickstart and the
+recipes in temporary directories with unlogged keys, without uploading
+files or logging signatures. The homepage and quickstart share
+`docs/examples/release-excerpt.json`, which is checked against the
+statement the quickstart creates.
+
+`content/docs/getting-started.md` has exactly four blocks marked
+`<!-- docs-test: quickstart -->` (setup, create, show, verify). The check
+runs them in order in one temporary directory, and a marker on any other
+page does nothing. Adding or removing a marked block fails the check until
+`check_quickstart` in `scripts/check-docs.py` is updated. Commands that
+install packslip are not marked and never run.
+
+Each TOML block in `content/docs/recipes.md` marked
+`<!-- docs-test: recipe NAME -->` needs a matching `NAME` entry in
+`RECIPE_FILES` in `scripts/check-docs.py`, which describes its sample
+archives; the check fails when the markers and the entries differ. Recipe checks validate configuration and archive layout,
+not language builds or platform signing.
+
+When you try key-signed commands locally, pass `--no-log` to
+`packslip create` (and to `packslip releases`), and `--allow-unlogged` to
+`packslip verify`. Without `--no-log`, `create` records the test signature
+in the public Rekor log.
+
+## Submit a pull request
+
+Pull requests are squash-merged. The title becomes the commit subject on
+`main`, and the description becomes the commit body; Communiqué reads both
+to write the release notes. The title is also the change's line in
+`CHANGELOG.md` when the pull request changes a file in the Cargo package.
+The `exclude` list in `Cargo.toml` leaves out the site (`content/`,
+`layouts/`, `static/`), `.github/`, and `RELEASING.md`, among others, so a
+change to the guides alone gets no changelog line.
+
+CI rejects a title that is not a conventional commit:
+`fix(verify): reject artifacts with mismatched digests` passes, and
+`Fix verify` does not. [AGENTS.md](AGENTS.md) lists the allowed types and
+explains how to write a title and description for release notes; its
+rules apply to every contributor, not only to agents. Mark a breaking
+change with `!` and explain it in a `BREAKING CHANGE:` footer at the end
+of the description (see [RELEASING.md](RELEASING.md#major-versions) for
+what that does to the version).
 
 See [RELEASING.md](RELEASING.md) for maintainer setup and publication.

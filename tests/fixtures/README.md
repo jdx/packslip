@@ -16,26 +16,41 @@
   program built on Alpine does. Tests check that `packslip create` records
   `libc = "musl"` for it when the file name does not say.
 
-  Both are the same three instructions, `exit(0)`, assembled from
-
-  ```asm
-  .globl _start
-  .text
-  _start:
-    mov $60, %eax
-    xor %edi, %edi
-    syscall
-  ```
-
-  with `clang -target x86_64-unknown-linux -c start.s` and linked with
-  `rust-lld -flavor gnu`: `-static -s -o static start.o` for the first, and
-  for the second `-pie -s --dynamic-linker /lib/ld-musl-x86_64.so.1
-  --no-as-needed -o needs-musl start.o libc.musl-x86_64.so.1`, against a
-  stub made with `-shared -soname libc.musl-x86_64.so.1` from an empty
-  object.
-
 - `hk-v2.3.0.sigstore.json`: the packslip `jdx/hk` published with its
   v2.3.0 GitHub release, signed keylessly by its release workflow. Its
   Fulcio certificate records repository ID 922514152 and owner ID 216188,
   which is what `gh api repos/jdx/hk --jq '.id,.owner.id'` gives. Tests
-  verify it offline against the embedded trusted root.
+  verify it offline against the embedded trusted root. Tests also check
+  that `packslip pin` prints its signer fingerprint,
+  `ps1_snirenkjwr7m5ozgcufameodnm`, and that `packslip verify --pin`
+  accepts that fingerprint and refuses another repository's.
+
+## Building `static` and `needs-musl`
+
+`static` and `needs-musl` are the same three instructions, `exit(0)`.
+Save them as `start.s`:
+
+```asm
+.globl _start
+.text
+_start:
+  mov $60, %eax
+  xor %edi, %edi
+  syscall
+```
+
+Assemble and link them with clang and rust-lld. rustup installs `rust-lld`
+with each toolchain under `lib/rustlib/<host>/bin/`, not on `PATH`. The
+third command builds a stub `libc.musl-x86_64.so.1` from an empty object,
+only so that `needs-musl` can link against it; the stub is not committed.
+
+```sh
+clang -target x86_64-unknown-linux -c start.s
+: > empty.s && clang -target x86_64-unknown-linux -c empty.s
+rust-lld -flavor gnu -shared -soname libc.musl-x86_64.so.1 -o libc.musl-x86_64.so.1 empty.o
+rust-lld -flavor gnu -static -s -o static start.o
+rust-lld -flavor gnu -pie -s --dynamic-linker /lib/ld-musl-x86_64.so.1 --no-as-needed -o needs-musl start.o libc.musl-x86_64.so.1
+```
+
+A different linker version can produce files a few bytes larger or
+smaller than the committed ones.

@@ -22,22 +22,31 @@ inputs:
       whitespace separated (mytool-*.tar.gz mytool-*.zip). Downloaded files
       join `artifacts`, so a job whose archives already live on the release
       named by `tag` needs no separate `gh release download` step, and no
-      second copy of these patterns for a local artifacts glob.
+      second copy of these patterns for a local artifacts glob. With
+      contents: read, the default github.token cannot see a draft release.
     required: false
     default: ""
   project:
     description: >
       The project's name; defaults to github.com/<owner>/<repo>. A tool in
       a monorepo names itself github.com/<owner>/<repo>/<tool> and runs this
-      step once per tool.
+      step once per tool. A host such as mytool.example.com names a project
+      on its own domain; see https://packslip.dev/docs/self-hosting/.
     required: false
     default: ""
   version:
-    description: The release version; defaults to the tag name without a leading v
+    description: >
+      The release's semver version, such as 1.2.3; defaults to the tag
+      without a leading v. Set it for tags such as mytool-v1.2.3 or v4.1,
+      which the action does not normalize.
     required: false
     default: ""
   tag:
-    description: The release tag to upload to; defaults to the tag that triggered the job
+    description: >
+      The release tag, such as v1.2.3. Defaults to the tag that triggered
+      the workflow and is required otherwise. The action records it as the
+      source tag, derives the default version, url-base, and notes-url from
+      it, and downloads from and uploads to that release.
     required: false
     default: ""
   commit:
@@ -54,20 +63,24 @@ inputs:
     default: ""
   bin:
     description: >
-      Executables inside every artifact, whitespace separated, each a path
-      relative to the archive root or NAME=PATH when the PATH name differs.
-      A plain name is looked up inside each archive, so `tool` finds
-      `tool-1.2.3-linux-x64/tool`; for a bare executable it is the name the
-      file gets on PATH.
+      Executables inside every artifact, whitespace separated: a path
+      relative to the archive root, a plain name to look up inside each
+      archive (`tool` finds `tool-1.2.3-linux-x64/tool`), or NAME=PATH when
+      the command name differs from the file's. For a bare executable
+      artifact, the value is the name the file gets on PATH.
     required: false
     default: ""
   manifest:
     description: >
       A TOML manifest (`packslip create --manifest`) for what the inputs
       cannot say per artifact: executables at different paths in different
-      archives, a format the file name gets wrong, host requirements, an
-      artifact that runs anywhere, and resources. Artifacts it lists are
-      merged with the `artifacts` input.
+      archives, a platform the file name does not give, an artifact that
+      runs anywhere, OS or glibc minimums, and resources for one artifact.
+      Artifacts it lists are merged with the collected files. The action
+      always sets project, version, url_base, notes_url, and [source]
+      itself, from its inputs, their defaults, and the workflow's
+      repository, so those keys in the file are ignored. The file must be
+      present in the job, so check out the repository first.
     required: false
     default: ""
   variants:
@@ -87,15 +100,16 @@ inputs:
   resources:
     description: >
       What ships besides the executables, one per line, each a `packslip
-      create --resource` value: KIND[/QUALIFIER][@os[/arch[/libc]]]=SOURCE:VALUE,
-      where the optional @ scope limits an entry to one platform
-      (man@linux=archive:share/man/man1/tool.1), such as
-      completion/zsh=archive:share/zsh/site-functions/_tool,
+      create --resource` value: KIND[/QUALIFIER][@os[/arch[/libc]]]=SOURCE:VALUE.
+      For example: completion/zsh=archive:share/zsh/site-functions/_tool,
       man=archive:share/man/man1/tool.1, cli-spec/usage=exec:tool usage,
       skill/tool=repo:skills/tool, skill/tool=asset:dist/tool-skill.tar.gz,
-      or sbom/cyclonedx=asset:dist/tool.cdx.json (an asset is a file
-      digested alongside the artifacts; one the artifacts glob also matched
-      is treated as the asset, not an artifact).
+      or sbom/cyclonedx=asset:dist/tool.cdx.json. An @ scope limits an
+      entry to one platform (man@linux=archive:share/man/man1/tool.1). An
+      asset is a local file that is digested with the artifacts; upload it
+      to the release yourself, because the action uploads only the bundle.
+      A file the artifacts input also matched is recorded as the asset, not
+      as an artifact.
     required: false
     default: ""
   require:
@@ -120,31 +134,41 @@ inputs:
     default: ""
   attest:
     description: >
-      What to do about build provenance. `true` attests every artifact with
-      actions/attest-build-provenance and links the attestation from the
-      packslip, and needs the attestations: write permission. `link` only
-      links it, for a workflow whose build jobs already attested the files
-      as they produced them; it needs no extra permission, and an artifact
-      nothing attested leaves a URL that resolves to nothing. `false` does
-      neither.
+      What to do about build provenance. `true` attests every file
+      collected by artifacts and download with
+      actions/attest-build-provenance, links each artifact's attestation
+      from the packslip, and needs the attestations: write permission; an
+      artifact listed only in the TOML manifest is neither attested nor
+      linked. `link` only links the attestations, for a workflow whose
+      build jobs already attested the files as they produced them; it needs
+      no extra permission, and an artifact nothing attested leaves a URL
+      that resolves to nothing. `false` does neither. In a private or
+      internal repository, GitHub attestations need GitHub Enterprise
+      Cloud, so use `false` on other plans.
     required: false
     default: "true"
   out:
-    description: Directory to write the bundle into
+    description: >
+      Directory to write the bundle into. The file is packslip.sigstore.json,
+      or packslip.<subpath>.sigstore.json for a tool in a GitHub monorepo
+      (github.com/<owner>/<repo>/<subpath>), with any / in the subpath
+      written as -.
     required: false
     default: packslip
   upload:
     description: >
-      Upload the packslip to the release. Defaults to true for existing
-      workflows. Set false to generate in a job with contents: read, then
-      upload the bundle from a separate job with contents: write.
+      Upload the bundle to the release named by tag, which needs contents:
+      write. Defaults to true. Set false to sign in a job that has only
+      contents: read, then upload the bundle output from a separate job that
+      has contents: write; see
+      https://packslip.dev/docs/publishing/#keep-the-action-away-from-release-write-access.
     required: false
     default: "true"
   packslip-version:
     description: >
-      The packslip release to run; defaults to the version this action was
-      released with (read from its Cargo.toml). Ignored when packslip-path
-      is set.
+      The packslip version to run, such as 1.4.0, without a leading v;
+      defaults to the version this action was released with (read from its
+      Cargo.toml). Ignored when packslip-path is set.
     required: false
     default: ""
   packslip-path:
@@ -158,13 +182,15 @@ inputs:
     required: false
     default: ""
   token:
-    description: Token for downloading packslip and uploading assets
+    description: >
+      Token for installing packslip, downloading release assets (download),
+      and uploading the bundle (upload)
     required: false
     default: ${{ github.token }}
 
 outputs:
   bundle:
-    description: Path of the written bundle
+    description: Path of the written bundle, under out
     value: ${{ steps.create.outputs.bundle }}
 
 runs:

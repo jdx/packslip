@@ -5,21 +5,62 @@
 
 Verify a packslip, or a release list, against a pinned identity or key
 
-Check the signature, log evidence, and statement structure. With --artifact, also check local files against signed digests and artifact sizes. Without it, only the bundle is checked. Verification failures exit with status 1; no remote artifacts or provenance are fetched.
+Check the signature, log evidence, and statement structure. With --artifact, also check local files against signed digests and artifact sizes. Without it, only the bundle is checked. Nothing is downloaded: remote artifacts and linked provenance are not fetched.
 
-Pin a keyless signer with --identity or --identity-prefix and --issuer, or a signing key with --pubkey. Without an explicit pin, derive the policy from the document's claimed GitHub or GitLab project. With --pin, also require the signing repository to have that signer fingerprint. Consumers must separately match the project and version to their intended request. For release lists, expiry and remembered sequence checks are the consumer's responsibility. See https://packslip.dev/docs/verifying/.
+Choose what to trust. By default, the identity policy comes from the project the document claims, if it is on github.com or gitlab.com: that forge's issuer and any workflow of that repository. Any other project needs --pubkey or an identity flag. For a keyless release, --issuer with --identity-prefix (any workflow of a repository, such as https://github.com/owner/repo/) or --identity (one exact certificate identity, including its ref) replaces the derived policy, and only the flags you pass are checked: --issuer alone accepts any signer from that issuer. For a key-signed release, pass --pubkey. --pin adds a check on top of the identity policy: the signing repository must have that signer fingerprint.
+
+Then match the verified project and version to what you meant to install. For a release list, the command does not check the expiry or compare the sequence with an earlier list. See https://packslip.dev/docs/verifying/.
 
 ## Arguments
 - **`<BUNDLE>`** — Local release bundle or signed release list to verify
 
 ## Flags
+- **`-a --artifact <ARTIFACT>`** — A downloaded artifact or resource asset to check against the bundle, matched by file name, so keep the name it was published under (repeatable)
+- **`-h --help`** — Print help
+
+## Trust
 - **`-p --pubkey <PUBKEY>`** — The pinned public key file, or its base64 line
-- **`--identity <IDENTITY>`** — The exact certificate identity a keyless signer must have
+- **`--identity <IDENTITY>`** — The exact certificate identity a keyless signer must have, including its ref, such as https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3
 - **`--identity-prefix <IDENTITY_PREFIX>`** — A prefix the certificate identity must start with, such as https://github.com/owner/repo/
-- **`--issuer <ISSUER>`** — The OIDC issuer a keyless signer must have
+- **`--issuer <ISSUER>`** — The OIDC issuer a keyless signer must have; pass it with --identity or --identity-prefix, since alone it accepts any signer from that issuer
 - **`--pin <PIN>`** — The signer fingerprint (ps1_...) the certificate's repository must have, as `packslip pin` prints it
 - **`--allow-unlogged`** — Accept a bundle without a transparency log entry
 - **`--trusted-root <TRUSTED_ROOT>`** — A sigstore trusted_root.json to use instead of the embedded one
-- **`-a --artifact <ARTIFACT>`** — Local artifacts or resource assets to check (repeatable; not downloaded)
-- **`-J --json`** — Print the result as JSON
-- **`-h --help`** — Print help
+
+## Output
+- **`-J --json`** — Print the verified report as JSON, with source_repository when the signing certificate records one; for a release list, print the verified list statement
+
+## Exit Status
+
+| Code | Meaning |
+| ---- | ------- |
+| `0` | The bundle verified, and every --artifact matched it |
+| `1` | Verification failed, or an input was unusable: a file could not be read, a key or fingerprint is malformed, or the trust flags conflict or are missing |
+| `2` | The command line is invalid |
+
+## Examples
+
+**Verify a GitHub release against its repository**
+
+```
+packslip verify packslip.sigstore.json \
+        --identity-prefix https://github.com/owner/repo/ \
+        --issuer https://token.actions.githubusercontent.com \
+        --artifact mytool-1.2.3-linux-x64.tar.gz
+```
+
+**Verify hk 2.3.0 against its signer fingerprint**
+
+```
+packslip verify packslip.sigstore.json \
+        --pin ps1_snirenkjwr7m5ozgcufameodnm \
+        --artifact hk-x86_64-unknown-linux-gnu.tar.gz
+```
+
+**Verify a key-signed release**
+
+```
+packslip verify packslip.sigstore.json \
+        --pubkey release.pub \
+        --artifact mytool-1.2.3-linux-x64.tar.gz
+```

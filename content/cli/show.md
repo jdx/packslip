@@ -6,7 +6,7 @@
 Print the statement inside a bundle, without verifying it
 
 ## Arguments
-- **`<BUNDLE>`** — The packslip.sigstore.json (or release list) to read
+- **`<BUNDLE>`** — Release bundle or release list to read
 
 ## Flags
 - **`--raw`** — Print the signed payload followed by a newline, without pretty-printing

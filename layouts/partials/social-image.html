@@ -1,5 +1,4 @@
 {{- $title := .Title | plainify | htmlUnescape -}}
-{{- if .IsHome -}}{{- $title = "A release manifest anyone can verify" -}}{{- end -}}
 {{- if eq .Section "cli" -}}
   {{- $title = "CLI reference" -}}
   {{- if not .IsSection -}}{{- $title = printf "packslip %s" .File.ContentBaseName -}}{{- end -}}

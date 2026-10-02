@@ -1,6 +1,7 @@
 ---
 title: Release recipes
 weight: 36
+group: publish
 description: Example packslip configurations for Rust and Go CLIs, monorepo tools, and desktop applications.
 ---
 # Release recipes
@@ -10,16 +11,28 @@ shows the expected layout and a complete `release.toml` for those files.
 Replace the example project, version, URLs, and paths with your own.
 
 Save one recipe as `release.toml`, then create the bundle in a CI job
-with a supported OIDC identity:
+that provides an OIDC identity (GitHub Actions with `id-token: write`, or
+any job that sets `SIGSTORE_ID_TOKEN`, such as a GitLab CI job with an
+`id_tokens` entry of that name and audience `sigstore`):
 
 ```sh
 packslip create --manifest release.toml --out packslip
 ```
 
-For local key signing, add `--key release.key`. Upload both the artifacts
-and the bundle. The CLI does not upload them. On GitHub, you can instead
-pass `manifest: release.toml` to the [action](/docs/publishing/), along
-with an `artifacts` input matching the release files.
+For local key signing, add `--key release.key`. `packslip create` writes
+`packslip/packslip.sigstore.json`
+(`packslip/packslip.lint.sigstore.json` for the monorepo recipe) and
+uploads nothing, so publish it with the artifacts.
+
+On GitHub, the action in [Publish with GitHub Actions](/docs/publishing/)
+can run a recipe instead: pass `manifest: release.toml` and set
+`artifacts` to the same files, at the paths the recipe lists. The
+action's `download` input saves files in a temporary directory that an
+`[[artifact]]` `path` cannot name, so it does not work for these recipes.
+The action's inputs and their defaults replace the recipe's `project`,
+`version`, `url_base`, `notes_url`, and `[source]`, so set its `project`,
+`version`, and `tag` inputs wherever the defaults are wrong; see
+[Action inputs](/docs/publishing/#action-inputs).
 
 ## Rust CLI with bundled documentation
 
@@ -63,8 +76,12 @@ archive = "mytool-1.2.3/share/man/man1/mytool.1"
 ```
 
 `bin = ["mytool"]` finds the executable and records its full archive
-path. Resources use explicit paths. If you add archives with different
-layouts, [scope the resources](/docs/resources/#scope-resources-to-the-right-artifact).
+path. Resource paths are recorded as written and not checked against the
+archive, so copy them from `tar -tzf` output. Unscoped resources apply to
+every artifact, so when you add archives for other targets, each must
+hold these files at the same paths. If the top-level directory differs
+per target,
+[scope each resource to its artifact](/docs/resources/#scope-resources-to-the-right-artifact).
 
 ## Go CLI with generated completions
 
@@ -99,15 +116,19 @@ exec = ["mytool", "completion", "{shell}"]
 ```
 
 The consumer substitutes the requested shell and caches successful output
-for the installed version, executable, and shell. Creation records this
-command; it does not run it. To avoid executing the binary to generate
-completions, ship static scripts or a [usage spec](/docs/resources/#completions-and-cli-specifications).
+for the installed version, executable, and shell. `packslip create`
+records this command; it does not run it. To avoid executing the binary
+to generate completions, ship static scripts or a [usage spec](/docs/resources/#completions-and-cli-specifications).
+
+If you build with `CGO_ENABLED=0`, the binary is statically linked:
+`packslip create` reads that from the executable and records no `libc`,
+so the archive fits glibc and musl hosts alike.
 
 ## Monorepo tool with an executable alias
 
 A repository can release tools independently or attach several tools to
-one release. Give each tool its own project subpath and manifest, and
-include only that tool's artifacts. This example exposes `lint-x86_64`
+one release. Give each tool its own project subpath and `release.toml`,
+and include only that tool's artifacts. This example exposes `lint-x86_64`
 as the command `lint`.
 
 ```text
@@ -130,11 +151,20 @@ path = "dist/lint-1.2.3-linux-x64.tar.gz"
 bin = [{ name = "lint", path = "bin/lint-x86_64" }]
 ```
 
-The output is `packslip.lint.sigstore.json`; its signer still belongs to
-`owner/toolkit`. Run creation separately for other tools. When several
-tools share a release, use that release's tag and download URL for each
-manifest. A supplementary [release list](/docs/release-lists/) can map a
-shared tag to each tool's version when the tag itself does not do so.
+`packslip create` names the bundle `packslip.lint.sigstore.json` after the
+project subpath. In CI it is still signed by a workflow of
+`owner/toolkit`, so every tool in the repository is held to the same
+signer, and consumers tell the tools apart by the signed `project`, not
+by the bundle's file name. Run `packslip create` separately for each
+other tool. When several tools share a release, use that release's tag
+and download URL in each tool's `release.toml`. A supplementary release
+list can map a shared tag to each tool's version when the tag itself does
+not; see [Manage release lists](/docs/release-lists/).
+
+With the action, set `project: github.com/owner/toolkit/lint` and
+`version: 1.2.3`; the defaults would sign for the repository's project
+and turn `lint-v1.2.3` into an invalid version. See
+[Release several tools from one repository](/docs/publishing/#release-several-tools-from-one-repository).
 
 ## Desktop application for Linux and macOS
 
@@ -196,10 +226,21 @@ notarization.
 
 ## Add build provenance
 
-These manifests describe release contents. They do not generate build
-provenance. The [GitHub Action](/docs/publishing/) can attest its matched
-files and link those statements. With the CLI, pass a provenance URL for
-each artifact:
+`release.toml` describes what the release contains; it does not produce
+build provenance. By default (`attest: true`), the action in
+[Publish with GitHub Actions](/docs/publishing/#build-provenance) attests the files its
+`artifacts` and `download` inputs match and links those statements.
+Without the action, list the URLs of provenance statements your build
+already produced in the artifact's `provenance` key:
+
+```toml
+[[artifact]]
+path = "dist/mytool-1.2.3-linux-x64.tar.gz"
+provenance = ["https://example.com/provenance/mytool-1.2.3-linux-x64.intoto.jsonl"]
+```
+
+Or pass one URL per artifact to `packslip create` with this flag, which
+adds to the entry's own list:
 
 ```text
 --provenance FILENAME=URL
