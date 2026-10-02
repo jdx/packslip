@@ -1,8 +1,10 @@
-// packslip.dev: the documentation is served as static assets, which
-// answer before this script runs, so the script only sees what the site
-// has no file for. Two shapes of those are release data in R2, laid out
-// as <tool>/<tag>/<file> and <tool>/.well-known/packslip.json; everything
-// else falls through to the site's 404 page.
+// packslip.dev: the documentation is served as static assets, and this
+// script runs first only for the paths run_worker_first lists in
+// wrangler.jsonc: /v* and /.well-known/packslip.json. Two shapes of those
+// are release data in R2, laid out as <tool>/<tag>/<file> and
+// <tool>/.well-known/packslip.json; everything else, including a release
+// path R2 has no object for, is handed to the assets, which answer with
+// the site's page or its 404 page.
 //
 // Each release request is counted in Analytics Engine: the tool, tag,
 // file, and what kind of document it was, so installs (an artifact) can be

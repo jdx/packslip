@@ -214,7 +214,7 @@ binary and any dependent that says nothing is unaffected:
 | `archive` | Read tar and zip archives to resolve declared executable paths. |
 | `linkage` | Derive `requires.libs` from ELF, Mach-O, and PE executables. |
 | `sign` | Sign statements, keylessly through Fulcio or with a minisign key. |
-| `manifest` | Read a `packslip.toml`. |
+| `manifest` | Read a release TOML manifest, as `create --manifest` does. |
 | `schema` | `Statement::schema()` and `ReleaseListStatement::schema()`. |
 
 For a GitHub or GitLab project, `verify_forge` verifies a bundle under

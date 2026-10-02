@@ -59,9 +59,11 @@ jobs:
             runner: ubuntu-24.04-arm
             asset: linux-arm64
           # macOS is arm64 only. Every Mac Apple sells runs Apple silicon,
-          # and Rosetta 2 runs this binary on the Intel machines that are
-          # left, so an x64 build would be a second signed and notarized
-          # artifact serving a shrinking audience.
+          # so an x64 build would be a second signed and notarized artifact
+          # serving a shrinking audience. Intel Macs get no prebuilt
+          # packslip: Rosetta 2 runs x86_64 code on Apple silicon, not arm64
+          # code on Intel, so they build from source
+          # (see scripts/install-packslip.sh).
           - target: aarch64-apple-darwin
             runner: macos-latest
             asset: darwin-arm64

@@ -7,7 +7,6 @@
 //! ```toml
 //! # release.toml
 //! bin = ["tool"]                       # inside every artifact, unless an entry says otherwise
-//! requires = { glibc_min = "2.31" }    # likewise
 //!
 //! [source]
 //! repo = "https://github.com/owner/tool"
@@ -15,6 +14,7 @@
 //! [[artifact]]
 //! path = "dist/tool-1.2.3-linux-x64.tar.gz"
 //! bin = ["tool-1.2.3-linux-x64/tool"]
+//! requires = { glibc_min = "2.31" }    # for this Linux build only; a top-level `requires` is every other artifact's default
 //!
 //! [[artifact]]
 //! path = "dist/tool-1.2.3-windows-x64.exe"

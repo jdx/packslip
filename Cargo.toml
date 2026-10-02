@@ -38,7 +38,7 @@ default = ["cli"]
 cli = ["create", "manifest", "schema", "dep:color-eyre", "dep:eyre", "dep:usage_rs"]
 # `packslip create`: build a statement from a set of built artifacts.
 create = ["archive", "linkage", "sign"]
-# Read a packslip.toml.
+# Read a release TOML manifest for `packslip create --manifest`.
 manifest = ["dep:toml"]
 # Decode tar and zip archives to resolve the paths of declared executables.
 archive = ["dep:bzip2", "dep:flate2", "dep:lzma-rs", "dep:ruzstd", "dep:tar", "dep:zip"]
