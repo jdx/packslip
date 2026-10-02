@@ -223,9 +223,9 @@ and match any platform scope on the entry, or `create` refuses the entry.
 For complete configurations, see [Release recipes](/docs/recipes/).
 
 When several entries for the same resource apply, the most specific wins;
-see [How consumers choose among entries](#how-consumers-choose-among-entries).
+see [How consumers choose among entries](#provide-fallbacks-deliberately).
 
-## How consumers choose among entries
+## How consumers choose among entries {#provide-fallbacks-deliberately}
 
 Consumers group entries by resource identity before selecting a source.
 For a completion, the identity is the executable and shell; for a CLI

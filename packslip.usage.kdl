@@ -22,7 +22,7 @@ Print the script to stdout. Redirect it to a file where your shell loads complet
     arg <SHELL> help="Shell to generate completions for" {
         choices bash elvish zsh fish nu nushell powershell pwsh
     }
-    example "packslip completion bash > ~/.local/share/bash-completion/completions/packslip" header="Install bash completions for your user"
+    example "mkdir -p ~/.local/share/bash-completion/completions && packslip completion bash > ~/.local/share/bash-completion/completions/packslip" header="Install bash completions for your user"
 }
 cmd create help="Create and sign a packslip for a release" {
     long_help #"""

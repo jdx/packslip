@@ -20,5 +20,5 @@ Print the script to stdout. Redirect it to a file where your shell loads complet
 **Install bash completions for your user**
 
 ```
-packslip completion bash > ~/.local/share/bash-completion/completions/packslip
+mkdir -p ~/.local/share/bash-completion/completions && packslip completion bash > ~/.local/share/bash-completion/completions/packslip
 ```

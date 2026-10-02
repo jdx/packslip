@@ -288,3 +288,8 @@ The CLI verifies one document at a time. An installer also needs
 discovery, artifact selection, and remembered trust; see
 [Build an installer or mirror](/docs/installers/) and the
 [consumer rules](/release/v1/#consumer-rules).
+
+### Take the crate as a library
+
+The `packslip` crate's verifier, selection rules, and feature flags are
+covered in [Use the Rust library](/docs/installers/#use-the-rust-library).

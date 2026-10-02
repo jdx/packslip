@@ -77,7 +77,7 @@ enum Commands {
 /// upgrades.
 #[derive(Debug, usage_rs::Args)]
 #[usage(example(
-    "packslip completion bash > ~/.local/share/bash-completion/completions/packslip",
+    "mkdir -p ~/.local/share/bash-completion/completions && packslip completion bash > ~/.local/share/bash-completion/completions/packslip",
     header = "Install bash completions for your user"
 ))]
 struct Completion {
