@@ -1421,14 +1421,15 @@ fn load_trusted_root(path: Option<&Path>) -> Result<sigstore_trust_root::Trusted
 /// Whether what a verified certificate says about its repository is about
 /// the project the statement names. A signer can be a reusable workflow of
 /// another repository, so the certificate's own source repository must be
-/// the project's. A project that is not on a forge has nothing to compare.
+/// the project's, whichever workflow signed. A project that is not on a forge
+/// has nothing to compare.
 fn bound_to_project(
     project: &str,
     signer: &str,
     issuer: Option<&str>,
     source: Option<&sigstore::SourceRepository>,
 ) -> std::result::Result<(), String> {
-    match packslip::forge::check(
+    match packslip::forge::check_source(
         &packslip::forge::Expected::new(project),
         project,
         signer,
