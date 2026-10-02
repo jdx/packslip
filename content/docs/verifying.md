@@ -32,7 +32,8 @@ immutable IDs for it and its owner:
 ```
 
 `--json` reports them as `source_repository`. A repository keeps its ID
-when it is renamed, so an installer pins the ID rather than the name; see
+when it is renamed or transferred to another owner, so an installer pins the
+ID rather than the name or the owner; see
 [Forge identity](/release/v1/#forge-identity).
 
 Without identity flags, the CLI derives a policy from the bundle's
@@ -117,11 +118,9 @@ selection, and remembered policy. Implement the full
    signer changes, weaker signing, vendor-to-repackager changes, or lost
    provenance links. A workflow's tag ref can change without changing
    the workflow's identity for this comparison.
-   For a forge project, remember the repository and owner IDs too:
-   follow a rename that keeps the repository ID, ask before accepting a
-   transfer to another owner, and refuse a repository with another ID
-   under the same name. Once a transfer is accepted, keep the previous
-   owner accepted so that older releases still install.
+   For a forge project, remember the repository ID too: follow a rename
+   or a transfer to another owner that keeps the repository ID, and
+   refuse a repository with another ID under the same name.
 4. Apply any release-age policy to the verified log time, using the signed
    publication time only for an explicitly accepted unlogged bundle.
 5. Select the artifact for the host and variant, then check host
@@ -159,7 +158,7 @@ binary and any dependent that says nothing is unaffected:
 
 For a GitHub or GitLab project, `verify_forge` verifies a bundle under
 the policy the forge implies and checks it against what the consumer
-remembers, following renames by repository ID:
+remembers, following renames and transfers by repository ID:
 
 ```rust
 use packslip::forge::{Continuity, Expected, ForgePin, PinSource};
@@ -178,14 +177,16 @@ if let Some(pin) = &accepted.check.pin {
 ```
 
 `accepted.check.continues_signer(previous)` compares a remembered
-signer with this one across a rename. A different repository under a
-pinned name is an error that says which pin disagreed, and so is a
-transfer without `accepting_transfer(true)`, which also names the old
-and new owners. The pin from an accepted transfer keeps the previous
-owner in `accepted_owner_ids`, so releases from before the transfer
-still verify. `packslip::forge::same_workflow` compares two remembered
-signers, each with the pin recorded alongside it, for a no-downgrade
-check with no release at hand, such as regenerating a lockfile.
+signer with this one across a rename or a transfer. A different
+repository under a pinned name is an error that says which pin
+disagreed. The pin records the repository ID and the name it was signed
+under, not the owner, so a repository that moves to another owner is
+reported as `Continuity::Renamed` and releases from before the move
+still verify. Pins stored with an owner ID by an earlier version still
+read; the field is ignored. `packslip::forge::same_workflow` compares
+two remembered signers, each with the pin recorded alongside it, for a
+no-downgrade check with no release at hand, such as regenerating a
+lockfile.
 
 A vendor that signs from a reusable workflow can ask consumers to hold
 it to its repository instead of one workflow (`packslip create
@@ -215,7 +216,7 @@ with [Manage release lists](/docs/release-lists/).
 | --- | --- |
 | Identity mismatch | Expected repository/workflow and issuer; do not change the pin just to make the command pass. |
 | Different repository under the pinned name | The name now belongs to a new repository: the original was renamed or deleted and someone took its name. Find where the project went; do not re-pin the name. |
-| Repository moved to another owner | Confirm the transfer with the project before accepting the new owner. |
+| Repository moved to another owner | Nothing to do: the repository ID is the same, so releases from before and after the move verify, and the report names the name each was signed under. |
 | Missing public-key policy | Supply the trusted key for a key-signed release. |
 | Unlogged bundle refused | Confirm whether the publisher intentionally omitted logging. |
 | Digest or size mismatch | Confirm the original filename and release version, then obtain a fresh copy from the publisher. |

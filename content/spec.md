@@ -107,7 +107,8 @@ redirects the old name to the new one: `github.com/jdx/rtx` became
 `github.com/jdx/mise`, and GitHub answers for the first with the second.
 Once the old name is free, anyone can create a repository under it, with
 a workflow at the same path. The name cannot tell these apart. The
-forge's repository ID can: it never changes and is never reused.
+forge's repository ID can: it never changes, survives a rename and a
+transfer to another owner, and is never reused.
 
 Fulcio records the IDs in every certificate it issues to a GitHub Actions
 or GitLab CI job, from the job's OIDC token:
@@ -120,66 +121,48 @@ or GitLab CI job, from the job's OIDC token:
 | Source Repository Owner Identifier | `1.3.6.1.4.1.57264.1.17` | `repository_owner_id` | `namespace_id` |
 
 Each is a DER UTF8String; an empty value means the forge gave none. The
-repository ID survives a rename and a transfer. The owner ID survives
-renaming the owner and changes when the repository moves to another
-owner; a GitLab project's owner is its immediate group, so moving it
-between groups is a transfer, even between two subgroups of one
-top-level group. The IDs speak for a packslip only when the
-Source Repository URI is the repository its `project` names and the
-signer is a workflow of that repository.
+repository ID survives a rename and a transfer. The owner extensions say
+who owned the repository when the certificate was issued; they are not
+part of a project's identity, and a consumer does not remember or compare
+them. Only a repository's current owner can transfer it, and that owner
+already signs its releases, so a transfer shows nothing that signing did
+not. The IDs speak for a packslip only when the Source Repository URI is
+the repository its `project` names and the signer is a workflow of that
+repository.
 
-A consumer remembers the repository ID and owner ID of the first release
-it accepts, with its signer (see [Consumer rules](#consumer-rules)), and
-compares each later release with them:
+A consumer remembers the repository ID of the first release it accepts,
+with its signer (see [Consumer rules](#consumer-rules)), and compares each
+later release with it:
 
 - **Same.** The statement names the requested project and the certificate
-  carries the pinned repository ID and an accepted owner ID. Accept it.
+  carries the pinned repository ID. Accept it.
 - **Renamed.** The statement names another repository on the same forge,
   with the same monorepo subpath, and the certificate carries the pinned
-  repository ID and an accepted owner ID. Accept it and report the name
-  it was signed under. That covers a release after the rename, under the
-  new name, and one from before it, under the old name, whichever name
-  the user asks for. Signer continuity compares the workflow's path inside the
-  repository: `.github/workflows/release.yml` of `jdx/rtx` continues as
-  the same file of `jdx/mise`.
-- **Transferred.** The pinned repository ID under an owner ID that is not
-  accepted. Refuse it unless a person accepts the new owner, as for a
-  signer change.
+  repository ID. Accept it and report the name it was signed under. That
+  covers a repository renamed or transferred to another owner: a release
+  after the move, under the new name, and one from before it, under the
+  old name, whichever name the user asks for. Signer continuity compares
+  the workflow's path inside the repository: `.github/workflows/release.yml`
+  of `jdx/rtx` continues as the same file of `jdx/mise`, and of `jdx/hk`
+  as the same file of `acme/hk`.
 - **Different repository.** A repository ID other than the pinned one.
   Refuse it, even under the requested name: that is what a name
-  recreated after a rename or a deletion looks like.
+  recreated after a rename, a transfer, or a deletion looks like.
 - A statement for another name with no ID to compare, on either side, is
   refused, as it would be with no pin.
 
-The accepted owners are the pinned owner ID and any a person accepted
-before. When a person accepts a transfer, the consumer pins the new owner
-and keeps the previous one accepted, so the repository's releases from
-before the transfer, signed by the previous owner, still verify, and
-releases by either owner do not count as a transfer again. Only a
-person's acceptance adds an owner; a release never does. A pin taken from
-an accepted release keeps every owner the pins it was checked against
-accepted.
+A pin taken from an accepted release records the name it was signed under
+and its repository ID. A pin recorded by a consumer that also stored the
+owner's ID is read the same way, with that ID ignored.
 
 A consumer can hold more than one pin for a project, such as its own
 record and a lockfile's commitment. It holds each release to every one of
 them, and a refusal says which one the release disagreed with.
 
 With no pin, the consumer has only the forge's word. GitHub's
-`GET /repos/<owner>/<repo>` redirects a renamed repository's old name to
-the repository and returns its `id`, and a consumer may take that as the
-expected repository ID. It says nothing about the owner. The consumer
-may also ask which owner ID the requested owner name belongs to now
-(GitHub's `GET /users/<owner>`, or the `owner.id` of the repository
-answer when it is under the requested owner; GitLab's
-`GET /namespaces/<path>`). A release whose certificate carries that owner
-ID is by the requested owner, even one signed under a name the owner had
-before, and one with another owner ID is a transfer, even under the
-requested owner's name. Without that answer the owner is compared by
-name, and a release from an owner of another name counts as a transfer.
-Neither tells a renamed owner from a transfer: a renamed owner's old name
-belongs to no one, or to someone else, so without a pinned owner ID a
-release under the owner's new name is refused as a transfer until a
-person accepts it.
+`GET /repos/<owner>/<repo>` redirects a renamed or transferred
+repository's old name to the repository and returns its `id`, and a
+consumer may take that as the expected repository ID.
 
 First use is trust on first use: when the name was recreated before the
 consumer first saw it, the forge answers for the new repository, and
@@ -191,7 +174,7 @@ The reference implementation reads the extensions as
 `sigstore::source_repository`, classifies a release as above in
 `forge::check`, and verifies and classifies a bundle in one call with
 `verify_forge`. `forge::same_workflow` compares two signers a consumer
-recorded, with the IDs recorded alongside each, for rule 3 of the
+recorded, with the repository ID recorded alongside each, for rule 3 of the
 [Consumer rules](#consumer-rules) when no release is at hand.
 
 ## The file
@@ -1159,12 +1142,11 @@ continuity, no-downgrade policy, and release-list sequences across installs.
 
 1. Pin the identity once. For a forge project, the name gives the first
    pin: accept only the forge's issuer and an identity under the
-   repository, and remember the repository ID and owner ID its
-   certificate records. From then on those IDs pin the project, as
-   [Forge identity](#forge-identity) says: a renamed repository keeps its
-   pin, a transfer needs a person's say-so, after which the owner it came
-   from stays accepted, and a recreated name does not inherit it. For other
-   projects, pin the public key or identity from a list of pins you
+   repository, and remember the repository ID its certificate records.
+   From then on that ID pins the project, as
+   [Forge identity](#forge-identity) says: a renamed or transferred
+   repository keeps its pin, and a recreated name does not inherit it. For
+   other projects, pin the public key or identity from a list of pins you
    maintain, or from the well-known list on first use. A list from another
    publisher is trusted per host, by configuration. Never take a key from
    the document itself, and never trust a bundle's key hint.
@@ -1177,11 +1159,11 @@ continuity, no-downgrade policy, and release-list sequences across installs.
    saying so, whose `attested_by` went from vendor to repackager, or that
    dropped per-artifact provenance the last release carried. For a keyless
    signer, compare the workflow path, not the ref: a new tag of the same
-   workflow is the same signer. For a renamed repository, compare the
-   workflow's path inside the repository, and only when the IDs show the
-   same repository and an accepted owner: those the release's
-   certificate carries, or, comparing two recorded signers such as a
-   lockfile entry and the one it replaces, the IDs recorded with each. A
+   workflow is the same signer. For a renamed or transferred repository,
+   compare the workflow's path inside the repository, and only when the
+   repository IDs show the same repository: the one the release's
+   certificate carries or, comparing two recorded signers such as a
+   lockfile entry and the one it replaces, the ID recorded with each. A
    changed repository ID is a changed signer, even under the same
    identity.
    A release that declares `identity.pin_workflow: false` is compared by

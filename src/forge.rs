@@ -3,23 +3,23 @@
 //!
 //! A repository can be renamed, transferred to another owner, or deleted
 //! and its name taken by someone else. The name alone cannot tell those
-//! apart: after a rename the old name redirects and new releases name the
-//! new one, and after a deletion anyone can create a repository under the
-//! old name with a workflow at the same path. Fulcio records the forge's
-//! repository ID and owner ID in every GitHub Actions and GitLab CI
-//! certificate ([`SourceRepository`]), and those do not change on a
-//! rename. [`check`] classifies a verified release against what the
-//! consumer expected, so a rename keeps working, a transfer asks, and a
-//! recreated name is refused. [`crate::verify::verify_forge`] verifies a
+//! apart: after a rename or a transfer the old name redirects and new
+//! releases name the new one, and after a deletion anyone can create a
+//! repository under the old name with a workflow at the same path. Fulcio
+//! records the forge's repository ID in every GitHub Actions and GitLab CI
+//! certificate ([`SourceRepository`]), and it does not change on a rename
+//! or a transfer. [`check`] classifies a verified release against what the
+//! consumer expected, so a rename or a transfer keeps working and a
+//! recreated name is refused. Only a repository's current owner can
+//! transfer it, and that owner already signs its releases, so the owner is
+//! not part of the identity. [`crate::verify::verify_forge`] verifies a
 //! bundle and runs it.
 //!
 //! A consumer can hold several pins for a project, such as its own and a
-//! lockfile's ([`Expected::pinned_by`]); every one must hold. A transfer a
-//! person accepted is remembered in the pin
-//! ([`ForgePin::accepted_owner_ids`]), so releases from before it keep
-//! verifying. [`same_workflow`] compares two signers the consumer stored,
-//! with the pins recorded alongside them, for a no-downgrade check that has
-//! no release in hand.
+//! lockfile's ([`Expected::pinned_by`]); every one must hold.
+//! [`same_workflow`] compares two signers the consumer stored, with the
+//! pins recorded alongside them, for a no-downgrade check that has no
+//! release in hand.
 
 use crate::model;
 use crate::sigstore::{GITHUB_ISSUER, GITLAB_ISSUER, Policy, SourceRepository};
@@ -30,9 +30,6 @@ struct ForgeName<'a> {
     host: &'a str,
     /// `owner/repo` on GitHub; the whole project path on GitLab.
     repository: &'a str,
-    /// The GitHub owner, or the GitLab namespace: the path without its
-    /// last segment.
-    owner: &'a str,
     /// The tool inside a GitHub monorepo.
     subpath: Option<&'a str>,
 }
@@ -44,7 +41,6 @@ impl ForgeName<'_> {
             return Some(ForgeName {
                 host,
                 repository: project.get(host.len() + 1..end)?,
-                owner,
                 subpath: model::repository_subpath(project),
             });
         }
@@ -52,11 +48,9 @@ impl ForgeName<'_> {
         if host != "gitlab.com" || path.split('/').any(str::is_empty) {
             return None;
         }
-        let (owner, _) = path.rsplit_once('/')?;
         Some(ForgeName {
             host,
             repository: path,
-            owner,
             subpath: None,
         })
     }
@@ -87,67 +81,73 @@ impl ForgeName<'_> {
 
 /// What a consumer remembers about a forge project's identity once it has
 /// accepted a release: the name it was last signed under and the forge's
-/// IDs from that release's certificate. [`Check::pin`] gives the value to
-/// store.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// repository ID from that release's certificate. [`Check::pin`] gives the
+/// value to store.
+///
+/// Pins stored before 1.5.0 also carry the repository's owner ID. It is
+/// still read, so those pins keep working, but nothing compares it and
+/// [`ForgePin`] no longer writes it.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
 pub struct ForgePin {
     /// The project name the accepted release was signed under.
     pub project: String,
     /// The forge's repository ID.
     pub repository_id: String,
-    /// The forge's ID of the repository's owner, when the certificate had
-    /// one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// The forge's ID of the repository's owner, as a pin stored before
+    /// 1.5.0 recorded it. Ignored: a repository that moved to another owner
+    /// is the same repository, so the owner is not part of the identity. Not
+    /// written, and not part of equality.
+    #[deprecated(
+        since = "1.5.0",
+        note = "ignored: the repository ID alone pins a forge project"
+    )]
+    #[serde(default, skip_serializing)]
     pub owner_id: Option<String>,
-    /// Other owners a person accepted the repository from or to: after an
-    /// accepted transfer, the owner it moved from. A release signed by any
-    /// of them, or by [`ForgePin::owner_id`], is by an accepted owner, so
-    /// releases from before the transfer keep verifying. Pins stored before
-    /// this field existed read with none.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub accepted_owner_ids: Vec<String>,
 }
 
+// The ignored owner ID is not part of a pin: one read from before 1.5.0
+// equals the pin the same release gives now.
+impl PartialEq for ForgePin {
+    fn eq(&self, other: &ForgePin) -> bool {
+        self.project == other.project && self.repository_id == other.repository_id
+    }
+}
+
+impl Eq for ForgePin {}
+
+#[allow(deprecated)]
 impl ForgePin {
+    /// A pin of `repository_id` as `project`, the name its release was
+    /// signed under.
+    pub fn of(project: impl Into<String>, repository_id: impl Into<String>) -> ForgePin {
+        ForgePin {
+            project: project.into(),
+            repository_id: repository_id.into(),
+            owner_id: None,
+        }
+    }
+
+    /// A pin of `repository_id` as `project`; `owner_id` is ignored.
+    #[deprecated(
+        since = "1.5.0",
+        note = "the owner ID is ignored; use ForgePin::of(project, repository_id)"
+    )]
     pub fn new(
         project: impl Into<String>,
         repository_id: impl Into<String>,
         owner_id: Option<String>,
     ) -> ForgePin {
         ForgePin {
-            project: project.into(),
-            repository_id: repository_id.into(),
             owner_id,
-            accepted_owner_ids: Vec::new(),
+            ..ForgePin::of(project, repository_id)
         }
-    }
-
-    /// The pin with these owners accepted as well: see
-    /// [`ForgePin::accepted_owner_ids`].
-    pub fn with_accepted_owner_ids<I, S>(self, owner_ids: I) -> ForgePin
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<String>,
-    {
-        ForgePin {
-            accepted_owner_ids: owner_ids.into_iter().map(Into::into).collect(),
-            ..self
-        }
-    }
-
-    /// Whether `owner_id` is the pinned owner or one accepted for the
-    /// repository.
-    pub fn accepts_owner(&self, owner_id: &str) -> bool {
-        self.owner_id.as_deref() == Some(owner_id)
-            || self.accepted_owner_ids.iter().any(|id| id == owner_id)
     }
 
     /// Whether this pin, recorded later, continues `previous`: the same
-    /// repository ID on the same forge, under the same owner or one either
-    /// pin accepted. Owners are compared by ID when both pins have one, and
-    /// by name otherwise. For two pins a consumer stored, such as two
-    /// lockfile entries; [`check`] does the same for a release.
+    /// repository ID on the same forge, under whatever names and owners.
+    /// For two pins a consumer stored, such as two lockfile entries;
+    /// [`check`] does the same for a release.
     pub fn continues(&self, previous: &ForgePin) -> bool {
         let (Some(before), Some(now)) = (
             ForgeName::parse(&previous.project),
@@ -155,13 +155,7 @@ impl ForgePin {
         ) else {
             return false;
         };
-        if before.host != now.host || previous.repository_id != self.repository_id {
-            return false;
-        }
-        match (&previous.owner_id, &self.owner_id) {
-            (Some(was), Some(is)) => self.accepts_owner(was) || previous.accepts_owner(is),
-            _ => before.owner.eq_ignore_ascii_case(now.owner),
-        }
+        before.host == now.host && previous.repository_id == self.repository_id
     }
 }
 
@@ -189,6 +183,7 @@ impl std::fmt::Display for PinSource {
 /// What the consumer expects of a forge project's release.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
+#[allow(deprecated)]
 pub struct Expected<'a> {
     /// The project the user asked for: `github.com/owner/repo[/tool]` or
     /// `gitlab.com/<path>`.
@@ -206,25 +201,17 @@ pub struct Expected<'a> {
     /// /repos/{owner}/{repo}` on GitHub answers for a renamed repository
     /// with the new name and the same `id`). Ignored when there is a pin.
     pub resolved_repository_id: Option<&'a str>,
-    /// With no pin, alongside [`resolved_repository_id`]: the ID of the
-    /// user, organization, or group that the requested project's owner name
-    /// belongs to now (`GET
-    /// /users/{owner}` on GitHub, `GET /namespaces/{path}` on GitLab; or
-    /// the `owner.id` of `GET /repos/{owner}/{repo}` when the answer is
-    /// under the requested owner, not a redirect to another). A release
-    /// whose certificate carries that owner ID is by the requested owner
-    /// even under an owner name that has changed since, and one with
-    /// another owner ID is a transfer even under the requested owner's
-    /// name. Without it, the owner is compared by name. Ignored when there
-    /// is a pin.
-    ///
-    /// [`resolved_repository_id`]: Expected::resolved_repository_id
-    pub resolved_owner_id: Option<&'a str>,
-    /// Accept a repository that moved to another owner. Set it only when a
-    /// person has said to trust the new owner, as for a signer change.
+    /// Unused: a repository that moved to another owner is the same
+    /// repository, so there is no transfer to accept. Kept so that code
+    /// that sets it still builds.
+    #[deprecated(
+        since = "1.5.0",
+        note = "ignored: a transfer is followed by repository ID and needs no acceptance"
+    )]
     pub accept_transfer: bool,
 }
 
+#[allow(deprecated)]
 impl<'a> Expected<'a> {
     /// Expect `project`, with nothing remembered about it.
     pub fn new(project: &'a str) -> Expected<'a> {
@@ -233,7 +220,6 @@ impl<'a> Expected<'a> {
             pin: None,
             pins: &[],
             resolved_repository_id: None,
-            resolved_owner_id: None,
             accept_transfer: false,
         }
     }
@@ -260,16 +246,13 @@ impl<'a> Expected<'a> {
         }
     }
 
-    /// The owner ID the forge gives for the requested project's owner
-    /// name, if the consumer asked it: see [`Expected::resolved_owner_id`].
-    pub fn resolved_owner(self, owner_id: Option<&'a str>) -> Expected<'a> {
-        Expected {
-            resolved_owner_id: owner_id,
-            ..self
-        }
-    }
-
-    /// Whether a person has said to accept a transfer to another owner.
+    /// Ignored: a repository that moved to another owner is the same
+    /// repository, so no one has to accept a transfer.
+    #[deprecated(
+        since = "1.5.0",
+        note = "ignored: a transfer is followed by repository ID and needs no acceptance"
+    )]
+    #[allow(deprecated)]
     pub fn accepting_transfer(self, accept: bool) -> Expected<'a> {
         Expected {
             accept_transfer: accept,
@@ -349,68 +332,22 @@ pub enum Continuity {
     /// Signed under the requested name, by the pinned repository when
     /// there was a pin.
     Same,
-    /// The same repository under another name: renamed since the request's
-    /// name was current, or, for a release older than the rename, signed
-    /// under the name it had then. The owner is unchanged, or one the pin
-    /// accepted.
+    /// The same repository under another name: renamed or transferred to
+    /// another owner since the request's name was current, or, for a release
+    /// older than that, signed under the name it had then.
     Renamed { requested: String, signed: String },
-    /// The same repository under another owner, accepted because
-    /// [`Expected::accept_transfer`] was set. [`Check::transfer`] has both
-    /// owners' names and IDs.
+    /// Never returned: a repository that moved to another owner is the same
+    /// repository, so it is [`Continuity::Renamed`].
+    #[deprecated(
+        since = "1.5.0",
+        note = "not returned any more: a transfer is Continuity::Renamed"
+    )]
     Transferred {
         requested: String,
         signed: String,
-        /// The previous owner: its pinned or resolved ID, or its name when
-        /// there was no owner ID to compare.
         previous_owner: String,
-        /// The owner that signed: its ID, or its name to match.
         owner: String,
     },
-}
-
-/// A repository that moved to another owner: who owned it before, as the
-/// consumer knew it, and who signed.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-#[non_exhaustive]
-pub struct Transfer {
-    /// The project the consumer asked for.
-    pub requested: String,
-    /// The project the release was signed under.
-    pub signed: String,
-    /// The previous owner's name: the owner of the project the pin that
-    /// disagreed was recorded under, or of the requested project.
-    pub previous_owner: String,
-    /// The previous owner's ID, when a pin or the forge gave one.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub previous_owner_id: Option<String>,
-    /// The name of the owner that signed, from the certificate's Source
-    /// Repository Owner URI.
-    pub owner: String,
-    /// The ID of the owner that signed, when the certificate records one.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub owner_id: Option<String>,
-    /// What the previous owner was taken from: a pin, or the forge's answer
-    /// for the requested owner. None when it is the requested project's
-    /// owner by name.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub evidence: Option<Evidence>,
-}
-
-impl std::fmt::Display for Transfer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let owner = |name: &str, id: &Option<String>| match id {
-            Some(id) => format!("{name} (ID {id})"),
-            None => name.to_string(),
-        };
-        write!(
-            f,
-            "{} moved from owner {} to owner {} as {}",
-            self.requested,
-            owner(&self.previous_owner, &self.previous_owner_id),
-            owner(&self.owner, &self.owner_id),
-            self.signed,
-        )
-    }
 }
 
 /// Why a verified release is not the project the consumer expected.
@@ -448,12 +385,12 @@ pub enum IdentityError {
         actual: String,
         evidence: Evidence,
     },
-    /// Not returned since 1.5.0, which reports a transfer as
-    /// [`IdentityError::OwnerChanged`] with both owners' names and the pin
-    /// it disagreed with.
+    /// Not returned any more: a repository that moved to another owner is
+    /// the same repository, and its releases verify without anyone accepting
+    /// the new owner.
     #[deprecated(
         since = "1.5.0",
-        note = "not returned any more: a transfer is IdentityError::OwnerChanged"
+        note = "not returned any more: a transfer is followed by repository ID"
     )]
     #[error(
         "{requested} moved from owner {previous_owner} to owner {owner} as {signed}; accept the new owner explicitly to trust it"
@@ -464,9 +401,6 @@ pub enum IdentityError {
         previous_owner: String,
         owner: String,
     },
-    /// The same repository under an owner the consumer has not accepted.
-    #[error("{0}; accept the new owner explicitly to trust it")]
-    OwnerChanged(Box<Transfer>),
 }
 
 /// The outcome of a [`check`] that passed.
@@ -478,10 +412,8 @@ pub enum IdentityError {
 /// use packslip::forge::{self, Continuity, Expected, ForgePin};
 /// use packslip::sigstore::{GITHUB_ISSUER, SourceRepository};
 ///
-/// let source = SourceRepository::new("https://github.com/jdx/hook")
-///     .with_id("922514152")
-///     .with_owner("https://github.com/jdx", "216188");
-/// let pin = ForgePin::new("github.com/jdx/hk", "922514152", Some("216188".into()));
+/// let source = SourceRepository::new("https://github.com/jdx/hook").with_id("922514152");
+/// let pin = ForgePin::of("github.com/jdx/hk", "922514152");
 /// let check = forge::check(
 ///     &Expected::new("github.com/jdx/hk").pinned(Some(&pin)),
 ///     "github.com/jdx/hook",
@@ -500,16 +432,12 @@ pub struct Check {
     /// The repository the signing certificate records, if it records one.
     pub source: Option<SourceRepository>,
     /// What to remember for the project once the release is accepted in
-    /// full; none when the certificate carries no repository ID. It keeps
-    /// the owners the consumer's pins accepted, and after an accepted
-    /// transfer the owner the repository moved from, in
-    /// [`ForgePin::accepted_owner_ids`].
+    /// full; none when the certificate carries no repository ID.
     pub pin: Option<ForgePin>,
     identity: String,
     /// Whether the forge's repository ID, not the name alone, showed the
     /// repository is the one expected.
     by_id: bool,
-    transfer: Option<Transfer>,
     pin_workflow: bool,
 }
 
@@ -561,12 +489,6 @@ impl Check {
         self.pin_workflow = pins;
         self
     }
-
-    /// The owners of an accepted transfer, when [`Check::continuity`] is
-    /// [`Continuity::Transferred`].
-    pub fn transfer(&self) -> Option<&Transfer> {
-        self.transfer.as_ref()
-    }
 }
 
 /// Whether `current` is the same signer as `previous`, two keyless signers
@@ -577,9 +499,9 @@ impl Check {
 /// release's signer.
 ///
 /// With both pins, the signers are the same when `current_pin`
-/// [continues](ForgePin::continues) `previous_pin` (the same repository ID
-/// and an accepted owner) and the workflow has the same path inside the
-/// repository, so a rename keeps the signer. A changed repository ID is a
+/// [continues](ForgePin::continues) `previous_pin` (the same repository ID)
+/// and the workflow has the same path inside the repository, so a rename or
+/// a transfer keeps the signer. A changed repository ID is a
 /// different signer even under the same identity: that is what a recreated
 /// name looks like. Without both pins, the identities must be the same
 /// apart from a workflow's ref.
@@ -670,15 +592,12 @@ pub fn policy(requested: &str, signed_project: &str) -> Option<Policy> {
 /// - a different repository ID from any of them is a different
 ///   repository, refused even under the requested name, since that is what
 ///   a recreated name looks like;
-/// - the same repository ID under an owner a pin has not accepted is a
-///   transfer, refused unless [`Expected::accept_transfer`] is set. Each
-///   pin's owner is compared by ID when it has one, and by name otherwise;
-///   with no pin, the owner is compared with [`Expected::resolved_owner_id`]
-///   when it is given, and with the requested project's owner by name
-///   otherwise;
-/// - the same repository ID and an accepted owner is [`Continuity::Same`]
-///   under the requested name and [`Continuity::Renamed`] under another. A
-///   monorepo tool's subpath must be the same under both names.
+/// - the same repository ID is [`Continuity::Same`] under the requested
+///   name and [`Continuity::Renamed`] under another, whether the repository
+///   was renamed or transferred to another owner. A monorepo tool's subpath
+///   must be the same under both names. The owner does not matter: only a
+///   repository's current owner can transfer it, and that owner already
+///   signs its releases.
 ///
 /// Without IDs to compare, on either side, the name is all there is: the
 /// release must be for the requested project.
@@ -726,12 +645,10 @@ pub fn check(
     }
 
     let actual_id = source.and_then(|s| s.id.as_deref());
-    let actual_owner_id = source.and_then(|s| s.owner_id.as_deref());
     let pins = expected.all_pins();
     let same_name = signed_project == requested;
     let by_id =
         actual_id.is_some() && (!pins.is_empty() || expected.resolved_repository_id.is_some());
-    let mut transfer = None;
     let continuity = match actual_id {
         Some(actual) if by_id => {
             let known: Vec<(&str, Evidence)> = if pins.is_empty() {
@@ -753,97 +670,25 @@ pub fn check(
                     evidence: *evidence,
                 });
             }
-            let owner = source
-                .and_then(|s| s.owner_uri.as_deref())
-                .and_then(|uri| uri.strip_prefix(&format!("https://{}/", got.host)))
-                .filter(|name| !name.is_empty())
-                .unwrap_or(got.owner);
-            let moved = |previous_owner: &str,
-                         previous_owner_id: Option<&str>,
-                         evidence: Option<Evidence>| Transfer {
-                requested: requested.to_string(),
-                signed: signed_project.to_string(),
-                previous_owner: previous_owner.to_string(),
-                previous_owner_id: previous_owner_id.map(str::to_string),
-                owner: owner.to_string(),
-                owner_id: actual_owner_id.map(str::to_string),
-                evidence,
-            };
-            // GitHub and GitLab owner names are case-insensitive.
-            let another_owner_name = |before: &str| !before.eq_ignore_ascii_case(got.owner);
-            let found = if pins.is_empty() {
-                match (expected.resolved_owner_id, actual_owner_id) {
-                    (Some(before), Some(now)) => (before != now)
-                        .then(|| moved(want.owner, Some(before), Some(Evidence::Resolved))),
-                    _ => another_owner_name(want.owner).then(|| moved(want.owner, None, None)),
-                }
+            if same_name {
+                Continuity::Same
             } else {
-                pins.iter().find_map(|(pin, evidence)| {
-                    // The owner the consumer last saw under this pin, by name.
-                    let before = ForgeName::parse(&pin.project)
-                        .filter(|p| p.host == want.host)
-                        .map_or(want.owner, |p| p.owner);
-                    let has_owner_ids =
-                        pin.owner_id.is_some() || !pin.accepted_owner_ids.is_empty();
-                    let differs = match actual_owner_id {
-                        Some(now) if has_owner_ids => !pin.accepts_owner(now),
-                        _ => another_owner_name(before),
-                    };
-                    differs.then(|| moved(before, pin.owner_id.as_deref(), Some(*evidence)))
-                })
-            };
-            match found {
-                Some(found) if expected.accept_transfer => {
-                    // As 1.4 reported it: both IDs, or else both names.
-                    let (previous_owner, owner) = match (&found.previous_owner_id, &found.owner_id)
-                    {
-                        (Some(before), Some(now)) => (before.clone(), now.clone()),
-                        _ => (found.previous_owner.clone(), found.owner.clone()),
-                    };
-                    transfer = Some(found);
-                    Continuity::Transferred {
-                        requested: requested.to_string(),
-                        signed: signed_project.to_string(),
-                        previous_owner,
-                        owner,
-                    }
-                }
-                Some(found) => return Err(IdentityError::OwnerChanged(Box::new(found))),
-                None if same_name => Continuity::Same,
-                None => Continuity::Renamed {
+                Continuity::Renamed {
                     requested: requested.to_string(),
                     signed: signed_project.to_string(),
-                },
+                }
             }
         }
         _ if same_name => Continuity::Same,
         _ => return Err(mismatch()),
     };
-    let pin = actual_id.map(|id| {
-        // Every owner accepted so far stays accepted: the pins' owners and
-        // the ones they accepted, and the owner an accepted transfer moved
-        // the repository from.
-        let mut accepted: Vec<String> = Vec::new();
-        let previous = pins
-            .iter()
-            .filter(|_| by_id)
-            .flat_map(|(pin, _)| pin.owner_id.iter().chain(&pin.accepted_owner_ids))
-            .chain(transfer.as_ref().and_then(|t| t.previous_owner_id.as_ref()));
-        for owner in previous {
-            if Some(owner.as_str()) != actual_owner_id && !accepted.contains(owner) {
-                accepted.push(owner.clone());
-            }
-        }
-        ForgePin::new(signed_project, id, actual_owner_id.map(str::to_string))
-            .with_accepted_owner_ids(accepted)
-    });
+    let pin = actual_id.map(|id| ForgePin::of(signed_project, id));
     Ok(Check {
         continuity,
         source: source.cloned(),
         pin,
         identity: identity.to_string(),
         by_id,
-        transfer,
         pin_workflow: true,
     })
 }
@@ -901,7 +746,7 @@ mod tests {
     }
 
     fn pin() -> ForgePin {
-        ForgePin::new("github.com/jdx/hk", "922514152", Some("216188".into()))
+        ForgePin::of("github.com/jdx/hk", "922514152")
     }
 
     fn run(
@@ -960,14 +805,10 @@ mod tests {
             );
             assert_eq!(
                 ok.pin,
-                Some(ForgePin::new(
-                    "github.com/jdx/hook",
-                    "922514152",
-                    Some("216188".into())
-                ))
+                Some(ForgePin::of("github.com/jdx/hook", "922514152"))
             );
         }
-        // An owner renamed along with it keeps its ID, so a pin follows it.
+        // A rename along with the owner's is the same repository.
         let moved_owner = source(
             "https://github.com/jdx2/hook",
             "922514152",
@@ -987,7 +828,7 @@ mod tests {
     fn old_releases_under_the_old_name_still_verify() {
         // The user now asks for the new name; a release from before the
         // rename names the old one and was signed there.
-        let pin = ForgePin::new("github.com/jdx/hook", "922514152", Some("216188".into()));
+        let pin = ForgePin::of("github.com/jdx/hook", "922514152");
         let ok = run(
             &Expected::new("github.com/jdx/hook").pinned(Some(&pin)),
             "github.com/jdx/hk",
@@ -1004,84 +845,153 @@ mod tests {
     }
 
     #[test]
-    fn a_transfer_needs_explicit_trust() {
+    fn a_transfer_is_followed_by_repository_id() {
         let pin = pin();
-        let expected = Expected::new("github.com/jdx/hk").pinned(Some(&pin));
-        let err = run(&expected, "github.com/acme/hk", Some(&transferred())).unwrap_err();
-        let transfer = Transfer {
-            requested: "github.com/jdx/hk".into(),
-            signed: "github.com/acme/hk".into(),
-            previous_owner: "jdx".into(),
-            previous_owner_id: Some("216188".into()),
-            owner: "acme".into(),
-            owner_id: Some("999".into()),
-            evidence: Some(Evidence::Pin),
-        };
-        assert_eq!(err, IdentityError::OwnerChanged(Box::new(transfer.clone())));
-        assert_eq!(
-            err.to_string(),
-            "github.com/jdx/hk moved from owner jdx (ID 216188) to owner acme (ID 999) as \
-             github.com/acme/hk; accept the new owner explicitly to trust it"
+        // The pin names jdx/hk; the release is signed by acme, which owns
+        // the repository now. Only the owner could have transferred it, and
+        // the owner signs its releases, so the owner is not compared.
+        for expected in [
+            Expected::new("github.com/jdx/hk").pinned(Some(&pin)),
+            Expected::new("github.com/jdx/hk").resolved(Some("922514152")),
+        ] {
+            let ok = run(&expected, "github.com/acme/hk", Some(&transferred())).unwrap();
+            assert_eq!(
+                ok.continuity,
+                Continuity::Renamed {
+                    requested: "github.com/jdx/hk".into(),
+                    signed: "github.com/acme/hk".into(),
+                }
+            );
+            assert_eq!(
+                ok.pin,
+                Some(ForgePin::of("github.com/acme/hk", "922514152")),
+                "the pin moves with the repository"
+            );
+            assert!(
+                ok.continues_signer("https://github.com/jdx/hk/.github/workflows/release.yml"),
+                "the workflow keeps its path inside the repository"
+            );
+        }
+
+        // Transferred and renamed at once.
+        let moved = source(
+            "https://github.com/acme/tool",
+            "922514152",
+            "https://github.com/acme",
+            "999",
         );
         let ok = run(
-            &expected.accepting_transfer(true),
+            &Expected::new("github.com/jdx/hk").pinned(Some(&pin)),
+            "github.com/acme/tool",
+            Some(&moved),
+        )
+        .unwrap();
+        assert!(matches!(ok.continuity, Continuity::Renamed { .. }));
+
+        // A certificate that records the repository ID but no owner at all.
+        let bare = SourceRepository::new("https://github.com/acme/hk").with_id("922514152");
+        let ok = run(
+            &Expected::new("github.com/jdx/hk").pinned(Some(&pin)),
             "github.com/acme/hk",
-            Some(&transferred()),
+            Some(&bare),
+        )
+        .unwrap();
+        assert!(matches!(ok.continuity, Continuity::Renamed { .. }));
+
+        // A release from before the transfer, under the old owner, still
+        // verifies for a user who now asks for the new name, and the pin it
+        // gives is the same repository.
+        let after = ForgePin::of("github.com/acme/hk", "922514152");
+        let ok = run(
+            &Expected::new("github.com/acme/hk").pinned(Some(&after)),
+            "github.com/jdx/hk",
+            Some(&hk()),
         )
         .unwrap();
         assert_eq!(
             ok.continuity,
-            Continuity::Transferred {
-                requested: "github.com/jdx/hk".into(),
-                signed: "github.com/acme/hk".into(),
-                previous_owner: "216188".into(),
-                owner: "999".into(),
+            Continuity::Renamed {
+                requested: "github.com/acme/hk".into(),
+                signed: "github.com/jdx/hk".into(),
             }
         );
-        assert_eq!(ok.transfer(), Some(&transfer));
-        assert_eq!(
-            ok.pin,
-            Some(
-                ForgePin::new("github.com/acme/hk", "922514152", Some("999".into()))
-                    .with_accepted_owner_ids(["216188"])
-            ),
-            "the pin moves to the new owner and keeps the old one accepted"
-        );
-
-        // With no pinned owner ID, the owner is compared by name: the
-        // forge's redirect alone does not show the new owner is the old.
-        let err = run(
-            &Expected::new("github.com/jdx/hk").resolved(Some("922514152")),
-            "github.com/acme/hk",
-            Some(&transferred()),
-        )
-        .unwrap_err();
-        assert!(
-            matches!(&err, IdentityError::OwnerChanged(t)
-                if t.previous_owner == "jdx" && t.previous_owner_id.is_none()
-                    && t.owner == "acme" && t.evidence.is_none()),
-            "{err}"
-        );
-        let old_pin = ForgePin::new("github.com/jdx/hk", "922514152", None);
-        let err = run(
-            &Expected::new("github.com/jdx/hk").pinned(Some(&old_pin)),
-            "github.com/acme/hk",
-            Some(&transferred()),
-        )
-        .unwrap_err();
-        assert!(
-            matches!(&err, IdentityError::OwnerChanged(t) if t.evidence == Some(Evidence::Pin)),
-            "{err}"
-        );
-        // A repository renamed within an owner whose name only differs in
-        // case is not a transfer.
         let ok = run(
-            &Expected::new("github.com/JDX/hk").resolved(Some("922514152")),
-            "github.com/jdx/hook",
-            Some(&renamed()),
+            &Expected::new("github.com/acme/hk").pinned(Some(&after)),
+            "github.com/acme/hk",
+            Some(&transferred()),
         )
         .unwrap();
-        assert!(matches!(ok.continuity, Continuity::Renamed { .. }));
+        assert_eq!(ok.continuity, Continuity::Same);
+
+        // A repository ID that is not the pinned one is refused whoever
+        // owns it, even a repository under the same owner and name.
+        let evil = source(
+            "https://github.com/evil/hk",
+            "666",
+            "https://github.com/evil",
+            "1",
+        );
+        let err = run(
+            &Expected::new("github.com/jdx/hk").pinned(Some(&pin)),
+            "github.com/evil/hk",
+            Some(&evil),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, IdentityError::DifferentRepository { .. }),
+            "{err}"
+        );
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn the_owner_is_not_part_of_the_pin() {
+        // A pin stored before 1.5.0 carries the owner ID. It reads, is not
+        // compared, and is not written back.
+        {
+            let old: ForgePin = serde_json::from_str(
+                r#"{"project":"github.com/jdx/hk","repository_id":"922514152","owner_id":"216188"}"#,
+            )
+            .unwrap();
+            assert_eq!(old.owner_id.as_deref(), Some("216188"));
+            assert_eq!(old, pin(), "equal to the pin the same release gives now");
+            let written = serde_json::to_string(&old).unwrap();
+            assert!(!written.contains("owner"), "{written}");
+            assert_eq!(serde_json::from_str::<ForgePin>(&written).unwrap(), pin());
+            // Pins the transfer prompt stored carry more owners; they read too.
+            let prompted: ForgePin = serde_json::from_str(
+                r#"{"project":"github.com/acme/hk","repository_id":"922514152","owner_id":"999","accepted_owner_ids":["216188"]}"#,
+            )
+            .unwrap();
+            assert_eq!(prompted, ForgePin::of("github.com/acme/hk", "922514152"));
+
+            // The pin's owner decides nothing: acme signs for a pin that
+            // recorded jdx's ID, and jdx signs for one that recorded acme's.
+            let jdx = old;
+            let ok = run(
+                &Expected::new("github.com/jdx/hk").pinned(Some(&jdx)),
+                "github.com/acme/hk",
+                Some(&transferred()),
+            )
+            .unwrap();
+            assert!(matches!(ok.continuity, Continuity::Renamed { .. }));
+            let ok = run(
+                &Expected::new("github.com/acme/hk").pinned(Some(&prompted)),
+                "github.com/jdx/hk",
+                Some(&hk()),
+            )
+            .unwrap();
+            assert!(matches!(ok.continuity, Continuity::Renamed { .. }));
+            // The deprecated constructor and builder still compile and do
+            // nothing.
+            let built = ForgePin::new("github.com/jdx/hk", "922514152", Some("1".into()));
+            assert_eq!(built, pin());
+            let expected = Expected::new("github.com/jdx/hk")
+                .pinned(Some(&built))
+                .accepting_transfer(true);
+            let ok = run(&expected, "github.com/acme/hk", Some(&transferred())).unwrap();
+            assert!(matches!(ok.continuity, Continuity::Renamed { .. }));
+        }
     }
 
     #[test]
@@ -1246,7 +1156,7 @@ mod tests {
             "https://gitlab.com/group/sub",
             "7",
         );
-        let pin = ForgePin::new("gitlab.com/group/sub/tool", "42", Some("7".into()));
+        let pin = ForgePin::of("gitlab.com/group/sub/tool", "42");
         let expected = Expected::new("gitlab.com/group/sub/tool").pinned(Some(&pin));
         let signer = |uri: &str| format!("{uri}//.gitlab-ci.yml@refs/tags/v1");
         let ok = check(
@@ -1369,7 +1279,7 @@ mod tests {
 
     #[test]
     fn every_pin_must_hold_and_a_refusal_names_the_one_that_did_not() {
-        let other = ForgePin::new("github.com/jdx/hk", "555", Some("216188".into()));
+        let other = ForgePin::of("github.com/jdx/hk", "555");
         let pins = [
             (PinSource::Local, pin()),
             (PinSource::Lockfile, other.clone()),
@@ -1421,7 +1331,7 @@ mod tests {
             (PinSource::Local, pin()),
             (
                 PinSource::Lockfile,
-                ForgePin::new("github.com/jdx/hook", "922514152", Some("216188".into())),
+                ForgePin::of("github.com/jdx/hook", "922514152"),
             ),
         ];
         let expected = Expected::new("github.com/jdx/hk")
@@ -1431,185 +1341,45 @@ mod tests {
         assert!(matches!(ok.continuity, Continuity::Renamed { .. }));
         assert!(ok.continues_signer("https://github.com/jdx/hk/.github/workflows/release.yml"));
 
-        // A transfer only this machine accepted is still one to the lockfile.
+        // Two pins that agree on the repository follow a transfer; the
+        // owner either recorded does not matter.
         let pins = [
-            (PinSource::Local, pin().with_accepted_owner_ids(["999"])),
-            (PinSource::Lockfile, pin()),
+            (PinSource::Local, pin()),
+            (
+                PinSource::Lockfile,
+                ForgePin::of("github.com/acme/hk", "922514152"),
+            ),
         ];
-        let err = run(
+        let ok = run(
             &Expected::new("github.com/jdx/hk").pinned_by(&pins),
             "github.com/acme/hk",
             Some(&transferred()),
         )
-        .unwrap_err();
-        assert!(
-            matches!(&err, IdentityError::OwnerChanged(t)
-                if t.evidence == Some(Evidence::LockfilePin)),
-            "{err}"
-        );
-    }
-
-    #[test]
-    fn an_accepted_transfer_keeps_old_releases_verifying() {
-        // jdx/hk moved to acme/hk and a person accepted it: the pin records
-        // acme and remembers jdx.
-        let accepted = ForgePin::new("github.com/acme/hk", "922514152", Some("999".into()))
-            .with_accepted_owner_ids(["216188"]);
-        let expected = Expected::new("github.com/acme/hk").pinned(Some(&accepted));
-        let ok = run(&expected, "github.com/acme/hk", Some(&transferred())).unwrap();
-        assert_eq!(ok.continuity, Continuity::Same);
-        assert_eq!(ok.pin.as_ref(), Some(&accepted));
-        assert_eq!(ok.transfer(), None);
-
-        // A release from before the transfer, signed by jdx, is by an
-        // accepted owner, and the pin it gives still accepts acme.
-        let ok = run(&expected, "github.com/jdx/hk", Some(&hk())).unwrap();
-        assert_eq!(
-            ok.continuity,
-            Continuity::Renamed {
-                requested: "github.com/acme/hk".into(),
-                signed: "github.com/jdx/hk".into(),
-            }
-        );
-        let older = ok.pin.unwrap();
-        assert_eq!(older, pin().with_accepted_owner_ids(["999"]));
-        let ok = run(
-            &Expected::new("github.com/acme/hk").pinned(Some(&older)),
-            "github.com/acme/hk",
-            Some(&transferred()),
-        )
-        .unwrap();
-        assert_eq!(ok.continuity, Continuity::Same);
-
-        // An owner nobody accepted is still a transfer.
-        let evil = source(
-            "https://github.com/evil/hk",
-            "922514152",
-            "https://github.com/evil",
-            "1",
-        );
-        let err = run(&expected, "github.com/evil/hk", Some(&evil)).unwrap_err();
-        assert!(matches!(err, IdentityError::OwnerChanged(_)), "{err}");
-
-        // A pin stored before the field existed still reads, and a pin with
-        // no accepted owners is stored as before.
-        let old: ForgePin = serde_json::from_str(
-            r#"{"project":"github.com/jdx/hk","repository_id":"922514152","owner_id":"216188"}"#,
-        )
-        .unwrap();
-        assert_eq!(old, pin());
-        assert!(
-            !serde_json::to_string(&pin())
-                .unwrap()
-                .contains("accepted_owner_ids")
-        );
-        let text = serde_json::to_string(&accepted).unwrap();
-        assert_eq!(serde_json::from_str::<ForgePin>(&text).unwrap(), accepted);
-    }
-
-    #[test]
-    fn a_resolved_owner_id_tells_an_owner_rename_from_a_transfer() {
-        // The owner is called jdx now and was jdx2 when this release was
-        // signed; a user asks for the current name.
-        let before_rename = source(
-            "https://github.com/jdx2/hk",
-            "922514152",
-            "https://github.com/jdx2",
-            "216188",
-        );
-        let expected = Expected::new("github.com/jdx/hk").resolved(Some("922514152"));
-        // By name alone, another owner name is a transfer.
-        let err = run(&expected, "github.com/jdx2/hk", Some(&before_rename)).unwrap_err();
-        assert!(
-            matches!(&err, IdentityError::OwnerChanged(t) if t.evidence.is_none()),
-            "{err}"
-        );
-        // The forge says jdx is owner 216188, the one that signed.
-        let ok = run(
-            &expected.resolved_owner(Some("216188")),
-            "github.com/jdx2/hk",
-            Some(&before_rename),
-        )
         .unwrap();
         assert!(matches!(ok.continuity, Continuity::Renamed { .. }));
-
-        // Another owner ID is a transfer even under the requested owner's
-        // name: the name was taken by another account.
-        let retaken = source(
-            "https://github.com/jdx/hk",
-            "922514152",
-            "https://github.com/jdx",
-            "31337",
-        );
-        let err = run(
-            &expected.resolved_owner(Some("216188")),
-            "github.com/jdx/hk",
-            Some(&retaken),
-        )
-        .unwrap_err();
-        assert_eq!(
-            err,
-            IdentityError::OwnerChanged(Box::new(Transfer {
-                requested: "github.com/jdx/hk".into(),
-                signed: "github.com/jdx/hk".into(),
-                previous_owner: "jdx".into(),
-                previous_owner_id: Some("216188".into()),
-                owner: "jdx".into(),
-                owner_id: Some("31337".into()),
-                evidence: Some(Evidence::Resolved),
-            }))
-        );
-        // Accepted, the resolved owner is remembered as accepted.
-        let ok = run(
-            &expected
-                .resolved_owner(Some("216188"))
-                .accepting_transfer(true),
-            "github.com/jdx/hk",
-            Some(&retaken),
-        )
-        .unwrap();
-        assert_eq!(
-            ok.pin.unwrap().accepted_owner_ids,
-            vec!["216188".to_string()]
-        );
-        // With a pin, the pin decides.
-        let pin = pin();
-        let err = run(
-            &expected.pinned(Some(&pin)).resolved_owner(Some("31337")),
-            "github.com/jdx/hk",
-            Some(&retaken),
-        )
-        .unwrap_err();
-        assert!(
-            matches!(&err, IdentityError::OwnerChanged(t) if t.evidence == Some(Evidence::Pin)),
-            "{err}"
-        );
     }
 
     #[test]
-    fn a_gitlab_project_moved_to_another_group_is_a_transfer() {
-        // A GitLab project's owner is its immediate group, so a move
-        // between subgroups of one top-level group changes the owner ID.
+    fn a_gitlab_project_moved_to_another_group_is_followed() {
+        // A move between subgroups changes the namespace but not the
+        // project ID.
         let moved = source(
             "https://gitlab.com/group/other/tool",
             "42",
             "https://gitlab.com/group/other",
             "8",
         );
-        let pin = ForgePin::new("gitlab.com/group/sub/tool", "42", Some("7".into()));
-        let err = check(
+        let pin = ForgePin::of("gitlab.com/group/sub/tool", "42");
+        let ok = check(
             &Expected::new("gitlab.com/group/sub/tool").pinned(Some(&pin)),
             "gitlab.com/group/other/tool",
             "https://gitlab.com/group/other/tool//.gitlab-ci.yml@refs/tags/v1",
             Some(GITLAB_ISSUER),
             Some(&moved),
         )
-        .unwrap_err();
-        assert!(
-            matches!(&err, IdentityError::OwnerChanged(t)
-                if t.previous_owner == "group/sub" && t.owner == "group/other"),
-            "{err}"
-        );
+        .unwrap();
+        assert!(matches!(ok.continuity, Continuity::Renamed { .. }));
+        assert!(ok.continues_signer("https://gitlab.com/group/sub/tool//.gitlab-ci.yml"));
     }
 
     #[test]
@@ -1617,7 +1387,7 @@ mod tests {
         let release =
             |repo: &str| format!("https://github.com/{repo}/.github/workflows/release.yml");
         let hk = pin();
-        let hook = ForgePin::new("github.com/jdx/hook", "922514152", Some("216188".into()));
+        let hook = ForgePin::of("github.com/jdx/hook", "922514152");
         // A rename keeps the workflow, whatever the ref.
         assert!(same_workflow(
             &release("jdx/hk"),
@@ -1632,26 +1402,20 @@ mod tests {
             Some(&hook),
         ));
         // A recreated name: the same identity, another repository.
-        let squatter = ForgePin::new("github.com/jdx/hk", "555", Some("216188".into()));
+        let squatter = ForgePin::of("github.com/jdx/hk", "555");
         assert!(!same_workflow(
             &release("jdx/hk"),
             Some(&hk),
             &release("jdx/hk"),
             Some(&squatter),
         ));
-        // Another owner, unless it was accepted.
-        let acme = ForgePin::new("github.com/acme/hk", "922514152", Some("999".into()));
-        assert!(!same_workflow(
-            &release("jdx/hk"),
-            Some(&hk),
-            &release("acme/hk"),
-            Some(&acme),
-        ));
+        // A transfer keeps the signer too: the repository ID is the same.
+        let acme = ForgePin::of("github.com/acme/hk", "922514152");
         assert!(same_workflow(
             &release("jdx/hk"),
             Some(&hk),
             &release("acme/hk"),
-            Some(&acme.clone().with_accepted_owner_ids(["216188"])),
+            Some(&acme),
         ));
         // Without a pin on both sides, only the identity itself, less a
         // workflow's ref.
@@ -1680,12 +1444,11 @@ mod tests {
             None
         ));
 
-        // Pins compare IDs on one forge, and owners by name without IDs.
-        let gitlab = ForgePin::new("gitlab.com/jdx/hk", "922514152", Some("216188".into()));
+        // Pins compare repository IDs, and only on one forge.
+        let gitlab = ForgePin::of("gitlab.com/jdx/hk", "922514152");
         assert!(!gitlab.continues(&hk));
-        let by_name = |project: &str| ForgePin::new(project, "922514152", None);
-        assert!(by_name("github.com/JDX/hook").continues(&by_name("github.com/jdx/hk")));
-        assert!(!by_name("github.com/acme/hk").continues(&by_name("github.com/jdx/hk")));
+        assert!(acme.continues(&hk));
+        assert!(!ForgePin::of("github.com/jdx/hk", "555").continues(&hk));
     }
 
     #[test]

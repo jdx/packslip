@@ -406,12 +406,14 @@ const SOURCE_REPOSITORY_OWNER_ID: &str = "1.3.6.1.4.1.57264.1.17";
 /// The repository a keyless signer's CI run was based on, as Fulcio
 /// recorded it in the certificate from the forge's OIDC token.
 ///
-/// A forge's numeric IDs do not change when a repository or its owner is
-/// renamed, so they tell a renamed repository from a new one that took its
-/// old name. The repository ID also survives a transfer to another owner;
-/// the owner ID does not. GitHub Actions and GitLab CI certificates carry
-/// all four fields; certificates Fulcio issued before it recorded them,
-/// and those for other identities, carry none.
+/// A forge's numeric repository ID does not change when a repository is
+/// renamed or transferred to another owner, so it tells the same repository
+/// from a new one that took its old name. [`crate::forge::check`] compares
+/// only that ID; the owner's fields describe who owned the repository when
+/// the certificate was issued and are not part of a project's identity.
+/// GitHub Actions and GitLab CI certificates carry all four fields;
+/// certificates Fulcio issued before it recorded them, and those for other
+/// identities, carry none.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[non_exhaustive]
 pub struct SourceRepository {
