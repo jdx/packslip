@@ -147,6 +147,9 @@ A command the executables need on PATH, as bin:NAME or bin:NAME@MIN where MIN is
 \fB\-\-no\-libs\fR
 Do not open the artifacts to record the shared libraries their executables load from the host
 .TP
+\fB\-\-no\-pin\-workflow\fR
+With keyless signing from a reusable workflow: declare that consumers should hold later releases to this repository, not to this signing workflow
+.TP
 \fB\-h, \-\-help\fR
 Print help
 \fBArguments:\fR
@@ -222,6 +225,9 @@ How to sign; defaults to key when \-\-key is given, else oidc
 .TP
 \fB\-\-no\-log\fR
 With \-\-key: do not record the signature in Rekor
+.TP
+\fB\-\-no\-pin\-workflow\fR
+With keyless signing from a reusable workflow: declare that consumers should hold later releases to this repository, not to this signing workflow
 .TP
 \fB\-o, \-\-out\fR \fI<OUT>\fR
 Where to write the list

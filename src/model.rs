@@ -1026,6 +1026,21 @@ pub struct Identity {
     /// such as `https://token.actions.githubusercontent.com`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issuer: Option<String>,
+    /// For `sigstore-oidc`, whether a consumer holds later releases to the
+    /// workflow that signed this one. `false` declares that the vendor
+    /// signs from a reusable workflow, so only the repository is pinned.
+    /// Absent means `true`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pin_workflow: Option<bool>,
+}
+
+impl Identity {
+    /// Whether a consumer pins the signing workflow: the declared value,
+    /// `true` when the document does not say. A key has no workflow, so a
+    /// key-signed document always pins.
+    pub fn pins_workflow(&self) -> bool {
+        self.scheme != Scheme::SigstoreOidc || self.pin_workflow.unwrap_or(true)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1899,6 +1914,7 @@ mod tests {
                     scheme: Scheme::SigstoreKey,
                     key_id: "5A0A0B8B9C6D7E1F".into(),
                     issuer: None,
+                    pin_workflow: None,
                 },
                 attested_by: Attestor::Vendor,
                 evidence: vec![],
@@ -1929,6 +1945,7 @@ mod tests {
                     scheme: Scheme::SigstoreKey,
                     key_id: "5A0A0B8B9C6D7E1F".into(),
                     issuer: None,
+                    pin_workflow: None,
                 },
                 releases: vec![ReleaseRef {
                     version: "2026.9.1".into(),
@@ -2556,6 +2573,33 @@ mod tests {
         }
         assert_eq!(project_host("github.com/jdx/mise"), "github.com");
         assert_eq!(sample().project_host(), "github.com");
+    }
+
+    #[test]
+    fn a_document_pins_its_workflow_unless_it_says_otherwise() {
+        let mut doc = serde_json::to_value(sample()).unwrap();
+        assert!(doc["predicate"]["identity"].get("pin_workflow").is_none());
+        let parsed: Statement = serde_json::from_value(doc.clone()).unwrap();
+        assert!(parsed.predicate.identity.pins_workflow());
+
+        doc["predicate"]["identity"]["scheme"] = serde_json::json!("sigstore-oidc");
+        doc["predicate"]["identity"]["pin_workflow"] = serde_json::json!(false);
+        let parsed: Statement = serde_json::from_value(doc.clone()).unwrap();
+        parsed.validate().unwrap();
+        assert!(!parsed.predicate.identity.pins_workflow());
+
+        // A key has no workflow to stop pinning.
+        doc["predicate"]["identity"]["scheme"] = serde_json::json!("sigstore-key");
+        let keyed: Statement = serde_json::from_value(doc.clone()).unwrap();
+        assert!(keyed.predicate.identity.pins_workflow());
+        doc["predicate"]["identity"]["scheme"] = serde_json::json!("sigstore-oidc");
+        assert_eq!(
+            serde_json::to_value(&parsed).unwrap()["predicate"]["identity"]["pin_workflow"],
+            false
+        );
+
+        doc["predicate"]["identity"]["pin_workflow"] = serde_json::json!("no");
+        assert!(serde_json::from_value::<Statement>(doc).is_err());
     }
 
     #[test]

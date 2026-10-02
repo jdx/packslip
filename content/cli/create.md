@@ -41,4 +41,5 @@ Examples and configuration: https://packslip.dev/docs/describing-releases/
 - **`--no-sha512`** — Record only sha256, not sha512 as well
 - **`--require <REQUIRE>`** — A command the executables need on PATH, as bin:NAME or bin:NAME@MIN where MIN is the lowest version that works. Example: bin:java@17 (repeatable)
 - **`--no-libs`** — Do not open the artifacts to record the shared libraries their executables load from the host
+- **`--no-pin-workflow`** — With keyless signing from a reusable workflow: declare that consumers should hold later releases to this repository, not to this signing workflow
 - **`-h --help`** — Print help

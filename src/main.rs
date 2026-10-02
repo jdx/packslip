@@ -409,6 +409,24 @@ struct Create {
     /// executables load from the host
     #[usage(long)]
     no_libs: bool,
+    /// With keyless signing from a reusable workflow: declare that
+    /// consumers should hold later releases to this repository, not to
+    /// this signing workflow
+    #[usage(long)]
+    no_pin_workflow: bool,
+}
+
+/// The `identity` block the signer declares, with `pin_workflow: false`
+/// when the publisher asked for it. Only a keyless signer has a workflow.
+fn declared_identity(signer: &Signer, no_pin_workflow: bool) -> Result<packslip::model::Identity> {
+    let mut identity = signer.identity();
+    if no_pin_workflow {
+        if identity.scheme != packslip::model::Scheme::SigstoreOidc {
+            bail!("--no-pin-workflow applies to keyless signing; a key has no workflow");
+        }
+        identity.pin_workflow = Some(false);
+    }
+    Ok(identity)
 }
 
 /// `PATH` or `NAME=PATH`.
@@ -849,7 +867,11 @@ impl RunWith<BinInfo> for Create {
             sha512: !self.no_sha512,
             requires_bin,
             read_executables: !self.no_libs,
-            ..Request::new(&project, &version, signer.identity())
+            ..Request::new(
+                &project,
+                &version,
+                declared_identity(&signer, self.no_pin_workflow)?,
+            )
         })?;
         let identity = created.statement.predicate.identity.clone();
         let bundle = sigstore::sign(signer, &created.document)?;
@@ -1008,6 +1030,11 @@ struct Releases {
     /// With --key: do not record the signature in Rekor
     #[usage(long)]
     no_log: bool,
+    /// With keyless signing from a reusable workflow: declare that
+    /// consumers should hold later releases to this repository, not to
+    /// this signing workflow
+    #[usage(long)]
+    no_pin_workflow: bool,
     /// Where to write the list
     #[usage(short = 'o', long, default = "packslip-releases.sigstore.json")]
     out: PathBuf,
@@ -1069,7 +1096,7 @@ impl RunWith<BinInfo> for Releases {
             sequence: self.sequence,
             latest: self.latest.as_deref(),
             releases,
-            identity: signer.identity(),
+            identity: declared_identity(&signer, self.no_pin_workflow)?,
         })?;
         let bundle = sigstore::sign(signer, &created.document)?;
         if let Some(parent) = self.out.parent()
