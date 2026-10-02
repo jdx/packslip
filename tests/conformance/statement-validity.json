@@ -140,6 +140,88 @@
       "reason": "A later revision of version 1 may add optional fields; an older consumer reads the document anyway."
     },
     {
+      "name": "a release that does not pin its signing workflow",
+      "expect": "accept",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "github.com/example/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "libc": "gnu",
+              "size": 5,
+              "format": "tar.xz",
+              "bin": [
+                "tool"
+              ]
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-oidc",
+            "key_id": "https://github.com/example/tool/.github/workflows/release.yml@refs/tags/v1.0.0",
+            "issuer": "https://token.actions.githubusercontent.com",
+            "pin_workflow": false
+          }
+        }
+      },
+      "comment": "pin_workflow is optional and true when absent. false declares that consumers hold later releases to the repository, not the workflow (Reusable workflows)."
+    },
+    {
+      "name": "a pin_workflow that is not a boolean",
+      "expect": "reject",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "github.com/example/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "libc": "gnu",
+              "size": 5,
+              "format": "tar.xz",
+              "bin": [
+                "tool"
+              ]
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-oidc",
+            "key_id": "https://github.com/example/tool/.github/workflows/release.yml@refs/tags/v1.0.0",
+            "issuer": "https://token.actions.githubusercontent.com",
+            "pin_workflow": "false"
+          }
+        }
+      },
+      "reason": "identity.pin_workflow is a boolean; a string is not false."
+    },
+    {
       "name": "extensions carry data the specification does not define",
       "expect": "accept",
       "statement": {

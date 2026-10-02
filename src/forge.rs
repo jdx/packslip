@@ -510,6 +510,7 @@ pub struct Check {
     /// repository is the one expected.
     by_id: bool,
     transfer: Option<Transfer>,
+    pin_workflow: bool,
 }
 
 impl Check {
@@ -523,9 +524,42 @@ impl Check {
     /// When the name was all there was to go on, the identity must be the
     /// same apart from its ref. [`same_workflow`] compares two signers a
     /// consumer stored.
+    ///
+    /// A release that declares `pin_workflow: false` (see
+    /// [`Check::pins_workflow`]) is held to the repository alone: any
+    /// workflow of it continues the signer. As for a pinned workflow,
+    /// `previous` must be the signer the consumer recorded for this
+    /// project: once the repository ID matched, nothing here can tell a
+    /// rename from a signer of another repository on the same forge, so
+    /// only the forge is compared. Without a repository ID, the
+    /// repository's name is compared too.
     pub fn continues_signer(&self, previous: &str) -> bool {
         let pin = self.pin.as_ref().filter(|_| self.by_id);
+        if !self.pin_workflow {
+            let (Some(before), Some(now)) =
+                (repository_of(previous), repository_of(&self.identity))
+            else {
+                return false;
+            };
+            return before.0 == now.0 && (self.by_id || before == now);
+        }
         same_workflow(previous, pin, &self.identity, pin)
+    }
+
+    /// Whether the verified release asks consumers to hold later releases
+    /// to its signing workflow; `false` when it declares
+    /// `identity.pin_workflow: false`. A release that declares `false`
+    /// while the consumer remembers `true` lowers what the consumer
+    /// enforces, so the consumer refuses it until a person accepts the
+    /// change, and remembers the accepted value.
+    pub fn pins_workflow(&self) -> bool {
+        self.pin_workflow
+    }
+
+    /// Set from the verified document's declaration.
+    pub(crate) fn declaring_pin_workflow(mut self, pins: bool) -> Check {
+        self.pin_workflow = pins;
+        self
     }
 
     /// The owners of an accepted transfer, when [`Check::continuity`] is
@@ -574,6 +608,19 @@ fn without_ref(identity: &str) -> &str {
         return identity;
     }
     identity.rsplit_once('@').map_or(identity, |(path, _)| path)
+}
+
+/// The forge and the repository path a workflow identity belongs to.
+fn repository_of(identity: &str) -> Option<(&str, &str)> {
+    let rest = without_ref(identity).strip_prefix("https://")?;
+    if let Some(path) = rest.strip_prefix("github.com/") {
+        let end = path.match_indices('/').nth(1).map(|(i, _)| i)?;
+        return Some(("github.com", &path[..end]));
+    }
+    if let Some(path) = rest.strip_prefix("gitlab.com/") {
+        return Some(("gitlab.com", path.split_once("//")?.0));
+    }
+    None
 }
 
 /// The forge and the path of a workflow or pipeline config inside its
@@ -797,6 +844,7 @@ pub fn check(
         identity: identity.to_string(),
         by_id,
         transfer,
+        pin_workflow: true,
     })
 }
 
@@ -1251,6 +1299,48 @@ mod tests {
         assert!(!ok.continues_signer("https://github.com/jdx/hk/.github/workflows/other.yml"));
         assert!(!ok.continues_signer("https://gitlab.com/jdx/hk//.github/workflows/release.yml"));
         assert!(!ok.continues_signer("me@example.com"));
+    }
+
+    #[test]
+    fn a_release_that_does_not_pin_its_workflow_continues_any_workflow_of_the_repository() {
+        let pin = pin();
+        let ok = run(
+            &Expected::new("github.com/jdx/hk").pinned(Some(&pin)),
+            "github.com/jdx/hook",
+            Some(&renamed()),
+        )
+        .unwrap();
+        assert!(ok.pins_workflow());
+        assert!(!ok.continues_signer("https://github.com/jdx/hk/.github/workflows/other.yml"));
+
+        let ok = ok.declaring_pin_workflow(false);
+        assert!(!ok.pins_workflow());
+        assert!(ok.continues_signer("https://github.com/jdx/hk/.github/workflows/other.yml"));
+        assert!(ok.continues_signer(
+            "https://github.com/jdx/hook/.github/workflows/other.yml@refs/tags/v0.1.0"
+        ));
+        // The forge is still pinned, and the signer must still be a workflow.
+        // `previous` is the project's recorded signer, so a rename is not
+        // told from another repository by name once the ID matched.
+        assert!(!ok.continues_signer("https://gitlab.com/jdx/hk//.gitlab-ci.yml"));
+        assert!(!ok.continues_signer("me@example.com"));
+    }
+
+    #[test]
+    fn without_a_repository_id_the_unpinned_workflow_is_compared_by_repository_name() {
+        let ok = run(
+            &Expected::new("github.com/jdx/hk"),
+            "github.com/jdx/hk",
+            None,
+        )
+        .unwrap()
+        .declaring_pin_workflow(false);
+        assert!(ok.continues_signer("https://github.com/jdx/hk/.github/workflows/other.yml"));
+        assert!(!ok.continues_signer("https://github.com/jdx/hook/.github/workflows/release.yml"));
+        assert_eq!(
+            repository_of("https://gitlab.com/group/sub/tool//.gitlab-ci.yml@refs/tags/v1"),
+            Some(("gitlab.com", "group/sub/tool"))
+        );
     }
 
     #[test]

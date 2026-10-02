@@ -183,6 +183,13 @@
           "description": "For `sigstore-oidc`, the certificate's subject identity: the\nworkflow URI for a CI identity, or the email for a human one. For\n`sigstore-key`, the key id in uppercase hex.",
           "type": "string"
         },
+        "pin_workflow": {
+          "description": "For `sigstore-oidc`, whether a consumer holds later releases to the\nworkflow that signed this one. `false` declares that the vendor\nsigns from a reusable workflow, so only the repository is pinned.\nAbsent means `true`.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "scheme": {
           "$ref": "#/$defs/Scheme"
         }

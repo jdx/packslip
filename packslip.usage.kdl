@@ -94,6 +94,7 @@ Examples and configuration: https://packslip.dev/docs/describing-releases/
         arg <REQUIRE>
     }
     flag --no-libs help="Do not open the artifacts to record the shared libraries their executables load from the host"
+    flag --no-pin-workflow help="With keyless signing from a reusable workflow: declare that consumers should hold later releases to this repository, not to this signing workflow"
     flag "-h --help" help="Print help" action=help builtin=#true
     arg "[ARTIFACTS]..." help="Artifact files, optionally as path[:os/arch[/libc]|:any][@variant]. An arch or libc of any leaves it out, for a build that runs on every one. Added to those the manifest lists"
     complete manifest type=path
@@ -152,6 +153,7 @@ Publish at the project's well-known location, or as a supplementary list on a Gi
         arg <SIGN>
     }
     flag --no-log help="With --key: do not record the signature in Rekor"
+    flag --no-pin-workflow help="With keyless signing from a reusable workflow: declare that consumers should hold later releases to this repository, not to this signing workflow"
     flag "-o --out" help="Where to write the list" default=packslip-releases.sigstore.json {
         arg <OUT>
     }

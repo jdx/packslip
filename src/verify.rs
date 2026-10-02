@@ -28,6 +28,10 @@ pub struct Verified {
     pub scheme: Scheme,
     /// Who signed: the certificate identity, or the key id.
     pub key_id: String,
+    /// Whether the document asks consumers to hold later releases to the
+    /// workflow that signed it. See [`crate::model::Identity::pin_workflow`].
+    #[serde(skip_serializing_if = "std::clone::Clone::clone")]
+    pub pin_workflow: bool,
     /// Whether the vendor or a repackager made the claim.
     pub attested_by: crate::model::Attestor,
     /// Whether the version has a prerelease part.
@@ -67,6 +71,9 @@ pub struct VerifiedList {
     pub scheme: Scheme,
     pub key_id: String,
     pub issuer: Option<String>,
+    /// Whether the list asks consumers to hold later lists to the workflow
+    /// that signed it. See [`crate::model::Identity::pin_workflow`].
+    pub pin_workflow: bool,
     pub logged_at: Option<String>,
 }
 
@@ -205,6 +212,7 @@ pub fn verify(
         published_at: statement.predicate.published_at.clone(),
         scheme,
         key_id,
+        pin_workflow: statement.predicate.identity.pins_workflow(),
         attested_by: statement.predicate.attested_by,
         prerelease: !version.pre.is_empty(),
         channel: crate::model::channel(&version).map(str::to_string),
@@ -248,11 +256,13 @@ pub fn verify_release_list(
     let list: ReleaseListStatement = serde_json::from_slice(&verified.statement)?;
     list.validate()?;
     let (scheme, key_id, issuer) = check_declared(&list.predicate.identity, &verified.signed_by)?;
+    let pin_workflow = list.predicate.identity.pins_workflow();
     Ok(VerifiedList {
         list,
         scheme,
         key_id,
         issuer,
+        pin_workflow,
         logged_at: logged_at(verified.integrated_time),
     })
 }
@@ -361,7 +371,8 @@ pub fn verify_forge(
         &verified.key_id,
         verified.issuer.as_deref(),
         source.as_ref(),
-    )?;
+    )?
+    .declaring_pin_workflow(verified.pin_workflow);
     Ok(ForgeVerified { verified, check })
 }
 
@@ -380,7 +391,8 @@ pub fn verify_forge_release_list(
         &verified.key_id,
         verified.issuer.as_deref(),
         source.as_ref(),
-    )?;
+    )?
+    .declaring_pin_workflow(verified.pin_workflow);
     Ok(ForgeVerified { verified, check })
 }
 
