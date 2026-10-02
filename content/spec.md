@@ -90,7 +90,7 @@ The name is the location and, on a forge, says who may sign:
   the key or identity the consumer pins.
 
 For a known forge, a consumer derives the initial signer policy from the
-project it intends to install, not from the project an unverified
+project it intends to install, not from the project an untrusted
 statement claims: a policy taken from the statement accepts whatever
 repository the statement's author names, and so does not check the
 user's intended identity. After verifying, the consumer must also check
@@ -314,7 +314,7 @@ recorded, with the repository ID recorded alongside each, for
 ### Signer fingerprint
 
 A signer fingerprint is a short, fixed name for the repository a keyless
-project is signed from. The project publishes it where users read it
+project is signed from. A project can publish it where users read it
 independently of its releases, such as its README or install
 instructions, and a user can record it in a Dockerfile or a consumer's
 lockfile.
@@ -439,14 +439,17 @@ withdrawal, or prevent rollback. Those checks require discovery metadata
 and remembered consumer state, as [Discovery](#discovery) and
 [Consumer rules](#consumer-rules) define.
 
-`packslip verify` checks one bundle and any local files passed with
-`--artifact`. It reports the signer, provenance links, resources, and host
-requirements. It does not fetch provenance, install resources, or keep
-trust history between runs. Without `--pubkey`, `--identity`,
+`packslip verify` checks the supplied bundle and local files. It reports
+signing information, provenance links, resources, and host requirements,
+but does not fetch provenance, install resources, or maintain trust
+history across invocations. Without `--pubkey`, `--identity`,
 `--identity-prefix`, or `--issuer`, it derives the signer policy from the
-GitHub or GitLab project the statement claims, so the caller still checks
-that the reported project and version are the ones it asked for (see
-[Names](#names)).
+GitHub or GitLab project the statement claims. That is a policy taken
+from an untrusted statement, which [Names](#names) warns does not check
+the user's intended identity, so pass the expected signer explicitly.
+With or without one, compare the reported project and version with the
+request: a signer can sign other projects and older versions, and
+`packslip verify` does not know which one was asked for.
 
 ## The release statement
 
@@ -570,8 +573,7 @@ The following rules apply to the decoded release statement:
   can check what it pinned against what it received. For `sigstore-oidc`,
   `key_id` is the certificate's subject identity (a workflow URI for CI, an
   email for a person) and `issuer` the OIDC issuer. For `sigstore-key`,
-  `key_id` is the public key's minisign key ID: 16 uppercase hex digits,
-  as the `.pub` file's comment prints it. See [Signing](#signing).
+  `key_id` is the key id in uppercase hex. See [Signing](#signing).
 - `attested_by` is `vendor` (default) or `repackager`; a repackager says
   what it checked in `evidence`. See
   [Repackager attestation](#repackager-attestation).
@@ -672,7 +674,7 @@ include `repo`. Resource entries must choose exactly one source field.
 | `resources[].name` | string | skill | The skill's name. |
 | `predicate.identity` | object | required | How the document is signed and by whom. See [Signing](#signing). |
 | `predicate.identity.scheme` | string | required | `sigstore-oidc` or `sigstore-key`. |
-| `predicate.identity.key_id` | string | required | The certificate identity, or the minisign key ID in uppercase hex. |
+| `predicate.identity.key_id` | string | required | The certificate identity, or the key id in uppercase hex. |
 | `predicate.identity.issuer` | string | optional | The OIDC issuer, for `sigstore-oidc`. |
 | `predicate.identity.pin_workflow` | boolean | optional | For `sigstore-oidc`: `false` asks consumers to hold later releases to the signing repository, not to the workflow that signed this one. `true` when absent. See [Reusable workflows](#reusable-workflows). |
 | `predicate.attested_by` | string | optional | `vendor` (default) or `repackager`. See [Repackager attestation](#repackager-attestation). |
@@ -1349,9 +1351,10 @@ highest precedence from the normal candidate set. An ineligible signed
 pointer falls directly back to semver selection, not to GitHub's pointer.
 Report when a declared recommendation is skipped and why; if no eligible
 release exists, fail. For example, if `latest` is `2.8.4` but `2.8.4` is
-yanked or too young, the consumer selects `3.0.0` when it is eligible. A
-vendor that must exclude `3.0.0` must withdraw it or use an admission
-policy ([Lists from other publishers](#lists-from-other-publishers)),
+yanked or too young, the consumer selects the highest eligible release
+instead, which may be `3.0.0`. A vendor that must exclude `3.0.0` must
+withdraw it or use an admission policy
+([Lists from other publishers](#lists-from-other-publishers)),
 rather than relying on `latest`; `latest` recommends a release but never
 excludes one.
 
@@ -1391,7 +1394,8 @@ implementation exposes this selection as `select_artifact`.
 These rules apply to the complete consumer workflow, not just signature
 verification. Consumers must preserve enough state to enforce signer
 continuity, no-downgrade policy, and release-list sequences across
-installs. The rules, and the sections they cite, rely on this state:
+installs. The rules, and the sections they cite, refer to the following
+state:
 
 - the pins: the signer and its repository ID, any signer fingerprint or
   lockfile commitment the consumer holds, and the remembered
