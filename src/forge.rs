@@ -608,6 +608,40 @@ pub fn check(
     issuer: Option<&str>,
     source: Option<&SourceRepository>,
 ) -> Result<Check, IdentityError> {
+    check_inner(expected, signed_project, identity, true, issuer, source)
+}
+
+/// [`check`] for a consumer that goes by the certificate's source
+/// repository and not by the workflow that signed, such as a signer
+/// fingerprint. A release signed through another repository's reusable
+/// workflow passes when the certificate's source repository is the
+/// project's; without a source repository there is nothing to go by, so the
+/// signer must be a workflow of the project as with [`check`].
+pub fn check_source(
+    expected: &Expected<'_>,
+    signed_project: &str,
+    identity: &str,
+    issuer: Option<&str>,
+    source: Option<&SourceRepository>,
+) -> Result<Check, IdentityError> {
+    check_inner(
+        expected,
+        signed_project,
+        identity,
+        source.is_none(),
+        issuer,
+        source,
+    )
+}
+
+fn check_inner(
+    expected: &Expected<'_>,
+    signed_project: &str,
+    identity: &str,
+    require_signer: bool,
+    issuer: Option<&str>,
+    source: Option<&SourceRepository>,
+) -> Result<Check, IdentityError> {
     let requested = expected.project;
     let want = ForgeName::parse(requested)
         .ok_or_else(|| IdentityError::NotForge(requested.to_string()))?;
@@ -627,7 +661,7 @@ pub fn check(
         });
     }
     let repository = got.uri();
-    if !identity.starts_with(&got.signer_prefix()) {
+    if require_signer && !identity.starts_with(&got.signer_prefix()) {
         return Err(IdentityError::SignerOutsideRepository {
             identity: identity.to_string(),
             repository,
@@ -1090,6 +1124,39 @@ mod tests {
                 "{err}"
             );
         }
+    }
+
+    #[test]
+    fn check_source_accepts_a_reusable_workflow_of_another_repository() {
+        let expected = Expected::new("github.com/jdx/hk");
+        let reusable = "https://github.com/jdx/shared/.github/workflows/r.yml@refs/tags/v1";
+        let signed = hk();
+        let args = |source| {
+            check_source(
+                &expected,
+                "github.com/jdx/hk",
+                reusable,
+                Some(GITHUB_ISSUER),
+                source,
+            )
+        };
+        assert!(args(Some(&signed)).is_ok());
+        // The certificate must still be for this repository.
+        let other = source(
+            "https://github.com/jdx/other",
+            "1",
+            "https://github.com/jdx",
+            "216188",
+        );
+        assert!(matches!(
+            args(Some(&other)).unwrap_err(),
+            IdentityError::SourceMismatch { .. }
+        ));
+        // With no source repository, the signer is all there is.
+        assert!(matches!(
+            args(None).unwrap_err(),
+            IdentityError::SignerOutsideRepository { .. }
+        ));
     }
 
     #[test]
