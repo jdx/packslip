@@ -4,8 +4,8 @@
 - **Usage:** `packslip version [-J --json]`
 - **Aliases:** `v`
 
-Show the version
+Print packslip's version
 
 ## Flags
-- **`-J --json`** — Print as JSON
+- **`-J --json`** — Print the name, version, OS, and architecture as JSON
 - **`-h --help`** — Print help

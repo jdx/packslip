@@ -6,9 +6,10 @@ consumer written in any language can read these files and check that it
 selects, parses, and refuses what the specification says it should.
 
 An implementation that disagrees with a vector disagrees with the
-specification. If you believe a vector is wrong, that is a specification
-bug — open an [issue](https://github.com/jdx/packslip/issues) rather than
-working around it.
+specification. If you believe a vector is wrong, open an
+[issue](https://github.com/jdx/packslip/issues) instead of working around
+it: either the specification needs to change, or the vector requires
+something the specification does not.
 
 | File | Rule |
 | --- | --- |
@@ -48,18 +49,30 @@ release-list sequence, minimum release age, where a pin is stored. Those
 are properties of a consumer's history, not of a document, so a vector
 cannot express them; the specification states them normatively and a
 consumer tests them against its own store. The forge identity vectors are
-the exception that fits: the remembered pin is part of each case, so
-they state how a release is compared with it without saying how it was
-stored.
+an exception. Each case supplies the remembered pin as input, so a vector
+can state how a release is compared with the pin without saying how the
+pin was stored.
 
 ## Running them
 
 Against the reference implementation:
 
-```bash
+```sh
 cargo test --test conformance
 ```
 
 They pass with `--no-default-features` too: everything they touch is in
 the crate's always-compiled core, which is what a verify-only consumer
 depends on.
+
+## Changing the vectors
+
+Each file has its own test in `tests/conformance.rs`, which runs every
+case in the file. A new case in an existing file needs no Rust change as
+long as it has the shape the file's `description` defines. Give it a
+descriptive `name`, which a failing test prints, and a `reason` or
+`comment` where the rule is not obvious. A rule that no file covers gets a
+new file with `rule`, `description`, and `cases`, a row in the table
+above, and a test function in `tests/conformance.rs`. Change vectors in
+the same pull request as the specification text they test (see
+[CONTRIBUTING.md](../../CONTRIBUTING.md)).

@@ -1,94 +1,188 @@
 ---
-title: Using packslip with mise
+title: Use packslip with mise
 weight: 60
-description: Install tools from signed manifests, use resources for the active version, and preserve trust across upgrades with mise.
+group: consume
+description: Install tools from signed release manifests with mise, get the man pages, completions, and agent skills for the version in use, and keep trust across upgrades.
 ---
-# Using packslip with mise
+# Use packslip with mise
 
-mise uses packslip manifests to select and verify release artifacts,
-install their executables, and provide completions and agent skills for
-the tool version active in your project.
+This page is for people who install tools with mise. mise is one consumer
+of packslip: it reads a tool's signed release manifest to select and
+verify the release artifact, install its executables, and provide the man
+pages, completions, and agent skills declared for the version active in
+your project.
 
-## Install from a vendor manifest
+The [consumer rules](/release/v1/#consumer-rules) set out what mise must
+check, including the signer, the requested project and version, the
+downloaded bytes, the release list, and the trust remembered from earlier
+installs. They also say when mise may run a vendor's command to generate
+a resource. Where mise stores that trust, which settings control it, and
+how completions, man pages, and skills reach your shell and agent are
+mise's own choices. This page shows them; the
+[mise documentation](https://mise.jdx.dev/dev-tools/backends/packslip.html)
+lists every option.
 
-With mise installed and activated, run:
+## Install a tool
+
+With mise 2026.9.2 or later installed and activated, install a tool by
+giving its project name after the `packslip:` prefix:
 
 ```sh
-mise use -g packslip:github.com/jdx/packslip
+mise use -g packslip:github.com/jdx/hk
 ```
 
-Omit `-g` to manage the tool in the current project instead. The backend
-reads the manifest to select the artifact and executable paths. It
-verifies the release against the repository identity and checks the
-selected file's digest and size before unpacking it.
+Omit `-g` to record the tool in the current project's `mise.toml`
+instead. mise's packslip backend (the `packslip:` prefix) reads the signed
+release manifest to choose the artifact for your platform and find its
+executables. Before unpacking the download, it verifies the signature
+against the repository the name gives, checks that the signed project and
+version are the ones you asked for, and checks the file's digest and size.
 
-The project name can include a monorepo tool subpath. A vendor on its own
-domain instead supplies a signed release list, and users configure a
-trusted key or identity. See the
-[mise packslip backend documentation](https://mise.jdx.dev/dev-tools/backends/packslip.html)
-for tool options.
+For one tool in a monorepo, add its subpath:
+`packslip:github.com/owner/repo/mytool`.
+
+A project named after its own domain, such as `packslip:mytool.example.com`,
+is found through its signed release list, and its name does not say whom
+to trust. The signer comes from tool options, as
+[Host releases on your own domain](/docs/self-hosting/#sign-as-the-repository)
+shows, or from a mise registry entry that carries them; without either,
+mise refuses the tool. The
+[mise backend documentation](https://mise.jdx.dev/dev-tools/backends/packslip.html#tool-options)
+describes each tool option.
+
+packslip itself is a domain project, `packslip.dev`. Install it with
+`mise use -g packslip`. mise's registry entry for packslip names that
+project and supplies the workflow identities that sign its releases and
+its release list.
 
 ## Keep completions aligned with the active version
 
-For an installed tool named `mytool` that declares a completion resource:
+With mise activated in your shell, completions need no setup. When a
+packslip tool is active in the current directory, mise registers a loader
+for each of its commands whose release declares a completion or CLI spec.
+When you press Tab, mise reads the script for the version active there.
+Bash, zsh, fish, and PowerShell are supported. After a directory or
+version change, the next completion uses the version now active.
+
+Without shell activation, install a stub that asks mise for the script.
+`--tool` takes the command name, not the `packslip:` identifier:
 
 ```sh
-mise completion zsh --tool mytool
 mise completion zsh --tool mytool --install
 ```
 
-The first command prints a completion script. The second installs a
-shell stub that asks mise for the appropriate script. In zsh and bash,
-completions follow directory-based version changes on the next completion;
-fish and PowerShell load once per shell session.
+Omit `--install` to print the script instead.
 
-Publishers should identify the executable on resources in multi-command
-releases and scope archive resources precisely. Generated completion
-caches are separate for each version, command, and shell. Static files
-or usage specs can avoid running the vendor's executable to generate the
-script; usage-derived completions still need `usage` at shell runtime.
+mise uses a completion file the release ships when there is one, and
+otherwise renders the release's usage-format CLI spec itself, so you do
+not need `usage` installed. When the release offers a completion only as
+an `exec` command, mise runs that command the first time the shell asks
+for the completion and caches the output for that version, command, and
+shell. The `packslip.exec` setting does not affect this; it covers only
+resources generated at install time, such as an `exec` skill.
 
-When a completion resource uses `exec`, mise runs the command on demand
-when the shell first requests completion and caches successful output.
-The `packslip.exec` setting governs resources generated at install time,
-such as agent skills; it is not needed for on-demand completions.
+## Read the matching man pages
+
+When a release declares a `man` resource as a file (in the archive, as a
+separate asset, or in the repository), mise adds it to `MANPATH` while
+that version is active: in an activated shell and under `mise exec`,
+`mise run`, and `mise env`. mise does not install man pages that come
+from an `exec` command or could only be generated from a CLI spec. This
+needs mise 2026.9.4 or later. A tool that an earlier mise installed needs
+one reinstall, such as `mise install --force packslip:github.com/jdx/hk`.
 
 ## Give agents the matching skill
 
 A vendor can declare a skill directory in an artifact, in a separate
-signed asset, or at the release's source commit. List the skills for the
-tool versions active in your project, then link them into your agent's
-skills directory:
+signed asset, or at the release's source commit, and by default mise
+fetches it at install time without running the tool. A skill that only
+an `exec` command generates is created at install time only when the
+[`packslip.exec`](https://mise.jdx.dev/configuration/settings.html#packslip.exec)
+setting is enabled; it is off by default. List the skills for the tool
+versions active in your project, then link them into your agent's skills
+directory:
 
 ```sh
 mise skills ls
 mise skills sync --dir .agents/skills
 ```
 
-Sync links the installed skills into the chosen directory. Running it
-after a version change updates mise-owned links. It leaves user-created
-directories and unrelated links alone. A skill generated by running the
-tool during installation requires the `packslip.exec` setting; fetched
-skills do not require executing the tool.
+Run sync again after a version change to repoint the links mise made; it
+leaves directories and links you created alone. Without `--dir`, sync uses
+`.claude/skills` under the project root. Set `skills.dir` to change that,
+and `skills.auto_sync = true` to sync after every `mise install` and
+`mise use`. The links point into your local installs, so keep them out of
+version control. See
+[mise's skill settings](https://mise.jdx.dev/dev-tools/packslip-resources.html#skills)
+for the other options, such as pruning stale links.
 
 ## Preserve trust across upgrades and machines
 
-mise preserves trust in two places:
+mise keeps what it has accepted in two places:
 
-- Local pins remember previously accepted signers, trust properties, and
-  release-list sequences.
-- `mise.lock` carries the project's signer commitment alongside artifact
-  URLs and digests, allowing another machine to enforce it immediately.
+- Local state records each project's accepted signer, how its accepted
+  releases were signed and attested (scheme, vendor or repackager,
+  provenance links), and the highest release-list sequence it accepted.
+  From mise 2026.9.16 it also records the forge's repository ID, so a
+  renamed repository keeps its pin and a different repository created
+  under the same name is refused; see
+  [Renamed repositories](https://mise.jdx.dev/dev-tools/backends/packslip.html#renamed-repositories)
+  in the mise documentation for transfers.
+- `mise.lock` records the project's pin alongside artifact URLs and
+  digests. Commit it with `mise.toml`, and teammates and CI that run
+  `mise install --locked` enforce the same signer on their first install.
 
-mise rejects a supplementary signed list that disappears after acceptance
-and checks release age against the verified log timestamp. These checks
-help prevent an upgrade from silently weakening the trust established by
-previous installs.
+mise refuses a release from a different signer or signing scheme, a
+repackager's release after it accepted the vendor's own, a release that
+drops the provenance links every artifact carried before, and a release
+list whose sequence is lower than the highest it accepted. If a release is
+refused because its signer changed, confirm the change with the vendor.
+Then run `mise packslip pins` to see the remembered signer and
+`mise packslip forget PROJECT` to reset it. If `mise.lock` has a
+conflicting entry for the project, remove the entry and run
+`mise install` to regenerate it, as
+[Signer changes](https://mise.jdx.dev/dev-tools/backends/packslip.html#pinned-signers)
+in the mise documentation describes.
+
+A GitHub repository can add an optional signed release list, called a
+supplementary list, to withdraw or recommend releases. Once mise has
+accepted one, it refuses the project if that list later disappears, so
+deleting the list cannot undo a withdrawal.
+
+These checks follow the [consumer rules](/release/v1/#consumer-rules);
+the lockfile, the commands, and the settings are mise's own.
+
+## Install a release that was just published
+
+When mise picks a version for a request such as `latest`, it skips
+releases younger than its
+[`minimum_release_age`](https://mise.jdx.dev/configuration/settings.html#minimum_release_age)
+setting, 24 hours by default, so a release published minutes ago is not
+offered yet. mise measures the age from the transparency-log timestamp,
+not from the publication time the vendor signs; only an unlogged bundle
+you allowed is measured from its signed `published_at`. From mise
+2026.9.10, an exact version, or one recorded in `mise.lock`, installs
+right away. The setting and its 24-hour default are mise's own choice.
 
 ## Require review by a third party
 
-Configure trusted stamping hosts to admit only versions listed by a
-reviewer you trust. A stamp constrains which releases can be installed;
-the vendor signature still authenticates the release. See
-[release lists](/docs/release-lists/#use-a-third-party-list) for how
-stamping works.
+mise requires no third-party review by default. A reviewer, registry, or
+scanning service can sign a list of the releases it has checked; such a
+service is a stamping host, and its list is a stamp on each release it
+names. To install only versions a host you trust has stamped, list each
+host with its pin in mise's `packslip.stampers` setting:
+
+```toml
+[settings.packslip]
+stampers = ["reviews.example.com=https://github.com/example/reviews/"]
+```
+
+A version is then installable only when at least one of those hosts
+lists it and has not withdrawn it, and a vendor withdrawal still excludes
+it. A stamp limits which releases mise accepts; the vendor's signature
+still authenticates them. Set the tool option `trust = "vendor"` to
+exempt one tool. See
+[Manage release lists](/docs/release-lists/#use-a-third-party-list) for
+how stamping works, and
+[mise's stamp settings](https://mise.jdx.dev/dev-tools/packslip-verification.html#stamps)
+for the pin formats.

@@ -1,40 +1,53 @@
 ---
 title: Getting started
 weight: 10
+group: start
 description: Create and verify your first packslip locally with an Ed25519 key.
 ---
 # Getting started
 
-This walkthrough creates a small release and verifies it locally. It uses
-an unlogged key signature so you can try the format without a CI identity
-or a connection to the signing services. For publishing, use
-[GitHub Actions](/docs/publishing/) or a logged key signature.
+This walkthrough is for trying packslip on your own machine. It packages a
+one-file tool, signs a packslip for it with a key you generate, and checks
+the archive against the signature. The steps after installation run
+offline: the signature uses a local Ed25519 key and is not recorded in
+Rekor, sigstore's public transparency log, so you need no CI identity or
+network connection. A real release should be logged;
+[Publish a real release](#publish-a-real-release) says what to change.
 
 ## Install packslip
 
 We recommend [mise](https://mise.jdx.dev/getting-started.html) to install
-packslip and manage its version. You can also download a binary or build
-from source.
+packslip and manage its version. You can also download a release archive
+or build from source. Release builds cover Linux and Windows on x64 and
+arm64, and macOS on arm64. On an Intel Mac, build from source.
 
 {{< tabs "Installation method" >}}
 {{< tab "mise" >}}
 
-With [mise installed and activated](https://mise.jdx.dev/getting-started.html), run:
+With [mise](https://mise.jdx.dev/getting-started.html) 2026.9.2 or newer
+installed and activated, run:
 
 ```sh
-mise use -g github:jdx/packslip
+mise use -g packslip
 packslip version
 ```
 
-This downloads a release binary and makes packslip available globally
-through mise. Omit `-g` to manage it in the current project instead.
+The registry entry for packslip uses mise's
+[packslip backend](https://mise.jdx.dev/dev-tools/backends/packslip.html)
+and names the workflow that signs packslip's releases. mise checks each
+release against that workflow before installing it. `-g` makes packslip
+available globally; omit it to manage packslip in the current project
+instead.
 
 {{< /tab >}}
 {{< tab "Download" >}}
 
-Download an archive for your operating system and architecture from the
-[GitHub releases](https://github.com/jdx/packslip/releases). Extract it
-and put the `packslip` executable on PATH, then check the installation:
+Download the archive for your platform from
+[GitHub releases](https://github.com/jdx/packslip/releases): `linux-x64`,
+`linux-arm64`, and `darwin-arm64` as `.tar.xz`, or `windows-x64` and
+`windows-arm64` as `.zip`. Extract the archive, put the `packslip`
+executable from its `packslip-vVERSION-PLATFORM/` directory on PATH, then
+check the installation:
 
 ```sh
 packslip version
@@ -43,18 +56,18 @@ packslip version
 {{< /tab >}}
 {{< tab "Build from source" >}}
 
-With Git and Rust 1.95 or newer installed:
+With Rust 1.95 or newer installed:
 
 ```sh
-git clone https://github.com/jdx/packslip.git
-cd packslip
-cargo install --path . --locked
+cargo install packslip --locked
 packslip version
 ```
 
-Cargo installs the executable in its bin directory, usually `~/.cargo/bin`.
-Make sure that directory is on PATH. Use a separate empty directory for
-the walkthrough below.
+This builds the latest release from crates.io. To build unreleased
+changes, clone the repository and run `cargo install --path . --locked` in
+it, then return to an empty directory for the walkthrough. Cargo installs
+the executable in its bin directory, usually `~/.cargo/bin`; make sure that
+directory is on PATH.
 
 {{< /tab >}}
 {{< /tabs >}}
@@ -74,11 +87,20 @@ tar -czf dist/mytool-1.2.3.tar.gz -C staging bin
 packslip keygen --out release.key
 ```
 
-`keygen` writes the private key to `release.key` and the public key to
-`release.pub`. Keep the private key out of source control. Consumers need
-only the public key.
+These lines build `dist/mytool-1.2.3.tar.gz`, an archive with one
+executable at `bin/mytool`. Then `packslip keygen` generates a signing key
+pair and prints its key ID (yours will differ):
 
-## Sign the manifest
+```text
+wrote release.key and release.pub (key id C8B574447E4F0ACA)
+```
+
+`release.key` is the secret key; keep it out of source control. Consumers
+need only the public key, `release.pub`. The key ID names the signer in
+later output. `keygen` refuses to overwrite a key, so to run the
+walkthrough again, start in a new empty directory.
+
+## Create and sign the packslip {#sign-the-manifest}
 
 <!-- docs-test: quickstart -->
 ```sh
@@ -87,20 +109,50 @@ packslip create \
   --version 1.2.3 \
   --key release.key --no-log \
   --out dist \
-  --url-base https://mytool.example.com/releases/1.2.3 \
+  --url-base https://mytool.example.com/v1.2.3 \
   --bin mytool \
   dist/mytool-1.2.3.tar.gz:any
 ```
 
-The command writes `dist/packslip.sigstore.json`. It hashes the archive,
-finds `bin/mytool` inside it, and records the download URL. The `:any`
-suffix explicitly marks the artifact as platform-independent. The example
-URL is metadata; `create` neither contacts it nor uploads files to it.
+`create` hashes the archive and finds the executable inside it. It
+describes the release in a JSON statement, signs the statement with your
+key, and writes the signed bundle to `dist/packslip.sigstore.json`:
 
-## Read the manifest
+```text
+wrote dist/packslip.sigstore.json (1 artifact(s), signed by C8B574447E4F0ACA, unlogged)
+```
 
-The bundle contains a signed statement. Its release metadata looks like
-this excerpt (the digest is abbreviated):
+- `--project` is the name consumers ask for: a host and optional path,
+  with no scheme. A project on its own domain is named after that host; a
+  GitHub project is `github.com/owner/repo`.
+- `--key release.key --no-log` signs with your key and does not record the
+  signature in Rekor, so the command needs no network.
+- `--out dist` writes the bundle into `dist`, beside the archive.
+  `create` does not copy or move the archive.
+- `--url-base` is the prefix of each file's recorded download URL, so
+  the archive's URL is
+  `https://mytool.example.com/v1.2.3/mytool-1.2.3.tar.gz`. `create`
+  neither contacts it nor uploads anything.
+- `--bin mytool` names the executable. `create` finds it in the archive
+  and records its path, `bin/mytool`.
+- The `:any` suffix declares the archive platform-independent, so
+  `create` records no OS, architecture, or libc whatever the file name
+  says. Without a suffix, `create` reads the platform from the file name,
+  as in `mytool-1.2.3-linux-x64.tar.gz`. This sample's name gives no
+  platform, so here the suffix only makes the intent explicit.
+
+## Read the signed statement {#read-the-manifest}
+
+`packslip show` prints the statement inside the bundle. It only decodes
+the statement; the next step checks the signature.
+
+<!-- docs-test: quickstart -->
+```sh
+packslip show dist/packslip.sigstore.json
+```
+
+The statement's core fields look like this (the sha256 digest is
+abbreviated):
 
 {{< release-example >}}
 
@@ -113,13 +165,11 @@ this excerpt (the digest is abbreviated):
 | `url` and `format` | Finds the file and determines how to unpack it. |
 | `bin` | Finds the executable at its actual archive path. |
 
-This sample omits `os`, `arch`, and `libc` because `:any` declared no
-platform restriction. The complete statement also includes the artifact's
-size, publication time, signing identity, and other generated fields.
-The surrounding bundle carries the signature and verification material.
-
-The excerpt explains the structure; it is not a complete signed bundle.
-Use the generated file in the verification step below.
+This sample omits `os`, `arch`, and `libc` because the archive is
+declared platform-independent. The full output also has a sha512 digest,
+the artifact's size, the publication time, the signing identity (`scheme`
+and `key_id`), and the in-toto `_type`. The surrounding bundle carries the
+signature and verification material.
 
 ## Verify the archive
 
@@ -130,29 +180,64 @@ packslip verify dist/packslip.sigstore.json \
   --artifact dist/mytool-1.2.3.tar.gz
 ```
 
+On success it prints one line (your key ID and time will differ):
+
+```text
+ok: mytool.example.com 1.2.3 published 2026-10-02T19:23:31.767734662Z signed by C8B574447E4F0ACA (sigstore-key) unlogged (1 of 1 artifact(s) checked)
+```
+
 A successful exit means the bundle passed verification against your key
 and the supplied archive matched its signed digest and size.
 `--allow-unlogged` is necessary because this example used `--no-log`.
-Without `--artifact`, the command checks the bundle but not the archive.
+Without `--artifact`, the line ends `(0 of 1 artifact(s) checked)`: the
+bundle was checked, the archive was not.
 
-To inspect the signed metadata:
+`verify` does not check that the project and version are the ones you
+meant to install. Check them in the `ok:` line yourself, as a consumer
+does before installing.
+[Verify a release](/docs/verifying/#understand-the-result) lists what a
+successful check does and does not establish.
 
-<!-- docs-test: quickstart -->
+To see a failure, change the archive and verify again:
+
 ```sh
-packslip show dist/packslip.sigstore.json
+printf x >> dist/mytool-1.2.3.tar.gz
+packslip verify dist/packslip.sigstore.json \
+  --pubkey release.pub --allow-unlogged \
+  --artifact dist/mytool-1.2.3.tar.gz
 ```
 
-`show` only decodes the statement; it does not verify it.
+The command exits with status 1 and names the mismatch (your digests will
+differ):
+
+```text
+verification failed: artifact mytool-1.2.3.tar.gz: sha256 is d8e80700490e50d80579a4469b3dd9eed898634ed00204396da9707b2054c7f5, document says 96597cf66f34b2001b8a45786979bf3e167e8a36d6b65e5c277e8e3f59270447
+```
 
 ## Publish a real release
 
-For a key-signed release, omit `--no-log` when creating the bundle and
-`--allow-unlogged` when verifying it. Signing then contacts Rekor to log
-the signature. Reuse your signing key and distribute the public key
-through a channel consumers trust.
+The walkthrough's shortcuts are for trying the format. For a release
+people install:
 
-Upload the artifact and bundle to their declared URLs. For a project on
-your own domain, also [publish a signed release list](/docs/release-lists/).
-For GitHub, [use the action](/docs/publishing/) to sign with the workflow's
-identity instead. See [Artifact configuration](/docs/describing-releases/)
-to adapt the example to your release layout.
+- **On GitHub**, publish from your release workflow with the packslip
+  action; see [Publish with GitHub Actions](/docs/publishing/). It signs
+  with the release workflow's identity, so there is no key to manage, and
+  the project defaults to `github.com/owner/repo`.
+- **With a key**, drop `--no-log` from `create` so the signature is
+  recorded in Rekor (this needs network access), and drop
+  `--allow-unlogged` from `verify`. Sign every release with the same key,
+  and publish `release.pub` through a channel consumers trust, separate
+  from the releases themselves. A consumer refuses a release signed by a
+  different key until a person approves the change.
+
+On your own host, upload each artifact to the URL the statement records,
+and put the bundle beside it, for example at
+`https://mytool.example.com/v1.2.3/packslip.sigstore.json`. Consumers find
+a project named after its own domain, like `mytool.example.com`, only
+through a signed release list on that host, and they refuse the project
+without one. Publish a list with every release, as
+[Manage release lists](/docs/release-lists/) explains. To publish the
+releases and the list from GitHub Actions, see
+[Host releases on your own domain](/docs/self-hosting/). To adapt the
+example to your own files, see
+[Artifact configuration](/docs/describing-releases/).

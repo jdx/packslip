@@ -325,7 +325,7 @@ jobs:
             echo "created $MAJOR_TAG at $GITHUB_SHA"
           fi
 
-  # The release index at https://packslip.dev/.well-known/packslip.json,
+  # The release list at https://packslip.dev/.well-known/packslip.json,
   # rebuilt once the release above is public so the action can install the
   # CLI it was released with.
   list:

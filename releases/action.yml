@@ -1,8 +1,8 @@
 name: packslip releases
 description: >
   Build and sign a project's release list from the release bundles it has
-  published: verify each one against the repository's identity, index
-  their digests, and write a signed list to publish at the project's
+  published: verify each one against this repository's workflow identity,
+  index their digests, and write a signed list to publish at the project's
   well-known URL.
 author: Jeff Dickey <@jdx>, Shunsuke Suzuki <@suzuki-shunsuke>
 branding:
@@ -27,8 +27,10 @@ inputs:
     required: true
   bundle:
     description: >
-      The bundle file name inside every tag directory. A tool in a monorepo
-      uses its own name, such as packslip.mytool.sigstore.json.
+      The bundle file name inside every tag directory. packslip create
+      names every domain project's bundle packslip.sigstore.json, including
+      a project with a path such as example.com/tool, so set this only if
+      you uploaded the bundles under another name.
     required: false
     default: packslip.sigstore.json
   sequence:
@@ -50,18 +52,23 @@ inputs:
   latest:
     description: >
       Recommend this exact listed version for unconstrained latest
-      requests. Empty leaves consumers to take the highest eligible version.
+      requests. Give the version, such as 1.2.3, not the tag that yank and
+      security take. Empty leaves consumers to take the highest eligible
+      version.
     required: false
     default: ""
   yank:
     description: >
       Releases to mark withdrawn, one per line, as TAG=REASON or URL=REASON.
-      A withdrawn release stays in the list with its status.
+      A withdrawn release stays in the list with its status. These marks
+      apply to this run's list only; a later run without them drops them.
     required: false
     default: ""
   security:
     description: >
       Releases that fix a vulnerability, one per line, as a TAG or URL.
+      These marks apply to this run's list only; a later run without them
+      drops them.
     required: false
     default: ""
   identity-prefix:
@@ -71,7 +78,13 @@ inputs:
     required: false
     default: ""
   identity:
-    description: An exact certificate identity to require instead of a prefix
+    description: >
+      An exact certificate identity, ref included, that every input bundle
+      and the output list must have, instead of identity-prefix. GitHub
+      identities name the ref the workflow ran on
+      (.../release.yml@refs/tags/v1.2.3), so bundles signed on different
+      tags never share one. This suits only bundles and a list all signed
+      from one workflow at one ref; most projects want identity-prefix.
     required: false
     default: ""
   issuer:
@@ -88,9 +101,9 @@ inputs:
     default: packslip-releases.sigstore.json
   packslip-version:
     description: >
-      The packslip release to run; defaults to the version this action was
-      released with (read from its Cargo.toml). Ignored when packslip-path
-      is set.
+      The packslip version to run, such as 1.4.0, without a leading v;
+      defaults to the version this action was released with (read from its
+      Cargo.toml). Ignored when packslip-path is set.
     required: false
     default: ""
   packslip-path:

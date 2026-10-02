@@ -8,7 +8,9 @@ Hugo fingerprints the generated images so updated titles get new URLs.
 
 `background.svg` is the editable source for `background.png`; rasterize it at
 1200 × 630 after changing the artwork. The PNG keeps production builds independent
-of an SVG renderer. Titles and branding are drawn by Hugo, not baked into it.
+of an SVG renderer. The PNG holds only the background color, the red bar
+along the top, the divider line, and the logo mark. Hugo draws all the text:
+the page title, "packslip / docs", and "packslip.dev".
 
 To verify a production build:
 
@@ -19,3 +21,8 @@ node scripts/check-social-images.mjs public
 
 The check validates matching social metadata, emitted PNG dimensions, and a
 unique image for every content page. Redirect aliases are skipped.
+
+Neither `mise run docs:check` nor CI runs this check, so run it yourself after
+changing `layouts/partials/social-image.html`, `background.png`, the font, or
+how page titles are built. It needs Node.js, which `mise install` does not
+provide.

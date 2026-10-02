@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>packslip — a signed release manifest</title>
+<title>{{ .Title }} — packslip</title>
 <meta name="description" content="{{ .Description }}">
-<meta property="og:title" content="packslip — a signed release manifest">
+<meta property="og:title" content="{{ .Title }} — packslip">
 <meta property="og:description" content="{{ .Description }}">
 <meta property="og:url" content="{{ .Permalink }}">
 <meta property="og:type" content="website">
 {{ partial "social-image.html" . }}
-<meta name="twitter:title" content="packslip — a signed release manifest">
+<meta name="twitter:title" content="{{ .Title }} — packslip">
 <meta name="twitter:description" content="{{ .Description }}">
 {{ partial "seo.html" . }}
 <link rel="stylesheet" href="/style.css">
@@ -21,8 +21,8 @@
 <div class="hero">
   <div>
     <span class="eyebrow">Version 1 · stable</span>
-    <h1>Signed manifests for software releases</h1>
-    <p class="lede">Publish the information installers need to select, download, and verify your release artifacts, including supported platforms, executable paths, and file digests.</p>
+    <h1>{{ .Title }}</h1>
+    <p class="lede">{{ .Params.lede }}</p>
     <div class="actions">
       <a class="btn primary" href="/docs/getting-started/">Get started</a>
       <a class="btn" href="/docs/publishing/">Publish from GitHub</a>
@@ -36,7 +36,7 @@
     bin: mytool
     resources: |
       man=archive:share/man/man1/mytool.1` "yaml" "" }}
-    <p class="slip-caption">After building artifacts and creating the release. <a href="/docs/publishing/">See permissions and setup.</a></p>
+    <p class="slip-caption">Runs after your job builds the artifacts and uploads them to the release. <a href="/docs/publishing/">See permissions and setup.</a></p>
   </div>
 </div>
 <article class="prose overview">{{ .Content }}</article>

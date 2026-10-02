@@ -6,7 +6,7 @@ packslip \- A signed release manifest: what shipped, and how to verify it
 .SH DESCRIPTION
 A signed release manifest: what shipped, and how to verify it
 .PP
-A vendor runs `packslip create` in its release job to publish one signed document listing every artifact. Consumers verify it with `packslip verify` against a pinned identity or key. See https://packslip.dev.
+A vendor runs `packslip create` in its release job to sign one document listing every artifact, then uploads it beside them. Consumers check that document, and the files they download, with `packslip verify` against a pinned identity, key, or signer fingerprint. See https://packslip.dev.
 .PP
 .SH OPTIONS
 .TP
@@ -24,7 +24,7 @@ Generate a self\-contained shell completion script
 Create and sign a packslip for a release
 .TP
 \fBkeygen\fR
-Generate an Ed25519 key pair for the sigstore\-key scheme
+Generate an Ed25519 key pair for key\-signed releases (sigstore\-key)
 .TP
 \fBpin\fR
 Print the signer fingerprint of a project's keyless releases
@@ -42,12 +42,14 @@ Print the statement inside a bundle, without verifying it
 Verify a packslip, or a release list, against a pinned identity or key
 .TP
 \fBversion\fR
-Show the version
+Print packslip's version
 .RS
 \fIAliases: \fRv
 .RE
 .SH "PACKSLIP COMPLETION"
 Generate a self\-contained shell completion script
+
+Print the script to stdout. Redirect it to a file where your shell loads completions, as in the example. The script asks the installed packslip for candidates, so it needs no other tool and keeps working after upgrades.
 .PP
 \fBUsage:\fR packslip completion [OPTIONS] <SHELL>
 .PP
@@ -61,14 +63,21 @@ Print help
 .TP
 \fB<SHELL>\fR
 Shell to generate completions for
+\fBExamples:\fR
+.PP
+\fBInstall bash completions for your user\fR
+.PP
+.RS 4
+packslip completion bash > ~/.local/share/bash\-completion/completions/packslip
+.RE
 .SH "PACKSLIP CREATE"
 Create and sign a packslip for a release
 
-Hash local artifacts, infer platforms and formats from filenames, and write a signed bundle to \-\-out. Use \-\-manifest for per\-artifact paths, formats, requirements, and scoped resources. No files are uploaded.
+Hash local artifacts, infer platforms and formats from file names, and write the signed bundle (packslip.sigstore.json, or a per\-tool name for a GitHub monorepo tool; see \-\-out) into the \-\-out directory. Use \-\-manifest for per\-artifact paths, formats, requirements, and scoped resources. No files are uploaded.
 
-Signing uses a supported CI OIDC identity by default. Use \-\-key to sign with an Ed25519 key instead. Signatures are logged to Rekor unless a key\-signed release explicitly uses \-\-no\-log.
+By default, create signs keyless with an OIDC token: the one in SIGSTORE_ID_TOKEN when it is set, or else the CI job's own identity, which on GitHub Actions needs the `id\-token: write` permission. Pass \-\-key to sign with a key from `packslip keygen` instead. Either way, the signature is recorded in the Rekor transparency log. With \-\-key, \-\-no\-log skips the log entry, and consumers must then accept the release with \-\-allow\-unlogged.
 
-Examples and configuration: https://packslip.dev/docs/describing\-releases/
+The TOML manifest and more examples: https://packslip.dev/docs/describing\-releases/
 .PP
 \fBUsage:\fR packslip create [OPTIONS] [<ARTIFACTS>] ...
 .PP
@@ -76,31 +85,33 @@ Examples and configuration: https://packslip.dev/docs/describing\-releases/
 .PP
 .TP
 \fB\-\-project\fR \fI<PROJECT>\fR
-The project's name: a host path such as github.com/owner/repo, or github.com/owner/repo/tool for one tool of a monorepo. Required unless the manifest names it
+The project's name: a host path such as github.com/owner/repo, or github.com/owner/repo/tool for one tool of a monorepo. Required unless the manifest sets it
 .TP
 \fB\-\-version\fR \fI<VERSION>\fR
-Semver release version, such as 1.2.3. Required unless set in the manifest
+Semver release version, such as 1.2.3. Required unless the manifest sets it
 .TP
 \fB\-m, \-\-manifest\fR \fI<MANIFEST>\fR
-A TOML manifest giving per\-artifact executables, formats, requirements, platforms, and the release's resources; see https://packslip.dev/docs/describing\-releases/
+A TOML manifest giving per\-artifact executables, formats, requirements, platforms, and the release's resources; its artifact and asset paths are relative to the working directory, not to the manifest. See https://packslip.dev/docs/describing\-releases/#use\-a\-toml\-manifest
 .TP
 \fB\-k, \-\-key\fR \fI<KEY>\fR
 Sign with this secret key instead of a CI identity
 .TP
 \fB\-\-sign\fR \fI<SIGN>\fR
-How to sign; defaults to key when \-\-key is given, else oidc
+How to sign: oidc (keyless) or key (needs \-\-key). Optional; inferred from whether \-\-key is given
 .TP
 \fB\-\-no\-log\fR
 With \-\-key: do not record the signature in Rekor. Consumers must then opt in with \-\-allow\-unlogged
 .TP
 \fB\-o, \-\-out\fR \fI<OUT>\fR
-Directory for the signed bundle (does not copy artifacts)
+Directory to write the bundle into, created if missing
+
+The bundle is packslip.sigstore.json, or packslip.TOOL.sigstore.json for a tool in a GitHub monorepo, such as github.com/owner/repo/TOOL (a deeper path has each / replaced by \-). An existing bundle is replaced. Artifacts are not copied.
 .RS
 \fIDefault: \fR.
 .RE
 .TP
 \fB\-\-url\-base\fR \fI<URL_BASE>\fR
-Download URL prefix for the artifacts
+Download URL prefix: each artifact and resource asset gets PREFIX/FILENAME unless \-\-url or the manifest gives its URL
 .TP
 \fB\-\-url\fR \fI<URL>\fR
 Download URL for one artifact or resource asset, as FILENAME=URL (repeatable)
@@ -109,13 +120,15 @@ Download URL for one artifact or resource asset, as FILENAME=URL (repeatable)
 Format of one artifact whose name does not say, as FILENAME=FORMAT: an archive (tar.xz, tar.gz, tar.zst, tar.bz2, tgz, tar, zip, 7z), a single compressed executable (gz, xz, zst, bz2), an installer (deb, rpm, dmg, pkg, msi, msix, exe, appimage), raw for a bare executable, or a type of your own (repeatable)
 .TP
 \fB\-\-source\-repo\fR \fI<SOURCE_REPO>\fR
-Source repository URL
+Source repository URL, such as https://github.com/owner/repo
 .TP
 \fB\-\-commit\fR \fI<COMMIT>\fR
-Source commit
+Commit the release was built from; needs \-\-source\-repo or the manifest's source.repo. A resource with a repo: source requires it, and consumers read that file at this commit
 .TP
 \fB\-\-tag\fR \fI<TAG>\fR
-Source tag
+Git tag of the release, such as v1.2.3; needs \-\-source\-repo or the manifest's source.repo
+
+Consumers that list a GitHub project's versions from its tags do not see the release when the tag does not name the release's version, unless a signed release list names the release. create warns when that happens.
 .TP
 \fB\-\-published\-at\fR \fI<PUBLISHED_AT>\fR
 RFC 3339 publish time; defaults to now
@@ -127,13 +140,21 @@ URL of the release notes
 Release\-level extension as NAME=JSON, where NAME is who defines it (a consumer such as mise, or a domain the vendor controls) and JSON is its value. Example: 'example.com={"build_id":"20260901.3"}' (repeatable)
 .TP
 \fB\-\-bin\fR \fI<BIN>\fR
-Executable inside every artifact, as PATH or NAME=PATH; for a bare executable, the name it gets on PATH (repeatable)
+Executable in every artifact: a NAME to find inside each archive, a PATH from the archive root, or NAME=PATH when the command's name differs from the file's (repeatable)
+
+A PATH includes any top\-level directory of the archive. For a bare executable, give the command name it installs as.
 .TP
 \fB\-\-resource\fR \fI<RESOURCE>\fR
-Something else the release ships, as KIND[/QUALIFIER][@os[/arch[/libc]]]=SOURCE:VALUE where SOURCE is archive (a path inside every archive), asset (a separate release file, by local path), repo (a path at \-\-commit), or exec (a command whose stdout is the file). Kinds: completion/SHELL (or completion/SHELL,SHELL with exec and a {shell} placeholder), man[/BIN], cli\-spec/FORMAT[/BIN], skill/NAME, sbom/FORMAT, desktop, icon, app. An @ scope limits the entry to the artifacts of that platform, for a layout that differs across them; the manifest also scopes to one exact artifact. Examples: 'completion/zsh=archive:share/zsh/site\-functions/_tool', 'man@linux=archive:share/man/man1/tool.1' (repeatable)
+Another file the release ships, such as a completion script, man page, or SBOM, as KIND[/QUALIFIER][@OS[/ARCH[/LIBC]]]=SOURCE:VALUE (repeatable)
+
+SOURCE is archive (a path inside the artifact, from its root), asset (a separate release file, by local path), repo (a path in the source repository at \-\-commit), or exec (a command whose stdout is the file; leading NAME=value words set its environment).
+
+Known kinds: completion/SHELL[/BIN] (completion/SHELL,SHELL[/BIN] with exec and a {shell} placeholder), man[/BIN], cli\-spec/FORMAT[/BIN], skill/NAME, sbom/FORMAT, desktop, icon, app. Any other kind takes at most one qualifier, its name.
+
+An @ scope limits the entry to the artifacts of that platform, for a layout that differs across them; release.toml can also limit an entry to one artifact. Examples: 'completion/zsh=archive:share/zsh/site\-functions/_tool', 'man@linux=archive:share/man/man1/tool.1'. See https://packslip.dev/docs/resources/#write\-a\-resource\-entry
 .TP
 \fB\-\-provenance\fR \fI<PROVENANCE>\fR
-Provenance URL for an artifact, as FILENAME=URL, or bare URLs in the order the artifacts are given (repeatable)
+Provenance URL for an artifact, as FILENAME=URL, or bare URLs in the order of the ARTIFACTS arguments (repeatable)
 .TP
 \fB\-\-attested\-by\fR \fI<ATTESTED_BY>\fR
 Who makes the claim: vendor (default) or repackager
@@ -148,10 +169,14 @@ Record only sha256, not sha512 as well
 A command the executables need on PATH, as bin:NAME or bin:NAME@MIN where MIN is the lowest version that works. Example: bin:java@17 (repeatable)
 .TP
 \fB\-\-no\-libs\fR
-Do not open the artifacts to record the shared libraries their executables load from the host
+Do not read the executables for the shared libraries and C library they load from the host
+
+With this flag, create still finds each \-\-bin inside the archives but does not derive requires.libs; a libs list in release.toml is recorded as written, unchecked. A Linux artifact whose platform and file name give no C library is recorded as gnu, even a static build.
 .TP
 \fB\-\-no\-pin\-workflow\fR
-With keyless signing from a reusable workflow: declare that consumers should hold later releases to this repository, not to this signing workflow
+Keyless only: write identity.pin_workflow: false, so consumers hold later releases to the signing repository instead of to the workflow file that signs this one
+
+For a vendor whose releases are signed by more than one workflow of its repository. The signer must still be a workflow of that repository. A consumer that last accepted a release without the flag refuses the first one with it until a person approves it. See https://packslip.dev/release/v1/#reusable\-workflows
 .TP
 \fB\-h, \-\-help\fR
 Print help
@@ -159,11 +184,48 @@ Print help
 .PP
 .TP
 \fB<ARTIFACTS>\fR
-Artifact files, optionally as path[:os/arch[/libc]|:any][@variant]. An arch or libc of any leaves it out, for a build that runs on every one. Added to those the manifest lists
-.SH "PACKSLIP KEYGEN"
-Generate an Ed25519 key pair for the sigstore\-key scheme
+Files to describe, each as PATH, PATH:OS/ARCH[/LIBC], or PATH:any, with an optional @VARIANT
 
-Writes a secret seed to \-\-out (mode 0600 on Unix) and a minisign\-format public key beside it with a .pub extension. Refuses to overwrite either file. Keep the secret private; distribute the public key to consumers. A supported CI OIDC identity can sign without a long\-lived key.
+Without a platform suffix, create infers the platform from the file name. Give any as ARCH or LIBC to leave that field out, for a build that runs on every architecture or C library; PATH:any leaves out OS, ARCH, and LIBC. These files join the manifest's artifacts; a file the manifest lists under the same file name keeps its manifest entry, and its platform suffix and @VARIANT here are ignored.
+\fBExamples:\fR
+.PP
+\fBSign keyless in a CI job\fR
+.PP
+.RS 4
+packslip create \\
+        \-\-project github.com/owner/mytool \\
+        \-\-version 1.2.3 \\
+        \-\-bin mytool \\
+        \-\-url\-base https://github.com/owner/mytool/releases/download/v1.2.3 \\
+        \-\-out dist \\
+        dist/mytool\-1.2.3\-linux\-x64.tar.gz \\
+        dist/mytool\-1.2.3\-darwin\-arm64.tar.gz
+.RE
+.PP
+\fBDescribe the artifacts in a TOML manifest\fR
+.PP
+.RS 4
+packslip create \-\-manifest release.toml \-\-out dist
+.RE
+.PP
+\fBSign with a key from packslip keygen\fR
+.PP
+.RS 4
+packslip create \\
+        \-\-project mytool.example.com \\
+        \-\-version 1.2.3 \\
+        \-\-bin mytool \\
+        \-\-url\-base https://mytool.example.com/v1.2.3 \\
+        \-\-key release.key \\
+        \-\-out dist \\
+        dist/mytool\-1.2.3\-linux\-x64.tar.gz
+.RE
+.SH "PACKSLIP KEYGEN"
+Generate an Ed25519 key pair for key\-signed releases (sigstore\-key)
+
+Write a new secret key to \-\-out (a hex Ed25519 seed, mode 0600 on Unix) and its public key, in minisign format, to the same path with the extension replaced by .pub: \-\-out release.key writes release.key and release.pub. Refuses to overwrite either file.
+
+Sign with `packslip create \-\-key release.key`, and give consumers release.pub for `packslip verify \-\-pubkey`. Keep the secret key private. A CI job with an OIDC identity can sign keyless and needs no key.
 .PP
 \fBUsage:\fR packslip keygen [OPTIONS]
 .PP
@@ -178,12 +240,21 @@ Where to write the secret key
 .TP
 \fB\-h, \-\-help\fR
 Print help
+\fBExamples:\fR
+.PP
+\fBWrite release.key and release.pub\fR
+.PP
+.RS 4
+packslip keygen \-\-out release.key
+.RE
 .SH "PACKSLIP PIN"
 Print the signer fingerprint of a project's keyless releases
 
-Verify a release bundle, then print the signer fingerprint of the repository its certificate comes from: `ps1_` and 26 characters. A README or Dockerfile can carry it, and `packslip verify \-\-pin` checks a release against it. It names the forge's issuer and repository ID only, so it survives renaming the repository, moving it to another owner, and changing the workflow, and it does not carry over to a repository that takes over the old name. A key\-signed project, and a certificate that records no repository ID, have none. Run this on a release you trust: it names whichever repository signed the bundle it is given.
+Verify a release bundle and print the signer fingerprint of the repository that signed it: `ps1_` and 26 characters. Run it on a release you already trust, because it fingerprints whichever repository signed the bundle it is given. A vendor publishes the fingerprint where consumers can read it without trusting a release, such as its README, and a consumer records it in its own configuration, such as a Dockerfile or CI workflow; `packslip verify \-\-pin` then checks a release against it.
 
-Verification is the same as `packslip verify`: the policy is the one the project's name implies unless \-\-identity, \-\-identity\-prefix, or \-\-issuer say otherwise. See https://packslip.dev/docs/verifying/.
+The fingerprint is derived from the forge's issuer and repository ID only. It stays the same when the repository is renamed, moves to another owner, or signs from another workflow, and a repository that later takes over the old name gets a different one. Only keyless releases whose certificate records a repository ID have one; for a key\-signed release, pin the key with `packslip verify \-\-pubkey`.
+
+Verification works as in `packslip verify`: the policy is the one the project's name implies unless \-\-identity, \-\-identity\-prefix, or \-\-issuer replace it. See https://packslip.dev/docs/verifying/.
 .PP
 \fBUsage:\fR packslip pin [OPTIONS] <BUNDLE>
 .PP
@@ -191,13 +262,13 @@ Verification is the same as `packslip verify`: the policy is the one the project
 .PP
 .TP
 \fB\-\-identity\fR \fI<IDENTITY>\fR
-The exact certificate identity a keyless signer must have
+The exact certificate identity a keyless signer must have, including its ref, such as https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3
 .TP
 \fB\-\-identity\-prefix\fR \fI<IDENTITY_PREFIX>\fR
 A prefix the certificate identity must start with, such as https://github.com/owner/repo/
 .TP
 \fB\-\-issuer\fR \fI<ISSUER>\fR
-The OIDC issuer a keyless signer must have
+The OIDC issuer a keyless signer must have; pass it with \-\-identity or \-\-identity\-prefix, since alone it accepts any signer from that issuer
 .TP
 \fB\-\-allow\-unlogged\fR
 Accept a bundle without a transparency log entry
@@ -212,12 +283,30 @@ Print help
 .TP
 \fB<BUNDLE>\fR
 Local release bundle to verify and fingerprint
+\fBExit status:\fR
+.PP
+.TP
+\fB0\fR
+Printed the signer fingerprint
+.TP
+\fB1\fR
+Verification failed, the release has no signer fingerprint, or an input was unusable
+.TP
+\fB2\fR
+The command line is invalid
+\fBExamples:\fR
+.PP
+\fBPrint the fingerprint of a release you already trust\fR
+.PP
+.RS 4
+packslip pin packslip.sigstore.json
+.RE
 .SH "PACKSLIP RELEASES"
 Create and sign a project's release list
 
-Read local release bundles and write a signed index with their digests, versions, expiry, and sequence. Repeat \-\-release for every entry to keep; this command does not append to a previous list or upload the output.
+Read local copies of released bundles and write a signed release list: each bundle's URL, digest, version, tag, and publish time, plus the list's sequence and expiry. The bundles are read, not verified, so give copies you trust. Repeat \-\-release for every entry to keep; the command does not append to an earlier list or upload anything.
 
-Publish at the project's well\-known location, or as a supplementary list on a GitHub repository's default branch. See https://packslip.dev/docs/release\-lists/.
+Publish the list at https://HOST/.well\-known/packslip/PATH.json for a project named HOST/PATH, or at https://HOST/.well\-known/packslip.json for a project named after a bare host. github.com does not serve that path, so a github.com project commits the list to its default branch instead, as its supplementary list: .well\-known/packslip.json, or .well\-known/packslip/TOOL.json for a monorepo tool. See https://packslip.dev/docs/release\-lists/.
 .PP
 \fBUsage:\fR packslip releases [OPTIONS]
 .PP
@@ -225,16 +314,16 @@ Publish at the project's well\-known location, or as a supplementary list on a G
 .PP
 .TP
 \fB\-\-project\fR \fI<PROJECT>\fR
-The project's name, which every listed packslip must carry
+The project's name, which every \-\-release bundle must name
 .TP
 \fB\-\-sequence\fR \fI<SEQUENCE>\fR
-Increases with every list published
+This list's sequence number, which increases with every list you publish; consumers refuse a list whose sequence is lower than one they have accepted
 .TP
 \fB\-\-latest\fR \fI<LATEST>\fR
-Recommend this exact listed version for unconstrained latest requests
+Recommend this version for an unconstrained latest request, without reordering versions; it must exactly match the version of a \-\-release entry
 .TP
 \fB\-\-valid\-for\fR \fI<VALID_FOR>\fR
-How long the list stays current: 30d, 12h, 2w
+How long until the list expires, as a number and a unit (s, m, h, d, or w), such as 30d
 .RS
 \fIDefault: \fR30d
 .RE
@@ -246,10 +335,10 @@ RFC 3339 generation time; defaults to now
 A released packslip as URL=PATH: where consumers fetch it, and the local copy to read (repeatable)
 .TP
 \fB\-\-yank\fR \fI<YANK>\fR
-Mark a listed release withdrawn, as URL=REASON (repeatable)
+Withdraw a listed release, as URL=REASON, with URL exactly as given to \-\-release (repeatable)
 .TP
 \fB\-\-security\fR \fI<SECURITY>\fR
-Mark a listed release as a security fix, by URL (repeatable)
+Mark a listed release as a security fix, by its \-\-release URL (repeatable)
 .TP
 \fB\-\-evidence\fR \fI<EVIDENCE>\fR
 What a publisher other than the vendor checked about a listed release, as URL=KIND or URL=KIND=DETAIL (repeatable)
@@ -258,26 +347,39 @@ What a publisher other than the vendor checked about a listed release, as URL=KI
 Sign with this secret key instead of a CI identity
 .TP
 \fB\-\-sign\fR \fI<SIGN>\fR
-How to sign; defaults to key when \-\-key is given, else oidc
+How to sign: oidc (keyless) or key (needs \-\-key). Optional; inferred from whether \-\-key is given
 .TP
 \fB\-\-no\-log\fR
-With \-\-key: do not record the signature in Rekor
+With \-\-key: do not record the signature in Rekor. Consumers must then opt in with \-\-allow\-unlogged
 .TP
 \fB\-\-no\-pin\-workflow\fR
-With keyless signing from a reusable workflow: declare that consumers should hold later releases to this repository, not to this signing workflow
+Keyless only: write identity.pin_workflow: false into the list, as `packslip create \-\-no\-pin\-workflow` does for a release. See https://packslip.dev/release/v1/#reusable\-workflows
 .TP
 \fB\-o, \-\-out\fR \fI<OUT>\fR
-Where to write the list
+Where to write the list; consumers fetch it only from its .well\-known path, never under this default name
 .RS
 \fIDefault: \fRpackslip\-releases.sigstore.json
 .RE
 .TP
 \fB\-h, \-\-help\fR
 Print help
+\fBExamples:\fR
+.PP
+\fBList one key\-signed release of a self\-hosted project\fR
+.PP
+.RS 4
+packslip releases \\
+        \-\-project mytool.example.com \\
+        \-\-sequence 1 \-\-valid\-for 30d \\
+        \-\-latest 1.2.3 \\
+        \-\-release https://mytool.example.com/v1.2.3/packslip.sigstore.json=releases/1.2.3/packslip.sigstore.json \\
+        \-\-key release.key \\
+        \-\-out site/.well\-known/packslip.json
+.RE
 .SH "PACKSLIP SCHEMA"
 Print the JSON schema for a decoded release statement
 
-Use \-\-releases for the release\-list statement schema. These schemas describe the in\-toto payload, not the enclosing sigstore bundle.
+Use \-\-releases for the release\-list statement schema. These schemas describe the in\-toto payload, not the enclosing sigstore bundle. Both are published at https://packslip.dev/schema/release\-v1.json and https://packslip.dev/schema/releases\-v1.json.
 .PP
 \fBUsage:\fR packslip schema [OPTIONS]
 .PP
@@ -285,7 +387,7 @@ Use \-\-releases for the release\-list statement schema. These schemas describe 
 .PP
 .TP
 \fB\-\-releases\fR
-The releases/v1 list instead of the release/v1 statement
+Print the releases/v1 list schema instead of the release/v1 statement schema
 .TP
 \fB\-h, \-\-help\fR
 Print help
@@ -306,13 +408,15 @@ Print help
 .PP
 .TP
 \fB<BUNDLE>\fR
-The packslip.sigstore.json (or release list) to read
+Release bundle or release list to read
 .SH "PACKSLIP VERIFY"
 Verify a packslip, or a release list, against a pinned identity or key
 
-Check the signature, log evidence, and statement structure. With \-\-artifact, also check local files against signed digests and artifact sizes. Without it, only the bundle is checked. Verification failures exit with status 1; no remote artifacts or provenance are fetched.
+Check the signature, log evidence, and statement structure. With \-\-artifact, also check local files against signed digests and artifact sizes. Without it, only the bundle is checked. Nothing is downloaded: remote artifacts and linked provenance are not fetched.
 
-Pin a keyless signer with \-\-identity or \-\-identity\-prefix and \-\-issuer, or a signing key with \-\-pubkey. Without an explicit pin, derive the policy from the document's claimed GitHub or GitLab project. With \-\-pin, also require the signing repository to have that signer fingerprint. Consumers must separately match the project and version to their intended request. For release lists, expiry and remembered sequence checks are the consumer's responsibility. See https://packslip.dev/docs/verifying/.
+Choose what to trust. By default, the identity policy comes from the project the document claims, if it is on github.com or gitlab.com: that forge's issuer and any workflow of that repository. Any other project needs \-\-pubkey or an identity flag. For a keyless release, \-\-issuer with \-\-identity\-prefix (any workflow of a repository, such as https://github.com/owner/repo/) or \-\-identity (one exact certificate identity, including its ref) replaces the derived policy, and only the flags you pass are checked: \-\-issuer alone accepts any signer from that issuer. For a key\-signed release, pass \-\-pubkey. \-\-pin adds a check on top of the identity policy: the signing repository must have that signer fingerprint.
+
+Then match the verified project and version to what you meant to install. For a release list, the command does not check the expiry or compare the sequence with an earlier list. See https://packslip.dev/docs/verifying/.
 .PP
 \fBUsage:\fR packslip verify [OPTIONS] <BUNDLE>
 .PP
@@ -323,13 +427,13 @@ Pin a keyless signer with \-\-identity or \-\-identity\-prefix and \-\-issuer, o
 The pinned public key file, or its base64 line
 .TP
 \fB\-\-identity\fR \fI<IDENTITY>\fR
-The exact certificate identity a keyless signer must have
+The exact certificate identity a keyless signer must have, including its ref, such as https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3
 .TP
 \fB\-\-identity\-prefix\fR \fI<IDENTITY_PREFIX>\fR
 A prefix the certificate identity must start with, such as https://github.com/owner/repo/
 .TP
 \fB\-\-issuer\fR \fI<ISSUER>\fR
-The OIDC issuer a keyless signer must have
+The OIDC issuer a keyless signer must have; pass it with \-\-identity or \-\-identity\-prefix, since alone it accepts any signer from that issuer
 .TP
 \fB\-\-pin\fR \fI<PIN>\fR
 The signer fingerprint (ps1_...) the certificate's repository must have, as `packslip pin` prints it
@@ -341,10 +445,10 @@ Accept a bundle without a transparency log entry
 A sigstore trusted_root.json to use instead of the embedded one
 .TP
 \fB\-a, \-\-artifact\fR \fI<ARTIFACT>\fR
-Local artifacts or resource assets to check (repeatable; not downloaded)
+A downloaded artifact or resource asset to check against the bundle, matched by file name, so keep the name it was published under (repeatable)
 .TP
 \fB\-J, \-\-json\fR
-Print the result as JSON
+Print the verified report as JSON, with source_repository when the signing certificate records one; for a release list, print the verified list statement
 .TP
 \fB\-h, \-\-help\fR
 Print help
@@ -353,8 +457,45 @@ Print help
 .TP
 \fB<BUNDLE>\fR
 Local release bundle or signed release list to verify
+\fBExit status:\fR
+.PP
+.TP
+\fB0\fR
+The bundle verified, and every \-\-artifact matched it
+.TP
+\fB1\fR
+Verification failed, or an input was unusable: a file could not be read, a key or fingerprint is malformed, or the trust flags conflict or are missing
+.TP
+\fB2\fR
+The command line is invalid
+\fBExamples:\fR
+.PP
+\fBVerify a GitHub release against its repository\fR
+.PP
+.RS 4
+packslip verify packslip.sigstore.json \\
+        \-\-identity\-prefix https://github.com/owner/repo/ \\
+        \-\-issuer https://token.actions.githubusercontent.com \\
+        \-\-artifact mytool\-1.2.3\-linux\-x64.tar.gz
+.RE
+.PP
+\fBVerify hk 2.3.0 against its signer fingerprint\fR
+.PP
+.RS 4
+packslip verify packslip.sigstore.json \\
+        \-\-pin ps1_snirenkjwr7m5ozgcufameodnm \\
+        \-\-artifact hk\-x86_64\-unknown\-linux\-gnu.tar.gz
+.RE
+.PP
+\fBVerify a key\-signed release\fR
+.PP
+.RS 4
+packslip verify packslip.sigstore.json \\
+        \-\-pubkey release.pub \\
+        \-\-artifact mytool\-1.2.3\-linux\-x64.tar.gz
+.RE
 .SH "PACKSLIP VERSION"
-Show the version
+Print packslip's version
 .PP
 \fBUsage:\fR packslip version [OPTIONS]
 .PP
@@ -362,7 +503,7 @@ Show the version
 .PP
 .TP
 \fB\-J, \-\-json\fR
-Print as JSON
+Print the name, version, OS, and architecture as JSON
 .TP
 \fB\-h, \-\-help\fR
 Print help

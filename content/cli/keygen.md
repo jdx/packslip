@@ -3,12 +3,22 @@
 
 - **Usage:** `packslip keygen [-o --out <OUT>]`
 
-Generate an Ed25519 key pair for the sigstore-key scheme
+Generate an Ed25519 key pair for key-signed releases (sigstore-key)
 
-Writes a secret seed to --out (mode 0600 on Unix) and a minisign-format public key beside it with a .pub extension. Refuses to overwrite either file. Keep the secret private; distribute the public key to consumers. A supported CI OIDC identity can sign without a long-lived key.
+Write a new secret key to --out (a hex Ed25519 seed, mode 0600 on Unix) and its public key, in minisign format, to the same path with the extension replaced by .pub: --out release.key writes release.key and release.pub. Refuses to overwrite either file.
+
+Sign with `packslip create --key release.key`, and give consumers release.pub for `packslip verify --pubkey`. Keep the secret key private. A CI job with an OIDC identity can sign keyless and needs no key.
 
 ## Flags
 - **`-o --out <OUT>`** — Where to write the secret key
 
   **Default:** `packslip.key`
 - **`-h --help`** — Print help
+
+## Examples
+
+**Write release.key and release.pub**
+
+```
+packslip keygen --out release.key
+```

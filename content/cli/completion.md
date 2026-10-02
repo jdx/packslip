@@ -5,6 +5,8 @@
 
 Generate a self-contained shell completion script
 
+Print the script to stdout. Redirect it to a file where your shell loads completions, as in the example. The script asks the installed packslip for candidates, so it needs no other tool and keeps working after upgrades.
+
 ## Arguments
 - **`<SHELL>`** — Shell to generate completions for
 
@@ -12,3 +14,11 @@ Generate a self-contained shell completion script
 
 ## Flags
 - **`-h --help`** — Print help
+
+## Examples
+
+**Install bash completions for your user**
+
+```
+packslip completion bash > ~/.local/share/bash-completion/completions/packslip
+```

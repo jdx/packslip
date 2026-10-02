@@ -3,7 +3,8 @@
 Maintainers release by reviewing and merging the release PR maintained by
 release-plz. An ordinary push to `main` updates that PR; it does not by
 itself publish a version. Publication also requires the release job to be
-enabled as described below.
+enabled (see [Repository setup](#repository-setup)). For local builds and
+documentation generation, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Release sequence
 
@@ -16,51 +17,124 @@ enabled as described below.
    regenerated documentation, so merging it at any moment ships a CLI
    reference that matches the version.
 2. A maintainer reviews and merges the PR.
-3. If `RELEASE_PLZ_RELEASE` is `true`, the release job publishes the crate
-   to crates.io and then creates the `vX.Y.Z` tag.
-4. The tag triggers `release.yml`, which checks that the tag matches
-   `Cargo.toml`, builds five platform binaries, signs and notarizes the
-   macOS one, attests them all, and creates a draft GitHub release. It
-   generates narrative notes with Communiqué, publishes the release's
-   packslip as the project `packslip.dev` — the files and bundle to the R2
-   bucket behind that host, the bundle to the GitHub release too —
-   publishes the GitHub release, moves the action's matching major tag
-   (`v0` for 0.x releases, `v1` for 1.x releases, and so on), and rebuilds
-   the signed release list at `https://packslip.dev/.well-known/packslip.json`
-   through `packslip-releases.yml`, which also re-signs it weekly. Every
-   rebuild applies the withdrawals committed under `.github/packslip/`; see
-   [Withdraw a release or mark a security fix](#withdraw-a-release-or-mark-a-security-fix).
+3. If `RELEASE_PLZ_RELEASE` is `true`, the `release` job in
+   `release-plz.yml` publishes the crate to crates.io and then creates the
+   `vX.Y.Z` tag.
+4. The tag starts `release.yml`, which:
+   - checks that the tag matches the version in `Cargo.toml`;
+   - builds the five platform archives (see [Platforms](#platforms)) and
+     signs and notarizes the macOS binary;
+   - adds the usage spec, the man page, and bash, zsh, fish, and
+     PowerShell completions, and attests every release file;
+   - creates a draft GitHub release and rewrites its notes with
+     Communiqué, keeping GitHub's generated notes if that step fails;
+   - signs the release's packslip as the project `packslip.dev`, uploads
+     the files and the bundle to the R2 bucket behind packslip.dev, and
+     attaches the bundle to the GitHub release;
+   - publishes the GitHub release and moves the action's major tag (`v1`
+     for 1.x releases), creating the tag if it does not exist yet;
+   - calls `packslip-releases.yml` to rebuild the signed release list at
+     `https://packslip.dev/.well-known/packslip.json`. That workflow also
+     re-signs the list every Monday, before its 30-day validity runs out,
+     and every rebuild applies the withdrawals committed under
+     `.github/packslip/`; see
+     [Withdraw a release or mark a security fix](#withdraw-a-release-or-mark-a-security-fix).
 
-## Cutting a major version
+## After a release
 
-release-plz derives the next version from conventional commits, and on a
-0.x version a breaking change is a minor bump: it proposes 0.4.0, never
-1.0.0. There is no configuration that overrides that, and the `release`
-job publishes any version on `main` that crates.io does not have yet — so
-a bare version bump would publish with a changelog that stops at the
-previous release.
+Check the workflow result, the platform assets on the GitHub release, and
+the release's packslip. `packslip.dev` names a host, not a GitHub
+repository, so `packslip verify` has no identity to derive from it. Pass
+the identity of jdx/packslip's GitHub Actions workflows: `release.yml`
+signs each release's packslip, and `packslip-releases.yml` signs the list.
+`--identity-prefix https://github.com/jdx/packslip/` accepts any workflow
+in the repository, so both checks below use it.
 
-A major version is therefore cut by hand, in one pull request that carries
-all three of:
+```sh
+v=X.Y.Z
+curl -fsSLO https://packslip.dev/v$v/packslip.sigstore.json
+curl -fsSLO https://packslip.dev/v$v/packslip-v$v-linux-x64.tar.xz
+packslip verify packslip.sigstore.json \
+  --identity-prefix https://github.com/jdx/packslip/ \
+  --issuer https://token.actions.githubusercontent.com \
+  --artifact packslip-v$v-linux-x64.tar.xz
+```
+
+Then confirm that the signed release list names the new version:
+
+```sh
+curl -fsSL https://packslip.dev/.well-known/packslip.json -o list.json
+packslip verify list.json \
+  --identity-prefix https://github.com/jdx/packslip/ \
+  --issuer https://token.actions.githubusercontent.com
+packslip show list.json | jq -r '.predicate.releases[].version'
+```
+
+[Verify a release](https://packslip.dev/docs/verifying/) explains what
+verification checks and what its output means.
+
+## Action versions and tags
+
+The actions read their default CLI version from the repository's
+`Cargo.toml`, so the release PR's version bump also updates that default.
+The actions and CLI share one version, including for action-only changes.
+release-plz counts only pull requests that change a file in the Cargo
+package. `action.yml`, `releases/action.yml`, and `scripts/` are in the
+package so that action changes count. The `exclude` list in `Cargo.toml`
+leaves out the site, `.github/`, `RELEASING.md`, and the release
+configuration; a pull request that changes only those files gets no
+changelog line and does not raise the version.
+
+Give action changes conventional-commit titles such as `fix(action): ...`
+or `feat(action): ...`. A breaking action change raises the shared major
+version too (see [Major versions](#major-versions)).
+
+- `vX.Y.Z` pins both the action and its default CLI version and is created
+  by release-plz.
+- `v0`, `v1`, and later major tags track releases of that same CLI major.
+  `release.yml` moves the matching tag after publishing the binaries.
+  Major tags are excluded from the release trigger and changelog.
+
+`v1` was briefly an alias for 0.x releases. From 1.0.0 it means what it
+says, and `release.yml` moves it with each 1.x release. `v0` stops
+advancing at 0.3.1: a workflow pinned to `@v0` keeps working and stops
+receiving updates until it moves to `@v1`.
+
+## Major versions
+
+From 1.0.0, release-plz proposes the next major version itself. It does
+so when a merged pull request that changes a packaged file (see
+[Action versions and tags](#action-versions-and-tags)) carries `!` in its
+title or a `BREAKING CHANGE:` footer in its description, or when
+cargo-semver-checks (`semver_check = true` in `release-plz.toml`) reports
+a public API break. cargo-semver-checks sees only the Rust API, so mark a
+breaking change to the CLI or an action with `!` yourself. The action and
+CLI share one version, so either kind of break makes a major release of
+both. After that release, `release.yml` creates the `v2` tag, and workflows
+pinned to `@v1` stop receiving updates until they move. The format stays
+at version 1 either way.
+
+### Publishing a version release-plz would not propose
+
+To publish a version release-plz would not propose, open one pull request
+that carries all three of the following. A version bump alone is not
+enough: the `release` job publishes any version on `main` that crates.io
+does not have yet, so a bare bump would publish with a changelog that
+stops at the previous release.
 
 1. `version` in `Cargo.toml`, and `Cargo.lock` updated with
    `cargo update -p packslip`.
 2. The `CHANGELOG.md` entry for the new version, in the shape `cliff.toml`
    renders: the compare link, the date, and one line per change.
-3. Whatever makes the release a major one.
+3. The change that calls for the new version.
 
 Merging that PR publishes the version and pushes its tag, with no release
-PR in between. Check afterwards that release-plz did not leave a stray
-release PR behind from the same push, and close it if it did. 1.0.0 was
-cut this way.
+PR in between. The release-pr job closes a stray release PR when nothing
+is left to release; confirm that none is still open.
 
-The actions read their default CLI version from the repository's
-`Cargo.toml`, so the release PR's version bump also updates that default.
-The actions and CLI share one version, including for action-only changes.
-`action.yml`, `releases/action.yml`, and `scripts/` are included in the
-Cargo package so release-plz detects those changes.
-Use conventional commits such as `fix(action): ...` or `feat(action): ...`;
-breaking action changes affect the shared version too.
+1.0.0 was cut this way from 0.3.1. On a 0.x version release-plz treats a
+breaking change as a minor bump, so it would have proposed 0.4.0, and no
+configuration overrides that.
 
 ## Withdraw a release or mark a security fix
 
@@ -107,6 +181,21 @@ touch the GitHub release, the crates.io version, or the files in R2.
 a dispatched withdrawal lasted until the next scheduled or post-release run
 rebuilt the list. A manual dispatch now re-signs the list as it stands.
 
+## Backfill an earlier release
+
+A release that shipped before packslip.dev hosted packslip's releases can
+be published there afterward. Run `release.yml` by hand with
+`backfill-tag` set to its tag:
+
+```sh
+gh workflow run release.yml -f backfill-tag=vX.Y.Z
+```
+
+The job signs a new packslip as `packslip.dev` for the release's existing
+GitHub assets, copies the assets and the packslip to packslip.dev, and
+then rebuilds the list. It runs from the same workflow file that signs new
+releases, so a consumer sees one signer throughout.
+
 ## Platforms
 
 | Asset           | Target                       | Runner             |
@@ -117,9 +206,12 @@ rebuilt the list. A manual dispatch now re-signs the list as it stands.
 | `windows-x64`   | `x86_64-pc-windows-msvc`     | `windows-latest`   |
 | `windows-arm64` | `aarch64-pc-windows-msvc`    | `windows-11-arm`   |
 
-There is no `darwin-x64` asset. Rosetta 2 runs the arm64 binary on the
-Intel Macs that remain, which is a better trade than signing, notarizing,
-and supporting a second macOS artifact.
+There is no `darwin-x64` asset, so Intel Macs have no prebuilt binary:
+Rosetta 2 runs x86_64 code on Apple silicon, not arm64 code on Intel.
+Signing, notarizing, and supporting a second macOS artifact for a
+shrinking set of machines is not worth it. Intel Mac users install with
+`cargo install packslip --locked`, and on an Intel macOS runner the action
+stops with instructions to build the CLI and pass `packslip-path`.
 
 Windows arm64 is built on a native arm64 runner rather than cross-compiled,
 because `aws-lc-sys` — the crypto behind rustls — compiles C and assembly
@@ -147,9 +239,10 @@ behind the "cannot be verified" dialog.
 | Secret `ANTHROPIC_API_KEY` | Lets Communiqué generate release notes. If generation fails or the key is unavailable, publication continues with GitHub's generated notes. |
 | Variable `RELEASE_PLZ_RELEASE=true` | Enables the release job. Without it, merging the release PR does not publish a release. |
 | Secrets `CERTIFICATES_P12`, `CERTIFICATES_P12_PASS` | The base64-encoded Developer ID Application certificate and its export password, the same pair the other jdx.dev CLIs use. The macOS build fails at signing without them. |
-| Secrets `APPLE_API_KEY_P8`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID` | A base64-encoded App Store Connect API key and its key and issuer IDs. The macOS job fails early and by name when any is missing, rather than shipping an unnotarized binary. |
+| Secrets `APPLE_API_KEY_P8`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID` | A base64-encoded App Store Connect API key and its key and issuer IDs. The signing step checks all three before it signs and fails with "Notarization credentials missing" rather than shipping an unnotarized binary. |
 | Secrets `CLOUDFLARE_ACCESS_KEY_ID`, `CLOUDFLARE_SECRET_ACCESS_KEY` | S3 credentials for the `jdx-releases` R2 bucket, from an R2 token scoped to that bucket alone. The release job and `packslip-releases.yml` write the release files, bundles, and list under `packslip/`. |
 | Secret `CLOUDFLARE_TOKEN` | An API token with account `Workers Scripts:Edit` and read on the `jdx-releases` bucket, and no zone access at all. `site.yml` deploys packslip.dev with it. The custom domain is attached to the Worker by hand rather than by wrangler, so deploys never need `DNS:Edit`. |
+| Secrets `MISE_LOCK_APP_ID`, `MISE_LOCK_APP_PRIVATE_KEY` | A GitHub App that `mise-lock.yml` uses to push a regenerated `mise.lock`, and the files `mise run render` changes with it, to Renovate branches. |
 
 Communiqué's context and tone are configured in `communique.toml`.
 Its version is declared in `mise.toml` and resolved in `mise.lock`;
@@ -162,34 +255,9 @@ tag to create the crate — Trusted Publishing cannot create one — and a
 Trusted Publisher is registered for repository `jdx/packslip`, workflow
 `release-plz.yml`. The release job mints a short-lived token through OIDC
 with `rust-lang/crates-io-auth-action`, so the API token used for that
-first publish was revoked immediately afterwards.
+first publish was revoked immediately afterward.
 
-`publish = true` in `release-plz.toml` follows from that, and `git_only` is
-gone with it: release-plz measures a release against the registry rather
-than against the last Git tag.
-
-## Tags and verification
-
-- `vX.Y.Z` pins both the action and its default CLI version and is created
-  by release-plz.
-- `v0`, `v1`, and later major tags track releases of that same CLI major.
-  `release.yml` moves the matching tag after publishing the binaries.
-  Major tags are excluded from the release trigger and changelog.
-
-`v1` was briefly an alias for 0.x releases. From 1.0.0 it means what it
-says, and `release.yml` moves it with each 1.x release. `v0` stops
-advancing at 0.3.1: a workflow pinned to `@v0` keeps working and stops
-receiving updates until it moves to `@v1`.
-
-After publication, check the workflow result, the platform assets, and
-the release's packslip. Use the [verification guide](https://packslip.dev/docs/verifying/)
-to check a downloaded artifact against the repository identity, and confirm
-that `https://packslip.dev/.well-known/packslip.json` names the new version.
-
-A release that shipped before packslip.dev served its own can be published
-there afterwards: run `release.yml` by hand with `backfill-tag` set to its
-tag. The job describes the release's existing GitHub assets again as
-`packslip.dev`, from the same workflow file that signs new releases, so a
-consumer sees one signer throughout, and then rebuilds the list.
-For local builds and documentation generation, see
-[CONTRIBUTING.md](CONTRIBUTING.md).
+`release-plz.toml` therefore sets `publish = true` and leaves `git_only`
+unset. release-plz decides whether there is anything to release by
+comparing `main` with the latest version on crates.io, not with the last
+Git tag.

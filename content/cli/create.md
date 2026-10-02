@@ -5,41 +5,111 @@
 
 Create and sign a packslip for a release
 
-Hash local artifacts, infer platforms and formats from filenames, and write a signed bundle to --out. Use --manifest for per-artifact paths, formats, requirements, and scoped resources. No files are uploaded.
+Hash local artifacts, infer platforms and formats from file names, and write the signed bundle (packslip.sigstore.json, or a per-tool name for a GitHub monorepo tool; see --out) into the --out directory. Use --manifest for per-artifact paths, formats, requirements, and scoped resources. No files are uploaded.
 
-Signing uses a supported CI OIDC identity by default. Use --key to sign with an Ed25519 key instead. Signatures are logged to Rekor unless a key-signed release explicitly uses --no-log.
+By default, create signs keyless with an OIDC token: the one in SIGSTORE_ID_TOKEN when it is set, or else the CI job's own identity, which on GitHub Actions needs the `id-token: write` permission. Pass --key to sign with a key from `packslip keygen` instead. Either way, the signature is recorded in the Rekor transparency log. With --key, --no-log skips the log entry, and consumers must then accept the release with --allow-unlogged.
 
-Examples and configuration: https://packslip.dev/docs/describing-releases/
+The TOML manifest and more examples: https://packslip.dev/docs/describing-releases/
 
 ## Arguments
-- **`[ARTIFACTS]…`** — Artifact files, optionally as path[:os/arch[/libc]|:any][@variant]. An arch or libc of any leaves it out, for a build that runs on every one. Added to those the manifest lists
+- **`[ARTIFACTS]…`** — Files to describe, each as PATH, PATH:OS/ARCH[/LIBC], or PATH:any, with an optional @VARIANT
+
+  Without a platform suffix, create infers the platform from the file name. Give any as ARCH or LIBC to leave that field out, for a build that runs on every architecture or C library; PATH:any leaves out OS, ARCH, and LIBC. These files join the manifest's artifacts; a file the manifest lists under the same file name keeps its manifest entry, and its platform suffix and @VARIANT here are ignored.
 
 ## Flags
-- **`--project <PROJECT>`** — The project's name: a host path such as github.com/owner/repo, or github.com/owner/repo/tool for one tool of a monorepo. Required unless the manifest names it
-- **`--version <VERSION>`** — Semver release version, such as 1.2.3. Required unless set in the manifest
-- **`-m --manifest <MANIFEST>`** — A TOML manifest giving per-artifact executables, formats, requirements, platforms, and the release's resources; see https://packslip.dev/docs/describing-releases/
+- **`-h --help`** — Print help
+
+## Input
+- **`--project <PROJECT>`** — The project's name: a host path such as github.com/owner/repo, or github.com/owner/repo/tool for one tool of a monorepo. Required unless the manifest sets it
+- **`--version <VERSION>`** — Semver release version, such as 1.2.3. Required unless the manifest sets it
+- **`-m --manifest <MANIFEST>`** — A TOML manifest giving per-artifact executables, formats, requirements, platforms, and the release's resources; its artifact and asset paths are relative to the working directory, not to the manifest. See https://packslip.dev/docs/describing-releases/#use-a-toml-manifest
+
+## Signing
 - **`-k --key <KEY>`** — Sign with this secret key instead of a CI identity
-- **`--sign <SIGN>`** — How to sign; defaults to key when --key is given, else oidc
+- **`--sign <SIGN>`** — How to sign: oidc (keyless) or key (needs --key). Optional; inferred from whether --key is given
 - **`--no-log`** — With --key: do not record the signature in Rekor. Consumers must then opt in with --allow-unlogged
-- **`-o --out <OUT>`** — Directory for the signed bundle (does not copy artifacts)
+- **`--no-pin-workflow`** — Keyless only: write identity.pin_workflow: false, so consumers hold later releases to the signing repository instead of to the workflow file that signs this one
+
+  For a vendor whose releases are signed by more than one workflow of its repository. The signer must still be a workflow of that repository. A consumer that last accepted a release without the flag refuses the first one with it until a person approves it. See https://packslip.dev/release/v1/#reusable-workflows
+
+## Output
+- **`-o --out <OUT>`** — Directory to write the bundle into, created if missing
+
+  The bundle is packslip.sigstore.json, or packslip.TOOL.sigstore.json for a tool in a GitHub monorepo, such as github.com/owner/repo/TOOL (a deeper path has each / replaced by -). An existing bundle is replaced. Artifacts are not copied.
 
   **Default:** `.`
-- **`--url-base <URL_BASE>`** — Download URL prefix for the artifacts
+
+## Download URLs
+- **`--url-base <URL_BASE>`** — Download URL prefix: each artifact and resource asset gets PREFIX/FILENAME unless --url or the manifest gives its URL
 - **`--url <URL>`** — Download URL for one artifact or resource asset, as FILENAME=URL (repeatable)
+
+## Artifacts
 - **`--format <FORMAT>`** — Format of one artifact whose name does not say, as FILENAME=FORMAT: an archive (tar.xz, tar.gz, tar.zst, tar.bz2, tgz, tar, zip, 7z), a single compressed executable (gz, xz, zst, bz2), an installer (deb, rpm, dmg, pkg, msi, msix, exe, appimage), raw for a bare executable, or a type of your own (repeatable)
-- **`--source-repo <SOURCE_REPO>`** — Source repository URL
-- **`--commit <COMMIT>`** — Source commit
-- **`--tag <TAG>`** — Source tag
+- **`--bin <BIN>`** — Executable in every artifact: a NAME to find inside each archive, a PATH from the archive root, or NAME=PATH when the command's name differs from the file's (repeatable)
+
+  A PATH includes any top-level directory of the archive. For a bare executable, give the command name it installs as.
+- **`--provenance <PROVENANCE>`** — Provenance URL for an artifact, as FILENAME=URL, or bare URLs in the order of the ARTIFACTS arguments (repeatable)
+- **`--no-sha512`** — Record only sha256, not sha512 as well
+- **`--require <REQUIRE>`** — A command the executables need on PATH, as bin:NAME or bin:NAME@MIN where MIN is the lowest version that works. Example: bin:java@17 (repeatable)
+- **`--no-libs`** — Do not read the executables for the shared libraries and C library they load from the host
+
+  With this flag, create still finds each --bin inside the archives but does not derive requires.libs; a libs list in release.toml is recorded as written, unchecked. A Linux artifact whose platform and file name give no C library is recorded as gnu, even a static build.
+
+## Source
+- **`--source-repo <SOURCE_REPO>`** — Source repository URL, such as https://github.com/owner/repo
+- **`--commit <COMMIT>`** — Commit the release was built from; needs --source-repo or the manifest's source.repo. A resource with a repo: source requires it, and consumers read that file at this commit
+- **`--tag <TAG>`** — Git tag of the release, such as v1.2.3; needs --source-repo or the manifest's source.repo
+
+  Consumers that list a GitHub project's versions from its tags do not see the release when the tag does not name the release's version, unless a signed release list names the release. create warns when that happens.
+
+## Release metadata
 - **`--published-at <PUBLISHED_AT>`** — RFC 3339 publish time; defaults to now
 - **`--notes-url <NOTES_URL>`** — URL of the release notes
 - **`--extension <EXTENSION>`** — Release-level extension as NAME=JSON, where NAME is who defines it (a consumer such as mise, or a domain the vendor controls) and JSON is its value. Example: 'example.com={"build_id":"20260901.3"}' (repeatable)
-- **`--bin <BIN>`** — Executable inside every artifact, as PATH or NAME=PATH; for a bare executable, the name it gets on PATH (repeatable)
-- **`--resource <RESOURCE>`** — Something else the release ships, as KIND[/QUALIFIER][@os[/arch[/libc]]]=SOURCE:VALUE where SOURCE is archive (a path inside every archive), asset (a separate release file, by local path), repo (a path at --commit), or exec (a command whose stdout is the file). Kinds: completion/SHELL (or completion/SHELL,SHELL with exec and a {shell} placeholder), man[/BIN], cli-spec/FORMAT[/BIN], skill/NAME, sbom/FORMAT, desktop, icon, app. An @ scope limits the entry to the artifacts of that platform, for a layout that differs across them; the manifest also scopes to one exact artifact. Examples: 'completion/zsh=archive:share/zsh/site-functions/_tool', 'man@linux=archive:share/man/man1/tool.1' (repeatable)
-- **`--provenance <PROVENANCE>`** — Provenance URL for an artifact, as FILENAME=URL, or bare URLs in the order the artifacts are given (repeatable)
+
+## Resources
+- **`--resource <RESOURCE>`** — Another file the release ships, such as a completion script, man page, or SBOM, as KIND[/QUALIFIER][@OS[/ARCH[/LIBC]]]=SOURCE:VALUE (repeatable)
+
+  SOURCE is archive (a path inside the artifact, from its root), asset (a separate release file, by local path), repo (a path in the source repository at --commit), or exec (a command whose stdout is the file; leading NAME=value words set its environment).
+
+  Known kinds: completion/SHELL[/BIN] (completion/SHELL,SHELL[/BIN] with exec and a {shell} placeholder), man[/BIN], cli-spec/FORMAT[/BIN], skill/NAME, sbom/FORMAT, desktop, icon, app. Any other kind takes at most one qualifier, its name.
+
+  An @ scope limits the entry to the artifacts of that platform, for a layout that differs across them; release.toml can also limit an entry to one artifact. Examples: 'completion/zsh=archive:share/zsh/site-functions/_tool', 'man@linux=archive:share/man/man1/tool.1'. See https://packslip.dev/docs/resources/#write-a-resource-entry
+
+## Repackagers
 - **`--attested-by <ATTESTED_BY>`** — Who makes the claim: vendor (default) or repackager
 - **`--evidence <EVIDENCE>`** — What a repackager checked, as KIND or KIND=DETAIL (repeatable)
-- **`--no-sha512`** — Record only sha256, not sha512 as well
-- **`--require <REQUIRE>`** — A command the executables need on PATH, as bin:NAME or bin:NAME@MIN where MIN is the lowest version that works. Example: bin:java@17 (repeatable)
-- **`--no-libs`** — Do not open the artifacts to record the shared libraries their executables load from the host
-- **`--no-pin-workflow`** — With keyless signing from a reusable workflow: declare that consumers should hold later releases to this repository, not to this signing workflow
-- **`-h --help`** — Print help
+
+## Examples
+
+**Sign keyless in a CI job**
+
+```
+packslip create \
+        --project github.com/owner/mytool \
+        --version 1.2.3 \
+        --bin mytool \
+        --url-base https://github.com/owner/mytool/releases/download/v1.2.3 \
+        --out dist \
+        dist/mytool-1.2.3-linux-x64.tar.gz \
+        dist/mytool-1.2.3-darwin-arm64.tar.gz
+```
+
+**Describe the artifacts in a TOML manifest**
+
+```
+packslip create --manifest release.toml --out dist
+```
+
+**Sign with a key from packslip keygen**
+
+```
+packslip create \
+        --project mytool.example.com \
+        --version 1.2.3 \
+        --bin mytool \
+        --url-base https://mytool.example.com/v1.2.3 \
+        --key release.key \
+        --out dist \
+        dist/mytool-1.2.3-linux-x64.tar.gz
+```

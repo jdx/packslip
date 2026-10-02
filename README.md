@@ -6,118 +6,159 @@
 </p>
 
 packslip is a signed release manifest for software distributed as archives,
-installers, or executables. Publish `packslip.sigstore.json` beside your
-release files so consumers can verify their digests, select a platform,
-and find executables, resources, and build provenance.
+installers, or executables. A release publishes one file,
+`packslip.sigstore.json`, beside its artifacts. A consumer, such as a
+package manager or mirror, verifies that file against the project's signer
+and reads three things from it: which artifact suits the host, where the
+executables are inside that artifact, and the digest the download must
+match. The consumer does not have to guess from file names or trust a
+checksum file served next to the binary.
+
+This repository holds the [specification](docs/spec/packslip.md), the
+`packslip` CLI and Rust crate that create and verify packslips, and two
+GitHub Actions: `jdx/packslip` publishes a packslip from a release job, and
+`jdx/packslip/releases` builds a signed release list. The format is stable
+at version 1; [Stability](https://packslip.dev/release/v1/#stability) says
+what that fixes and what a revision may add.
 
 ## Start here
 
-[How packslip fits a release](https://packslip.dev/docs/release-workflow/)
-explains the path from local build files to signed metadata and installation,
-including which parts belong to the publisher, CLI, and consumer.
-
 - **Try it locally:** [Getting started](https://packslip.dev/docs/getting-started/)
-  walks through creating and verifying a manifest without a CI account.
-- **Publish a release:** [GitHub Actions](https://packslip.dev/docs/publishing/)
-  covers the release workflow, inputs, and monorepos.
-- **Describe your files:** [Artifact configuration](https://packslip.dev/docs/describing-releases/)
-  covers platforms, executables, TOML configuration, and host requirements.
-- **Consume a release:** [Verification](https://packslip.dev/docs/verifying/)
-  explains trust pins and the checks an installer must perform.
-- **Host your own releases:** [Release lists](https://packslip.dev/docs/release-lists/)
-  covers discovery, withdrawals, and the recommended version, and
-  [Host releases on your own domain](https://packslip.dev/docs/self-hosting/)
-  publishes a project's releases and list from GitHub Actions to a host you run.
+  creates and verifies a sample release with a local key. It needs no CI
+  account.
+- **Publish releases:** [Publish with GitHub Actions](https://packslip.dev/docs/publishing/)
+  adds signing to a release job.
+  [Artifact configuration](https://packslip.dev/docs/describing-releases/)
+  maps your files to platforms and executables.
+  [Resources](https://packslip.dev/docs/resources/) covers completions, man
+  pages, skills, and SBOMs, and
+  [Host requirements](https://packslip.dev/docs/host-requirements/) covers
+  what the host must provide.
+  [Release recipes](https://packslip.dev/docs/recipes/) gives complete
+  configurations for Rust, Go, monorepo, and desktop releases.
+- **Withdraw, recommend, or self-host releases:**
+  [Manage release lists](https://packslip.dev/docs/release-lists/) and
+  [Host releases on your own domain](https://packslip.dev/docs/self-hosting/).
+- **Verify or install releases:** [Verify a release](https://packslip.dev/docs/verifying/)
+  checks a downloaded release with the CLI against a repository, signer
+  fingerprint, or public key you trust.
+  [Build an installer or mirror](https://packslip.dev/docs/installers/)
+  walks through finding, verifying, and selecting a release in your own
+  tool, and shows the Rust crate that implements the verification and
+  selection steps.
+  [Use packslip with mise](https://packslip.dev/docs/mise/) shows how mise
+  installs a tool from its packslip and keeps its completions, man pages,
+  and skills matched to the active version.
 
-For exact fields and rules, read the [specification](docs/spec/packslip.md),
+[How packslip fits a release](https://packslip.dev/docs/release-workflow/)
+shows how the pieces connect, and the
+[documentation index](https://packslip.dev/docs/) lists every guide. For
+exact fields and rules, read the [specification](docs/spec/packslip.md),
 [CLI reference](https://packslip.dev/cli/), or
 [JSON schemas](https://packslip.dev/docs/#reference).
 
 ## Add it to a GitHub release
 
-To keep third-party actions away from release write access,
-[run packslip in a separate job with read-only release access](https://packslip.dev/docs/publishing/#keep-the-action-away-from-release-write-access)
-with `upload: false`, then upload its bundle from a job you control. The
-existing one-step form below still uploads by default and needs
-`contents: write`.
-
-Add this step to a tag-triggered release job after building the artifacts
-and creating the GitHub release:
+In a tag-triggered release job, after your workflow builds the artifacts
+and uploads them to the GitHub release, add:
 
 ```yaml
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
+  contents: write     # Upload the bundle to the release.
+  id-token: write     # Sign with the workflow's identity.
+  attestations: write # Attest the matched files.
 
 steps:
-  # Build the archives and create the release before this step.
+  # Build the archives and upload them to the release before this step.
   - uses: jdx/packslip@v1
     with:
       artifacts: dist/*.tar.xz dist/*.zip
       bin: mytool
 ```
 
-The action attests the matched files, hashes the artifacts, signs the
-manifest with the workflow's identity, verifies the bundle, and uploads
-it to the existing release. It does not upload your binaries. Consumers
-can pin the repository's identity without managing a signing key. A
-second action, `jdx/packslip/releases`, builds a project's signed release
-list from the bundles it has published.
+The action attests the matched files, signs a release manifest of their
+digests, platforms, and executable paths with the workflow's identity,
+verifies it, and uploads
+`packslip.sigstore.json` to the release. It does not upload the artifacts.
+No long-lived signing key is needed.
 
-The action and CLI share a version: `@v1` follows CLI 1.x releases, and
-`@v1.0.0` pins both to 1.0.0. By default, the action installs the CLI
-version from its own commit's `Cargo.toml`. Set `packslip-version` to
-explicitly override that selection.
+This one-job form gives the action `contents: write`. To keep it away from
+release write access,
+[run it in a separate read-only job](https://packslip.dev/docs/publishing/#keep-the-action-away-from-release-write-access).
+[Publish with GitHub Actions](https://packslip.dev/docs/publishing/) covers
+every input, how `@v1` and `packslip-version` select the CLI, and how to
+[build the CLI on the runner](https://packslip.dev/docs/publishing/#build-the-cli-on-the-runner)
+when packslip publishes no release for it, such as x64 macOS. A project
+hosted on its own domain also publishes a signed release list with
+`jdx/packslip/releases`; see
+[Host releases on your own domain](https://packslip.dev/docs/self-hosting/).
 
-### Bring your own CLI
+## Verify a release
 
-`packslip-path` runs an executable that is already on the runner — a
-path, or a name to look up on PATH — instead of downloading a release
-archive. macOS releases are arm64 only, so an x64 macOS job builds the
-CLI first and points the action at it:
+packslip signs its own releases. To check one with the
+[packslip CLI](https://packslip.dev/docs/getting-started/#install-packslip),
+download a release's bundle and one of its archives. `packslip verify`
+checks the bundle against the workflow that signs packslip releases, and
+the archive against the digest in the bundle. This example checks the
+Linux x64 archive of 1.4.0; `packslip show packslip.sigstore.json` lists
+the others:
 
-```yaml
-runs-on: macos-15-intel
-steps:
-  - uses: dtolnay/rust-toolchain@stable
-  - run: cargo install packslip --version 1.0.0 --locked --root "$RUNNER_TEMP/packslip"
-  - uses: jdx/packslip@v1.0.0
-    with:
-      packslip-path: ${{ runner.temp }}/packslip/bin/packslip
-      artifacts: dist/*.tar.xz
-      bin: mytool
+```sh
+curl -fLO https://packslip.dev/v1.4.0/packslip.sigstore.json
+curl -fLO https://packslip.dev/v1.4.0/packslip-v1.4.0-linux-x64.tar.xz
+packslip verify packslip.sigstore.json \
+  --identity-prefix https://github.com/jdx/packslip/.github/workflows/release.yml@ \
+  --issuer https://token.actions.githubusercontent.com \
+  --pin ps1_mcx64bcghek2t4vljgb3lho3ti \
+  --artifact packslip-v1.4.0-linux-x64.tar.xz
 ```
 
-Install the version the action ref pins; the two are released together.
-The same applies to any runner a release archive does not suit: a
-platform packslip does not ship, a self-hosted or network-restricted
-machine, or a job that would rather build from source than download.
-`packslip-path` takes precedence over `packslip-version`, and a binary
-the action did not download is not verified, so the job vouches for it.
+packslip 1.4.0 and earlier have no `--pin` flag and reject it as an
+unexpected argument; with those versions, leave that line out.
+
+The bundle's project is `packslip.dev`, a domain rather than a GitHub
+repository name, so `verify` cannot work out the expected signer from it,
+and the identity flags are required. `--identity-prefix` names the
+repository that signs packslip releases by its current name. `--pin` adds
+a check on top of the identity flags: its value is that repository's
+signer fingerprint, derived from the repository's ID, so a release signed
+from a different repository that later takes the name `jdx/packslip` is
+refused. The fingerprint stays the same if the repository is renamed or
+moves to another owner, but `--identity-prefix` would then need the new
+URL. See
+[Pin a signer with its fingerprint](https://packslip.dev/docs/verifying/#pin-a-signer-with-its-fingerprint).
 
 ## Agent skill
 
-Packslip publishes a [skill](skills/packslip/SKILL.md) for release configuration,
-resources, and verification. With a release that includes the skill, mise can
-fetch the matching version and link it into your agent's skill directory:
+The packslip [skill](skills/packslip/SKILL.md) helps a coding agent
+configure a release, declare resources, and diagnose verification failures.
+packslip releases after 1.4.0 declare the skill for their own version, so
+mise can link the copy that matches your installed CLI into your agent's
+skills directory:
 
 ```sh
-mise use packslip:packslip.dev
+mise use packslip
 mise skills sync --dir .agents/skills
 ```
 
-The generated link is local to your installation; keep it out of version control
-and run sync again after changing tool versions.
+`mise use packslip` resolves through the mise registry, which supplies the
+signer pin for packslip's own releases, published as project
+`packslip.dev`. The synced links point into your mise installs, so keep
+them out of version control. Run the same
+`mise skills sync --dir .agents/skills` command again after changing the
+packslip version. To have mise do that after every `mise install` and
+`mise use`, set
+[`skills.dir`](https://mise.jdx.dev/configuration/settings.html#skills.dir)
+to `.agents/skills` and turn on
+[`skills.auto_sync`](https://mise.jdx.dev/configuration/settings.html#skills.auto_sync).
+Without `skills.dir`, mise links into `.claude/skills`.
 
 ## Work on packslip
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, checks, and documentation
 sources, and [RELEASING.md](RELEASING.md) for the maintainer release process.
-The format is stable at version 1; see
-[Stability](https://packslip.dev/release/v1/#stability) for what that
-fixes and what a revision may add. Bug reports and format feedback
-belong in [issues](https://github.com/jdx/packslip/issues).
+Bug reports and format feedback belong in
+[issues](https://github.com/jdx/packslip/issues).
 
 Developed by [Jeff Dickey (@jdx)](https://github.com/jdx), author of
 [mise](https://mise.jdx.dev), and

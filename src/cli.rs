@@ -68,11 +68,11 @@ fn exit_with_usage_error(
     }
 }
 
-/// Show the version
+/// Print packslip's version
 #[derive(Debug, usage_rs::Args)]
 #[usage(visible_alias = "v")]
 pub struct Version {
-    /// Print as JSON
+    /// Print the name, version, OS, and architecture as JSON
     #[usage(short = 'J', long)]
     json: bool,
 }

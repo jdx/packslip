@@ -5,27 +5,43 @@
 
 Create and sign a project's release list
 
-Read local release bundles and write a signed index with their digests, versions, expiry, and sequence. Repeat --release for every entry to keep; this command does not append to a previous list or upload the output.
+Read local copies of released bundles and write a signed release list: each bundle's URL, digest, version, tag, and publish time, plus the list's sequence and expiry. The bundles are read, not verified, so give copies you trust. Repeat --release for every entry to keep; the command does not append to an earlier list or upload anything.
 
-Publish at the project's well-known location, or as a supplementary list on a GitHub repository's default branch. See https://packslip.dev/docs/release-lists/.
+Publish the list at https://HOST/.well-known/packslip/PATH.json for a project named HOST/PATH, or at https://HOST/.well-known/packslip.json for a project named after a bare host. github.com does not serve that path, so a github.com project commits the list to its default branch instead, as its supplementary list: .well-known/packslip.json, or .well-known/packslip/TOOL.json for a monorepo tool. See https://packslip.dev/docs/release-lists/.
 
 ## Flags
-- **`--project <PROJECT>`** — The project's name, which every listed packslip must carry
-- **`--sequence <SEQUENCE>`** — Increases with every list published
-- **`--latest <LATEST>`** — Recommend this exact listed version for unconstrained latest requests
-- **`--valid-for <VALID_FOR>`** — How long the list stays current: 30d, 12h, 2w
+- **`--project <PROJECT>`** — The project's name, which every --release bundle must name
+- **`--sequence <SEQUENCE>`** — This list's sequence number, which increases with every list you publish; consumers refuse a list whose sequence is lower than one they have accepted
+- **`--latest <LATEST>`** — Recommend this version for an unconstrained latest request, without reordering versions; it must exactly match the version of a --release entry
+- **`--valid-for <VALID_FOR>`** — How long until the list expires, as a number and a unit (s, m, h, d, or w), such as 30d
 
   **Default:** `30d`
 - **`--generated-at <GENERATED_AT>`** — RFC 3339 generation time; defaults to now
 - **`--release <RELEASE>`** — A released packslip as URL=PATH: where consumers fetch it, and the local copy to read (repeatable)
-- **`--yank <YANK>`** — Mark a listed release withdrawn, as URL=REASON (repeatable)
-- **`--security <SECURITY>`** — Mark a listed release as a security fix, by URL (repeatable)
+- **`--yank <YANK>`** — Withdraw a listed release, as URL=REASON, with URL exactly as given to --release (repeatable)
+- **`--security <SECURITY>`** — Mark a listed release as a security fix, by its --release URL (repeatable)
 - **`--evidence <EVIDENCE>`** — What a publisher other than the vendor checked about a listed release, as URL=KIND or URL=KIND=DETAIL (repeatable)
-- **`-k --key <KEY>`** — Sign with this secret key instead of a CI identity
-- **`--sign <SIGN>`** — How to sign; defaults to key when --key is given, else oidc
-- **`--no-log`** — With --key: do not record the signature in Rekor
-- **`--no-pin-workflow`** — With keyless signing from a reusable workflow: declare that consumers should hold later releases to this repository, not to this signing workflow
-- **`-o --out <OUT>`** — Where to write the list
+- **`-o --out <OUT>`** — Where to write the list; consumers fetch it only from its .well-known path, never under this default name
 
   **Default:** `packslip-releases.sigstore.json`
 - **`-h --help`** — Print help
+
+## Signing
+- **`-k --key <KEY>`** — Sign with this secret key instead of a CI identity
+- **`--sign <SIGN>`** — How to sign: oidc (keyless) or key (needs --key). Optional; inferred from whether --key is given
+- **`--no-log`** — With --key: do not record the signature in Rekor. Consumers must then opt in with --allow-unlogged
+- **`--no-pin-workflow`** — Keyless only: write identity.pin_workflow: false into the list, as `packslip create --no-pin-workflow` does for a release. See https://packslip.dev/release/v1/#reusable-workflows
+
+## Examples
+
+**List one key-signed release of a self-hosted project**
+
+```
+packslip releases \
+        --project mytool.example.com \
+        --sequence 1 --valid-for 30d \
+        --latest 1.2.3 \
+        --release https://mytool.example.com/v1.2.3/packslip.sigstore.json=releases/1.2.3/packslip.sigstore.json \
+        --key release.key \
+        --out site/.well-known/packslip.json
+```
