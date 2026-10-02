@@ -672,6 +672,7 @@ include `repo`. Resource entries must choose exactly one source field.
 | `resources[].format` | string | cli-spec, sbom | The spec format (`usage`) or the SBOM format (`cyclonedx`, `spdx`). |
 | `resources[].bin` | string | cli-spec, completion, man | The executable the entry is for, by its `bin` name. Required for a `cli-spec`; for a `completion` or `man`, required when the release has more than one executable, and meaning that one when it has one. |
 | `resources[].name` | string | skill | The skill's name. |
+| `predicate.identity` | object | required | How the document is signed and by whom. See [Signing](#signing). |
 | `predicate.identity.scheme` | string | required | `sigstore-oidc` or `sigstore-key`. |
 | `predicate.identity.key_id` | string | required | The certificate identity, or the key id in uppercase hex. |
 | `predicate.identity.issuer` | string | optional | The OIDC issuer, for `sigstore-oidc`. |
@@ -1350,9 +1351,10 @@ highest precedence from the normal candidate set. An ineligible signed
 pointer falls directly back to semver selection, not to GitHub's pointer.
 Report when a declared recommendation is skipped and why; if no eligible
 release exists, fail. For example, if `latest` is `2.8.4` but `2.8.4` is
-yanked or too young, `3.0.0` may be selected if it is eligible. A
-vendor that must exclude `3.0.0` must withdraw it or use an admission
-policy ([Lists from other publishers](#lists-from-other-publishers)),
+yanked or too young, the consumer selects the highest eligible release
+instead, which may be `3.0.0`. A vendor that must exclude `3.0.0` must
+withdraw it or use an admission policy
+([Lists from other publishers](#lists-from-other-publishers)),
 rather than relying on `latest`; `latest` recommends a release but never
 excludes one.
 
