@@ -5,8 +5,9 @@
 //! be read and run by any implementation, not only this one. They cover
 //! the parts of packslip that are packslip's own: which artifact a host
 //! installs, which resource entries apply to it, which version a tag
-//! names, whether a statement is structurally valid, and whether a
-//! verified release is the forge project the consumer pinned. Signature
+//! names, whether a statement is structurally valid, whether a verified
+//! release is the forge project the consumer pinned, and which signer
+//! fingerprint a keyless project has. Signature
 //! verification is sigstore's and is not restated here.
 //!
 //! These run with `--no-default-features` too: everything they touch is
@@ -14,6 +15,7 @@
 
 use std::path::Path;
 
+use packslip::fingerprint::{Fingerprint, Mismatch};
 use packslip::forge::{self, Continuity, Expected, ForgePin, IdentityError};
 use packslip::model::{
     Artifact, Host, Selection, Statement, select_artifact, select_resources, tag_version,
@@ -214,6 +216,61 @@ fn forge_identity() {
             &got,
         ) {
             assert_eq!(check.continues_signer(previous), want, "{name}: signer");
+        }
+    }
+}
+
+#[test]
+fn signer_fingerprint() {
+    for case in cases("signer-fingerprint.json") {
+        let name = case_name(&case);
+        let kind = case["kind"].as_str().expect("kind");
+        let expect = &case["expect"];
+        let issuer = case["issuer"].as_str();
+        let repository_id = case["repository_id"].as_str();
+        match kind {
+            "derive" => {
+                let got = Fingerprint::of(issuer.expect("issuer"), repository_id.unwrap_or(""));
+                assert_eq!(
+                    got.map(|pin| pin.to_string()).as_deref(),
+                    expect.as_str(),
+                    "{name}"
+                );
+            }
+            "parse" => {
+                let parsed = case["pin"].as_str().expect("pin").parse::<Fingerprint>();
+                match (expect.as_str(), parsed) {
+                    (Some("valid"), Ok(pin)) => {
+                        assert_eq!(pin.to_string(), case["pin"], "{name}: not canonical")
+                    }
+                    (Some("invalid"), Err(_)) => {}
+                    (want, got) => panic!("{name}: expected {want:?}, got {got:?}"),
+                }
+            }
+            "check" => {
+                let pin: Fingerprint = case["pin"]
+                    .as_str()
+                    .expect("pin")
+                    .parse()
+                    .unwrap_or_else(|e| panic!("{name}: {e}"));
+                // The certificate's owner and the project's name are given
+                // to show that they do not matter, and are not consulted.
+                let mut source = packslip::sigstore::SourceRepository::new(format!(
+                    "https://example.test/{}",
+                    case["project"].as_str().expect("project")
+                ));
+                if let Some(id) = repository_id {
+                    source = source.with_id(id);
+                }
+                let got = match pin.verify(issuer, Some(&source)) {
+                    Ok(()) => "match",
+                    Err(Mismatch::Different { .. }) => "mismatch",
+                    Err(Mismatch::NoRepositoryId) => "no-repository-id",
+                    Err(other) => panic!("{name}: unexpected {other:?}"),
+                };
+                assert_eq!(Some(got), expect.as_str(), "{name}");
+            }
+            other => panic!("{name}: unknown kind {other:?}"),
         }
     }
 }

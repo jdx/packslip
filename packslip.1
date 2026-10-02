@@ -26,6 +26,9 @@ Create and sign a packslip for a release
 \fBkeygen\fR
 Generate an Ed25519 key pair for the sigstore\-key scheme
 .TP
+\fBpin\fR
+Print the signer fingerprint of a project's keyless releases
+.TP
 \fBreleases\fR
 Create and sign a project's release list
 .TP
@@ -175,6 +178,40 @@ Where to write the secret key
 .TP
 \fB\-h, \-\-help\fR
 Print help
+.SH "PACKSLIP PIN"
+Print the signer fingerprint of a project's keyless releases
+
+Verify a release bundle, then print the signer fingerprint of the repository its certificate comes from: `ps1_` and 26 characters. A README or Dockerfile can carry it, and `packslip verify \-\-pin` checks a release against it. It names the forge's issuer and repository ID only, so it survives renaming the repository, moving it to another owner, and changing the workflow, and it does not carry over to a repository that takes over the old name. A key\-signed project, and a certificate that records no repository ID, have none. Run this on a release you trust: it names whichever repository signed the bundle it is given.
+
+Verification is the same as `packslip verify`: the policy is the one the project's name implies unless \-\-identity, \-\-identity\-prefix, or \-\-issuer say otherwise. See https://packslip.dev/docs/verifying/.
+.PP
+\fBUsage:\fR packslip pin [OPTIONS] <BUNDLE>
+.PP
+\fBOptions:\fR
+.PP
+.TP
+\fB\-\-identity\fR \fI<IDENTITY>\fR
+The exact certificate identity a keyless signer must have
+.TP
+\fB\-\-identity\-prefix\fR \fI<IDENTITY_PREFIX>\fR
+A prefix the certificate identity must start with, such as https://github.com/owner/repo/
+.TP
+\fB\-\-issuer\fR \fI<ISSUER>\fR
+The OIDC issuer a keyless signer must have
+.TP
+\fB\-\-allow\-unlogged\fR
+Accept a bundle without a transparency log entry
+.TP
+\fB\-\-trusted\-root\fR \fI<TRUSTED_ROOT>\fR
+A sigstore trusted_root.json to use instead of the embedded one
+.TP
+\fB\-h, \-\-help\fR
+Print help
+\fBArguments:\fR
+.PP
+.TP
+\fB<BUNDLE>\fR
+Local release bundle to verify and fingerprint
 .SH "PACKSLIP RELEASES"
 Create and sign a project's release list
 
@@ -275,7 +312,7 @@ Verify a packslip, or a release list, against a pinned identity or key
 
 Check the signature, log evidence, and statement structure. With \-\-artifact, also check local files against signed digests and artifact sizes. Without it, only the bundle is checked. Verification failures exit with status 1; no remote artifacts or provenance are fetched.
 
-Pin a keyless signer with \-\-identity or \-\-identity\-prefix and \-\-issuer, or a signing key with \-\-pubkey. Without an explicit pin, derive the policy from the document's claimed GitHub or GitLab project. Consumers must separately match the project and version to their intended request. For release lists, expiry and remembered sequence checks are the consumer's responsibility. See https://packslip.dev/docs/verifying/.
+Pin a keyless signer with \-\-identity or \-\-identity\-prefix and \-\-issuer, or a signing key with \-\-pubkey. Without an explicit pin, derive the policy from the document's claimed GitHub or GitLab project. With \-\-pin, also require the signing repository to have that signer fingerprint. Consumers must separately match the project and version to their intended request. For release lists, expiry and remembered sequence checks are the consumer's responsibility. See https://packslip.dev/docs/verifying/.
 .PP
 \fBUsage:\fR packslip verify [OPTIONS] <BUNDLE>
 .PP
@@ -293,6 +330,9 @@ A prefix the certificate identity must start with, such as https://github.com/ow
 .TP
 \fB\-\-issuer\fR \fI<ISSUER>\fR
 The OIDC issuer a keyless signer must have
+.TP
+\fB\-\-pin\fR \fI<PIN>\fR
+The signer fingerprint (ps1_...) the certificate's repository must have, as `packslip pin` prints it
 .TP
 \fB\-\-allow\-unlogged\fR
 Accept a bundle without a transparency log entry

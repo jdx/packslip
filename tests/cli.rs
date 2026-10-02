@@ -61,6 +61,107 @@ fn verify_reports_the_signing_repository_ids() {
     );
 }
 
+const HK_BUNDLE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/hk-v2.3.0.sigstore.json"
+);
+const HK_PIN: &str = "ps1_snirenkjwr7m5ozgcufameodnm";
+
+#[test]
+fn pin_prints_the_signer_fingerprint_of_a_verified_release() {
+    let dir = tempfile::tempdir().unwrap();
+    let (code, out, err) = packslip(dir.path(), &["pin", HK_BUNDLE]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out, format!("{HK_PIN}\n"), "the pin and nothing else");
+}
+
+#[test]
+fn pin_refuses_a_bundle_it_cannot_verify_or_fingerprint() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    // The wrong signer is a verification failure, not a pin.
+    let (code, out, err) = packslip(
+        d,
+        &[
+            "pin",
+            HK_BUNDLE,
+            "--identity-prefix",
+            "https://github.com/someone/else/",
+        ],
+    );
+    assert_eq!(code, 1, "{err}");
+    assert_eq!(out, "");
+    assert!(err.contains("verification failed"), "{err}");
+
+    // A key has no repository to fingerprint.
+    let (code, _, err) = packslip(d, &["keygen", "-o", "release.key"]);
+    assert_eq!(code, 0, "{err}");
+    std::fs::write(d.join("tool-v1.0.0.bin"), b"x").unwrap();
+    let (code, _, err) = packslip(
+        d,
+        &[
+            "create",
+            "--project",
+            "tool.example.com",
+            "--version",
+            "1.0.0",
+            "--key",
+            "release.key",
+            "--no-log",
+            "--out",
+            "dist",
+            "--url-base",
+            "https://dl.example.com/tool/1.0.0",
+            "--published-at",
+            "2026-09-01T00:00:00Z",
+            "--format",
+            "tool-v1.0.0.bin=raw",
+            "tool-v1.0.0.bin:linux/x86_64",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    let (code, out, err) = packslip(
+        d,
+        &["pin", "dist/packslip.sigstore.json", "--allow-unlogged"],
+    );
+    assert_ne!(code, 0);
+    assert_eq!(out, "");
+    assert!(err.contains("no identity to verify against"), "{err}");
+}
+
+#[test]
+fn verify_checks_a_signer_fingerprint_when_given_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let (code, out, err) = packslip(d, &["verify", HK_BUNDLE, "--pin", HK_PIN]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.starts_with("ok: github.com/jdx/hk 2.3.0 "), "{out}");
+
+    // Another repository's pin is a verification failure.
+    let other = "ps1_kwhjac5qpc45qetfh6ppwisi6a";
+    let (code, out, err) = packslip(d, &["verify", HK_BUNDLE, "--pin", other]);
+    assert_eq!(code, 1, "{err}");
+    assert_eq!(out, "");
+    assert!(
+        err.contains(&format!(
+            "verification failed: the release is signed by {HK_PIN}, but the pin is {other}"
+        )),
+        "{err}"
+    );
+
+    // Text that is not a fingerprint is refused before anything is verified.
+    for bad in [
+        "snirenkjwr7m5ozgcufameodnm",
+        "ps1_snirenkjwr7m5ozgcufameodn",
+        "ps1_SNIRENKJWR7M5OZGCUFAMEODNM",
+    ] {
+        let (code, out, err) = packslip(d, &["verify", HK_BUNDLE, "--pin", bad]);
+        assert_ne!(code, 0, "{bad}");
+        assert_eq!(out, "", "{bad}");
+        assert!(err.contains("--pin"), "{bad}: {err}");
+    }
+}
+
 #[test]
 fn keygen_create_verify_show_and_list() {
     let dir = tempfile::tempdir().unwrap();

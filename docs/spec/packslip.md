@@ -171,6 +171,102 @@ The reference implementation reads the extensions as
 recorded, with the repository ID recorded alongside each, for rule 3 of the
 [Consumer rules](#consumer-rules) when no release is at hand.
 
+### Signer fingerprint
+
+A project can publish a short name for the repository it is signed from,
+where its consumers read it apart from its releases: a README, a
+Dockerfile, a lockfile. A consumer that starts from it does not have to
+trust the first release it sees (see [Consumer rules](#consumer-rules)).
+The name is the signer fingerprint:
+
+```text
+ps1_snirenkjwr7m5ozgcufameodnm
+```
+
+It is `ps1_` followed by the first 128 bits of
+
+```text
+SHA-256( "packslip-signer-v1" 0x00 issuer 0x00 repository_id )
+```
+
+written as 26 characters of RFC 4648 base32, in lowercase and without
+padding (`a`–`z`, `2`–`7`). `0x00` is a single zero byte and the quoted
+string is its ASCII bytes. The two inputs are the ones the certificate
+records, taken as they are, with no case or slash normalization:
+
+- `issuer` is the certificate's OIDC issuer URL, such as
+  `https://token.actions.githubusercontent.com` or `https://gitlab.com`.
+- `repository_id` is the Source Repository Identifier (OID
+  `1.3.6.1.4.1.57264.1.15`, see [Forge identity](#forge-identity)) as the
+  string of decimal digits it is.
+
+For GitHub repository `jdx/hk`, whose ID is `922514152`, the input is
+`packslip-signer-v1`, a zero byte, `https://token.actions.githubusercontent.com`,
+a zero byte, and `922514152`, and the fingerprint is the one above. The
+128 bits are 130 once encoded, so the last character's two low bits are
+zero, and text that sets them is not a fingerprint: each has one spelling.
+
+The fingerprint leaves out everything about the signer that can change
+while the repository stays the same, and the repository's own name:
+
+- **Owner.** A repository keeps its ID when it moves to another owner, so
+  its fingerprint does too. A consumer does not remember or compare
+  owners, as [Forge identity](#forge-identity) says, and the fingerprint
+  adds none.
+- **Name.** The ID survives a rename, so a pin does not go stale with one.
+- **Workflow and ref.** Replacing the release workflow, or a new tag of
+  it, is not a different repository. Whether the workflow changed is the
+  signer-continuity check of [Consumer rules](#consumer-rules), which the
+  fingerprint neither performs nor replaces.
+- **Monorepo subpath.** The subpath is part of the project, which says
+  which tool, and not of the signer: every tool of a repository is signed
+  from the same repository, so one fingerprint covers them, and the
+  project name in the statement says which one a release is.
+
+A repository that is deleted, and whose name is then taken by someone
+else, has a different ID and so a different fingerprint. That is what
+makes it a pin.
+
+A project whose certificate records no repository ID, because it predates
+the extension or the issuer does not give one, has no fingerprint, and
+neither does one signed with a key. It is pinned with an identity and an
+issuer, or a public key, as [Consumer rules](#consumer-rules) says. A
+repository ID that is not a string of decimal digits has none either.
+
+A consumer that holds a fingerprint checks it against a release after
+verifying the bundle as [Signing](#signing) says, using only what the
+verified certificate records, never what the statement says of itself:
+
+1. Read the issuer and the Source Repository Identifier from the
+   certificate. A certificate that records no repository ID matches no
+   fingerprint, and the release is refused.
+2. Compute the fingerprint of the two and compare it with the one it
+   holds. If they differ, the release is from another repository or
+   through another issuer, and it is refused.
+3. Apply [Forge identity](#forge-identity) as for any release: the
+   certificate's Source Repository URI must be the repository the
+   statement names, and the signer a workflow of it. The fingerprint says
+   which repository; these say the statement is about it.
+
+A pin that is not 26 lowercase base32 characters after `ps1_`, or does not
+start with `ps1_`, is refused as a pin, not ignored and not treated as
+"no pin". A consumer that sees a prefix it does not know, such as `ps2_`,
+does not guess at what it commits to.
+
+The fingerprint is a commitment, not a secret. It is long enough that
+nobody can find another repository with the same one, and short enough to
+read in a README. It carries no authority by itself: the project that
+publishes it, and the place it is published, are what the consumer
+trusts. It does not belong in a packslip, which cannot vouch for its own
+signer.
+
+The [conformance vectors](https://github.com/jdx/packslip/tree/main/tests/conformance)
+for the fingerprint give inputs, their pins, texts that are not pins, and
+matches and mismatches. The reference implementation computes one with
+`Fingerprint::of_signer`, checks one with `Fingerprint::verify`, prints a
+release's with `packslip pin`, and checks a release against one with
+`packslip verify --pin`.
+
 ## The file
 
 A release ships one file per project: a
@@ -1139,8 +1235,11 @@ continuity, no-downgrade policy, and release-list sequences across installs.
    repository, and remember the repository ID its certificate records.
    From then on that ID pins the project, as
    [Forge identity](#forge-identity) says: a renamed or transferred
-   repository keeps its pin, and a recreated name does not inherit it. For
-   other projects, pin the public key or identity from a list of pins you
+   repository keeps its pin, and a recreated name does not inherit it.
+   Where the project publishes a [signer fingerprint](#signer-fingerprint)
+   that the consumer has read apart from its releases, that is the first
+   pin, and no release has to be trusted on first use. For other
+   projects, pin the public key or identity from a list of pins you
    maintain, or from the well-known list on first use. A list from another
    publisher is trusted per host, by configuration. Never take a key from
    the document itself, and never trust a bundle's key hint.

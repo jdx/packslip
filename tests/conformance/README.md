@@ -17,6 +17,7 @@ working around it.
 | `tag-versions.json` | [Tags](https://packslip.dev/release/v1/#tags) |
 | `statement-validity.json` | [The release statement](https://packslip.dev/release/v1/#the-release-statement) |
 | `forge-identity.json` | [Forge identity](https://packslip.dev/release/v1/#forge-identity) |
+| `signer-fingerprint.json` | [Signer fingerprint](https://packslip.dev/release/v1/#signer-fingerprint) |
 
 Each file is a JSON object with a `rule` link, a `description` of what the
 cases mean, and a `cases` array. Every case has a `name`; some carry a
@@ -27,8 +28,9 @@ field defines that file's case shape — read it before writing a runner.
 
 These cover what is packslip's own: which artifact a host installs, which
 resource entries apply to it, which version a tag names, whether a
-statement is structurally valid, and whether a verified forge release is
-the repository a consumer pinned.
+statement is structurally valid, whether a verified forge release is
+the repository a consumer pinned, and the signer fingerprint a keyless
+project has and how a pin is checked against a verified certificate.
 
 They deliberately do not cover signature verification. A packslip is a
 [sigstore bundle](https://github.com/sigstore/protobuf-specs) and its

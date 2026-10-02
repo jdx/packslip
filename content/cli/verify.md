@@ -7,7 +7,7 @@ Verify a packslip, or a release list, against a pinned identity or key
 
 Check the signature, log evidence, and statement structure. With --artifact, also check local files against signed digests and artifact sizes. Without it, only the bundle is checked. Verification failures exit with status 1; no remote artifacts or provenance are fetched.
 
-Pin a keyless signer with --identity or --identity-prefix and --issuer, or a signing key with --pubkey. Without an explicit pin, derive the policy from the document's claimed GitHub or GitLab project. Consumers must separately match the project and version to their intended request. For release lists, expiry and remembered sequence checks are the consumer's responsibility. See https://packslip.dev/docs/verifying/.
+Pin a keyless signer with --identity or --identity-prefix and --issuer, or a signing key with --pubkey. Without an explicit pin, derive the policy from the document's claimed GitHub or GitLab project. With --pin, also require the signing repository to have that signer fingerprint. Consumers must separately match the project and version to their intended request. For release lists, expiry and remembered sequence checks are the consumer's responsibility. See https://packslip.dev/docs/verifying/.
 
 ## Arguments
 - **`<BUNDLE>`** — Local release bundle or signed release list to verify
@@ -17,6 +17,7 @@ Pin a keyless signer with --identity or --identity-prefix and --issuer, or a sig
 - **`--identity <IDENTITY>`** — The exact certificate identity a keyless signer must have
 - **`--identity-prefix <IDENTITY_PREFIX>`** — A prefix the certificate identity must start with, such as https://github.com/owner/repo/
 - **`--issuer <ISSUER>`** — The OIDC issuer a keyless signer must have
+- **`--pin <PIN>`** — The signer fingerprint (ps1_...) the certificate's repository must have, as `packslip pin` prints it
 - **`--allow-unlogged`** — Accept a bundle without a transparency log entry
 - **`--trusted-root <TRUSTED_ROOT>`** — A sigstore trusted_root.json to use instead of the embedded one
 - **`-a --artifact <ARTIFACT>`** — Local artifacts or resource assets to check (repeatable; not downloaded)

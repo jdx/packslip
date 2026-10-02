@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use eyre::{Context as _, Result, bail};
 use packslip::cli::{BinInfo, Version};
 use packslip::create::{ArtifactInput, AssetInput, ListRequest, ListedRelease, Request};
+use packslip::fingerprint::Fingerprint;
 use packslip::manifest::Manifest;
 use packslip::minisign::{PublicKey, SecretKey, key_id_hex};
 use packslip::model::{
@@ -56,6 +57,7 @@ enum Commands {
     Completion(Completion),
     Create(Box<Create>),
     Keygen(Keygen),
+    Pin(Box<Pin>),
     Releases(Box<Releases>),
     Schema(Schema),
     Show(Show),
@@ -1142,8 +1144,10 @@ fn parse_duration(s: &str) -> Result<std::time::Duration> {
 ///
 /// Pin a keyless signer with --identity or --identity-prefix and --issuer,
 /// or a signing key with --pubkey. Without an explicit pin, derive the
-/// policy from the document's claimed GitHub or GitLab project. Consumers
-/// must separately match the project and version to their intended request.
+/// policy from the document's claimed GitHub or GitLab project. With --pin,
+/// also require the signing repository to have that signer fingerprint.
+/// Consumers must separately match the project and version to their
+/// intended request.
 /// For release lists, expiry and remembered sequence checks are the
 /// consumer's responsibility. See https://packslip.dev/docs/verifying/.
 #[derive(Debug, usage_rs::Args)]
@@ -1164,6 +1168,10 @@ struct Verify {
     /// The OIDC issuer a keyless signer must have
     #[usage(long)]
     issuer: Option<String>,
+    /// The signer fingerprint (ps1_...) the certificate's repository must
+    /// have, as `packslip pin` prints it
+    #[usage(long)]
+    pin: Option<String>,
     /// Accept a bundle without a transparency log entry
     #[usage(long)]
     allow_unlogged: bool,
@@ -1179,16 +1187,16 @@ struct Verify {
 }
 
 /// An owned pin, so a `Trust` can borrow it.
-enum Pin {
+enum TrustPin {
     Key(PublicKey),
     Identity(Policy),
 }
 
-impl Pin {
+impl TrustPin {
     fn as_trust(&self) -> Trust<'_> {
         match self {
-            Pin::Key(key) => Trust::Key(key),
-            Pin::Identity(policy) => Trust::Identity(policy),
+            TrustPin::Key(key) => Trust::Key(key),
+            TrustPin::Identity(policy) => Trust::Identity(policy),
         }
     }
 }
@@ -1201,12 +1209,13 @@ impl RunWith<BinInfo> for Verify {
             .wrap_err_with(|| format!("reading {}", self.bundle.display()))?;
         let peeked: serde_json::Value = serde_json::from_slice(&sigstore::peek_statement(&text)?)
             .wrap_err("the bundle's payload is not JSON")?;
-        let project = peeked["predicate"]["project"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
+        let project = peeked["predicate"]["project"].as_str().unwrap_or_default();
         let is_list = peeked["predicateType"] == RELEASES_PREDICATE_TYPE;
 
+        let want_fingerprint: Option<Fingerprint> = match &self.pin {
+            Some(pin) => Some(pin.parse().wrap_err("--pin")?),
+            None => None,
+        };
         let pin = match &self.pubkey {
             Some(text) => {
                 if self.identity.is_some()
@@ -1217,34 +1226,26 @@ impl RunWith<BinInfo> for Verify {
                         "--pubkey pins a key; the identity flags pin a certificate. Pass one kind"
                     );
                 }
+                if want_fingerprint.is_some() {
+                    bail!(
+                        "--pin is the fingerprint of a certificate's repository; a key has none. Use --pubkey alone"
+                    );
+                }
                 let pubkey_text = if Path::new(text).is_file() {
                     std::fs::read_to_string(text)?
                 } else {
                     text.clone()
                 };
-                Pin::Key(PublicKey::parse(&pubkey_text)?)
+                TrustPin::Key(PublicKey::parse(&pubkey_text)?)
             }
-            None => {
-                let explicit = Policy {
-                    issuer: self.issuer.clone(),
-                    identity: self.identity.clone(),
-                    identity_prefix: self.identity_prefix.clone(),
-                };
-                Pin::Identity(if explicit.is_empty() {
-                    Policy::for_project(&project).ok_or(sigstore::Error::NoPolicy(project))?
-                } else {
-                    explicit
-                })
-            }
+            None => TrustPin::Identity(identity_policy(
+                &self.identity,
+                &self.identity_prefix,
+                &self.issuer,
+                project,
+            )?),
         };
-        let root_json = match &self.trusted_root {
-            Some(path) => Some(
-                std::fs::read_to_string(path)
-                    .wrap_err_with(|| format!("reading {}", path.display()))?,
-            ),
-            None => None,
-        };
-        let trusted_root = sigstore::trusted_root(root_json.as_deref())?;
+        let trusted_root = load_trusted_root(self.trusted_root.as_deref())?;
         let options = Options {
             require_log: !self.allow_unlogged,
             trusted_root: &trusted_root,
@@ -1258,6 +1259,19 @@ impl RunWith<BinInfo> for Verify {
             return match packslip::verify_release_list(&text, &pin.as_trust(), options) {
                 Ok(verified) => {
                     let list = &verified.list.predicate;
+                    if let Some(want) = &want_fingerprint {
+                        let source = sigstore::source_repository(&text)?;
+                        if let Err(err) = match_fingerprint(
+                            want,
+                            &list.project,
+                            &verified.key_id,
+                            verified.issuer.as_deref(),
+                            source.as_ref(),
+                        ) {
+                            eprintln!("verification failed: {err}");
+                            std::process::exit(1)
+                        }
+                    }
                     if self.json {
                         println!("{}", serde_json::to_string_pretty(&verified.list)?);
                     } else {
@@ -1293,6 +1307,18 @@ impl RunWith<BinInfo> for Verify {
                 // The bundle verified, so its certificate's record of the
                 // repository is the one Fulcio issued.
                 let source = sigstore::source_repository(&text)?;
+                if let Some(want) = &want_fingerprint
+                    && let Err(err) = match_fingerprint(
+                        want,
+                        &verified.project,
+                        &verified.key_id,
+                        verified.issuer.as_deref(),
+                        source.as_ref(),
+                    )
+                {
+                    eprintln!("verification failed: {err}");
+                    std::process::exit(1)
+                }
                 if self.json {
                     #[derive(serde::Serialize)]
                     struct Report<'a> {
@@ -1352,6 +1378,178 @@ impl RunWith<BinInfo> for Verify {
             }
             Err(err) => {
                 eprintln!("verification failed: {err}");
+                std::process::exit(1)
+            }
+        }
+    }
+}
+
+/// The certificate policy for `project`: the identity flags, or else the
+/// one its GitHub or GitLab name implies.
+fn identity_policy(
+    identity: &Option<String>,
+    identity_prefix: &Option<String>,
+    issuer: &Option<String>,
+    project: &str,
+) -> Result<Policy> {
+    let explicit = Policy {
+        issuer: issuer.clone(),
+        identity: identity.clone(),
+        identity_prefix: identity_prefix.clone(),
+    };
+    if explicit.is_empty() {
+        Ok(
+            Policy::for_project(project)
+                .ok_or_else(|| sigstore::Error::NoPolicy(project.into()))?,
+        )
+    } else {
+        Ok(explicit)
+    }
+}
+
+fn load_trusted_root(path: Option<&Path>) -> Result<sigstore_trust_root::TrustedRoot> {
+    let json = match path {
+        Some(path) => Some(
+            std::fs::read_to_string(path)
+                .wrap_err_with(|| format!("reading {}", path.display()))?,
+        ),
+        None => None,
+    };
+    Ok(sigstore::trusted_root(json.as_deref())?)
+}
+
+/// Whether what a verified certificate says about its repository is about
+/// the project the statement names. A signer can be a reusable workflow of
+/// another repository, so the certificate's own source repository must be
+/// the project's. A project that is not on a forge has nothing to compare.
+fn bound_to_project(
+    project: &str,
+    signer: &str,
+    issuer: Option<&str>,
+    source: Option<&sigstore::SourceRepository>,
+) -> std::result::Result<(), String> {
+    match packslip::forge::check(
+        &packslip::forge::Expected::new(project),
+        project,
+        signer,
+        issuer,
+        source,
+    ) {
+        Ok(_) | Err(packslip::forge::IdentityError::NotForge(_)) => Ok(()),
+        Err(err) => Err(err.to_string()),
+    }
+}
+
+/// The signer fingerprint of a verified keyless release.
+fn signer_fingerprint(
+    project: &str,
+    signer: &str,
+    issuer: Option<&str>,
+    source: Option<&sigstore::SourceRepository>,
+) -> std::result::Result<Fingerprint, String> {
+    if issuer.is_none() {
+        return Err(format!(
+            "{project} is signed with a key, which has no signer fingerprint; pin it with --pubkey"
+        ));
+    }
+    bound_to_project(project, signer, issuer, source)?;
+    Fingerprint::of_signer(issuer, source).ok_or_else(|| {
+        format!(
+            "{project}'s certificate records no repository ID, so it has no signer fingerprint; pin it with --identity and --issuer instead"
+        )
+    })
+}
+
+/// Check a verified release's signer against a fingerprint.
+fn match_fingerprint(
+    want: &Fingerprint,
+    project: &str,
+    signer: &str,
+    issuer: Option<&str>,
+    source: Option<&sigstore::SourceRepository>,
+) -> std::result::Result<(), String> {
+    bound_to_project(project, signer, issuer, source)?;
+    want.verify(issuer, source).map_err(|e| e.to_string())
+}
+
+/// Print the signer fingerprint of a project's keyless releases
+///
+/// Verify a release bundle, then print the signer fingerprint of the
+/// repository its certificate comes from: `ps1_` and 26 characters. A
+/// README or Dockerfile can carry it, and `packslip verify --pin` checks a
+/// release against it. It names the forge's issuer and repository ID only,
+/// so it survives renaming the repository, moving it to another owner, and
+/// changing the workflow, and it does not carry over to a repository that
+/// takes over the old name. A key-signed project, and a certificate that
+/// records no repository ID, have none. Run this on a release you trust: it
+/// names whichever repository signed the bundle it is given.
+///
+/// Verification is the same as `packslip verify`: the policy is the one the
+/// project's name implies unless --identity, --identity-prefix, or --issuer
+/// say otherwise. See https://packslip.dev/docs/verifying/.
+#[derive(Debug, usage_rs::Args)]
+struct Pin {
+    /// Local release bundle to verify and fingerprint
+    #[usage(value_hint = usage_rs::ValueHint::FilePath)]
+    bundle: PathBuf,
+    /// The exact certificate identity a keyless signer must have
+    #[usage(long)]
+    identity: Option<String>,
+    /// A prefix the certificate identity must start with, such as
+    /// https://github.com/owner/repo/
+    #[usage(long)]
+    identity_prefix: Option<String>,
+    /// The OIDC issuer a keyless signer must have
+    #[usage(long)]
+    issuer: Option<String>,
+    /// Accept a bundle without a transparency log entry
+    #[usage(long)]
+    allow_unlogged: bool,
+    /// A sigstore trusted_root.json to use instead of the embedded one
+    #[usage(long, value_hint = usage_rs::ValueHint::FilePath)]
+    trusted_root: Option<PathBuf>,
+}
+
+impl RunWith<BinInfo> for Pin {
+    type Output = Result<()>;
+
+    fn run_with(self, _: BinInfo) -> Self::Output {
+        let text = std::fs::read_to_string(&self.bundle)
+            .wrap_err_with(|| format!("reading {}", self.bundle.display()))?;
+        let peeked: serde_json::Value = serde_json::from_slice(&sigstore::peek_statement(&text)?)
+            .wrap_err("the bundle's payload is not JSON")?;
+        if peeked["predicateType"] == RELEASES_PREDICATE_TYPE {
+            bail!("a release list is not a release; give a release's packslip.sigstore.json");
+        }
+        let project = peeked["predicate"]["project"].as_str().unwrap_or_default();
+        let policy = identity_policy(&self.identity, &self.identity_prefix, &self.issuer, project)?;
+        let trusted_root = load_trusted_root(self.trusted_root.as_deref())?;
+        let options = Options {
+            require_log: !self.allow_unlogged,
+            trusted_root: &trusted_root,
+        };
+        let verified = match packslip::verify(&text, &Trust::Identity(&policy), options, &[]) {
+            Ok(verified) => verified,
+            Err(err) => {
+                eprintln!("verification failed: {err}");
+                std::process::exit(1)
+            }
+        };
+        // The bundle verified, so its certificate's record of the
+        // repository is the one Fulcio issued.
+        let source = sigstore::source_repository(&text)?;
+        match signer_fingerprint(
+            &verified.project,
+            &verified.key_id,
+            verified.issuer.as_deref(),
+            source.as_ref(),
+        ) {
+            Ok(fingerprint) => {
+                println!("{fingerprint}");
+                Ok(())
+            }
+            Err(err) => {
+                eprintln!("{err}");
                 std::process::exit(1)
             }
         }
