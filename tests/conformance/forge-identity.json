@@ -1,0 +1,188 @@
+{
+  "rule": "https://packslip.dev/release/v1/#forge-identity",
+  "description": "Whether a verified release is the forge project a consumer expected. A consumer pinned `pin.project` and `pin.repository_id` from a release it accepted earlier, and now asks for `requested`. The release's statement names `release.project`, and its signing certificate records the Source Repository URI, Source Repository Identifier, and the owner's URI and ID as `release.certificate` (`owner_uri` and `owner_id` are omitted when the certificate carries none). `release.signer` is the workflow, without its ref, that signed. `expect.outcome` is `same` (accept it under the requested name), `renamed` (accept it and report the name it was signed under: the repository was renamed or transferred to another owner), or `refuse`, with `expect.reason` `different-repository` (the certificate's repository ID is not the pinned one) or `project-mismatch` (the statement names another project and the certificate gives no repository ID to show it is the same one). The owner never changes an outcome: only a repository's current owner can transfer it. A case with `previous_signer` also says whether that workflow, recorded for the pin before, continues as `release.signer`, as `expect.signer_continues`: the workflow's path inside the repository is compared when the repository ID matches.",
+  "cases": [
+    {
+      "name": "the pinned repository under its own name",
+      "pin": { "project": "github.com/jdx/hk", "repository_id": "922514152" },
+      "requested": "github.com/jdx/hk",
+      "release": {
+        "project": "github.com/jdx/hk",
+        "signer": "https://github.com/jdx/hk/.github/workflows/release.yml",
+        "certificate": { "uri": "https://github.com/jdx/hk", "id": "922514152", "owner_uri": "https://github.com/jdx", "owner_id": "216188" }
+      },
+      "previous_signer": "https://github.com/jdx/hk/.github/workflows/release.yml",
+      "expect": { "outcome": "same", "signer_continues": true }
+    },
+    {
+      "name": "a rename within the owner",
+      "pin": { "project": "github.com/jdx/hk", "repository_id": "922514152" },
+      "requested": "github.com/jdx/hk",
+      "release": {
+        "project": "github.com/jdx/hook",
+        "signer": "https://github.com/jdx/hook/.github/workflows/release.yml",
+        "certificate": { "uri": "https://github.com/jdx/hook", "id": "922514152", "owner_uri": "https://github.com/jdx", "owner_id": "216188" }
+      },
+      "previous_signer": "https://github.com/jdx/hk/.github/workflows/release.yml",
+      "expect": { "outcome": "renamed", "signer_continues": true }
+    },
+    {
+      "name": "a transfer to another owner",
+      "comment": "The pin was recorded under jdx; acme owns the repository now. Same repository ID, so it is the same project and the same workflow.",
+      "pin": { "project": "github.com/jdx/hk", "repository_id": "922514152" },
+      "requested": "github.com/jdx/hk",
+      "release": {
+        "project": "github.com/acme/hk",
+        "signer": "https://github.com/acme/hk/.github/workflows/release.yml",
+        "certificate": { "uri": "https://github.com/acme/hk", "id": "922514152", "owner_uri": "https://github.com/acme", "owner_id": "999" }
+      },
+      "previous_signer": "https://github.com/jdx/hk/.github/workflows/release.yml",
+      "expect": { "outcome": "renamed", "signer_continues": true }
+    },
+    {
+      "name": "a transfer and a rename together",
+      "pin": { "project": "github.com/jdx/hk", "repository_id": "922514152" },
+      "requested": "github.com/jdx/hk",
+      "release": {
+        "project": "github.com/acme/hook",
+        "signer": "https://github.com/acme/hook/.github/workflows/release.yml",
+        "certificate": { "uri": "https://github.com/acme/hook", "id": "922514152", "owner_uri": "https://github.com/acme", "owner_id": "999" }
+      },
+      "previous_signer": "https://github.com/jdx/hk/.github/workflows/release.yml",
+      "expect": { "outcome": "renamed", "signer_continues": true }
+    },
+    {
+      "name": "a release from before the transfer, asked for by the new name",
+      "comment": "The consumer pinned acme/hk after the move and now installs an older release signed under jdx/hk.",
+      "pin": { "project": "github.com/acme/hk", "repository_id": "922514152" },
+      "requested": "github.com/acme/hk",
+      "release": {
+        "project": "github.com/jdx/hk",
+        "signer": "https://github.com/jdx/hk/.github/workflows/release.yml",
+        "certificate": { "uri": "https://github.com/jdx/hk", "id": "922514152", "owner_uri": "https://github.com/jdx", "owner_id": "216188" }
+      },
+      "previous_signer": "https://github.com/acme/hk/.github/workflows/release.yml",
+      "expect": { "outcome": "renamed", "signer_continues": true }
+    },
+    {
+      "name": "the owner is not compared even when it differs under the same name",
+      "comment": "An owner ID that differs from the one recorded earlier changes nothing: the repository ID is what pins the project.",
+      "pin": { "project": "github.com/jdx/hk", "repository_id": "922514152" },
+      "requested": "github.com/jdx/hk",
+      "release": {
+        "project": "github.com/jdx/hk",
+        "signer": "https://github.com/jdx/hk/.github/workflows/release.yml",
+        "certificate": { "uri": "https://github.com/jdx/hk", "id": "922514152", "owner_uri": "https://github.com/jdx", "owner_id": "31337" }
+      },
+      "expect": { "outcome": "same" }
+    },
+    {
+      "name": "a certificate that records no owner",
+      "pin": { "project": "github.com/jdx/hk", "repository_id": "922514152" },
+      "requested": "github.com/jdx/hk",
+      "release": {
+        "project": "github.com/acme/hk",
+        "signer": "https://github.com/acme/hk/.github/workflows/release.yml",
+        "certificate": { "uri": "https://github.com/acme/hk", "id": "922514152" }
+      },
+      "expect": { "outcome": "renamed" }
+    },
+    {
+      "name": "a recreated name has a different repository ID",
+      "comment": "jdx/hk was deleted or renamed away, and someone created a repository under the name with a workflow at the same path. Same name, same owner name, other ID.",
+      "pin": { "project": "github.com/jdx/hk", "repository_id": "922514152" },
+      "requested": "github.com/jdx/hk",
+      "release": {
+        "project": "github.com/jdx/hk",
+        "signer": "https://github.com/jdx/hk/.github/workflows/release.yml",
+        "certificate": { "uri": "https://github.com/jdx/hk", "id": "555", "owner_uri": "https://github.com/jdx", "owner_id": "216188" }
+      },
+      "previous_signer": "https://github.com/jdx/hk/.github/workflows/release.yml",
+      "expect": { "outcome": "refuse", "reason": "different-repository" }
+    },
+    {
+      "name": "a recreated name under the name the repository moved to",
+      "comment": "The repository moved to acme/hk, then someone created jdx/hk. The new jdx/hk is refused; the pin is on the repository, not the name jdx/hk.",
+      "pin": { "project": "github.com/acme/hk", "repository_id": "922514152" },
+      "requested": "github.com/jdx/hk",
+      "release": {
+        "project": "github.com/jdx/hk",
+        "signer": "https://github.com/jdx/hk/.github/workflows/release.yml",
+        "certificate": { "uri": "https://github.com/jdx/hk", "id": "555", "owner_uri": "https://github.com/jdx", "owner_id": "216188" }
+      },
+      "expect": { "outcome": "refuse", "reason": "different-repository" }
+    },
+    {
+      "name": "another owner's repository under another name",
+      "pin": { "project": "github.com/jdx/hk", "repository_id": "922514152" },
+      "requested": "github.com/jdx/hk",
+      "release": {
+        "project": "github.com/evil/hk",
+        "signer": "https://github.com/evil/hk/.github/workflows/release.yml",
+        "certificate": { "uri": "https://github.com/evil/hk", "id": "666", "owner_uri": "https://github.com/evil", "owner_id": "1" }
+      },
+      "expect": { "outcome": "refuse", "reason": "different-repository" }
+    },
+    {
+      "name": "a rename whose certificate carries no repository ID",
+      "comment": "Nothing shows the other name is the same repository, so the name is all there is.",
+      "pin": { "project": "github.com/jdx/hk", "repository_id": "922514152" },
+      "requested": "github.com/jdx/hk",
+      "release": {
+        "project": "github.com/acme/hk",
+        "signer": "https://github.com/acme/hk/.github/workflows/release.yml",
+        "certificate": { "uri": "https://github.com/acme/hk" }
+      },
+      "expect": { "outcome": "refuse", "reason": "project-mismatch" }
+    },
+    {
+      "name": "the same repository, another workflow file",
+      "comment": "The release is accepted as the same repository, but a different workflow path is a signer change.",
+      "pin": { "project": "github.com/jdx/hk", "repository_id": "922514152" },
+      "requested": "github.com/jdx/hk",
+      "release": {
+        "project": "github.com/acme/hk",
+        "signer": "https://github.com/acme/hk/.github/workflows/publish.yml",
+        "certificate": { "uri": "https://github.com/acme/hk", "id": "922514152", "owner_uri": "https://github.com/acme", "owner_id": "999" }
+      },
+      "previous_signer": "https://github.com/jdx/hk/.github/workflows/release.yml",
+      "expect": { "outcome": "renamed", "signer_continues": false }
+    },
+    {
+      "name": "a monorepo tool keeps its subpath across a transfer",
+      "pin": { "project": "github.com/jdx/tools/hk", "repository_id": "77" },
+      "requested": "github.com/jdx/tools/hk",
+      "release": {
+        "project": "github.com/acme/tools/hk",
+        "signer": "https://github.com/acme/tools/.github/workflows/release.yml",
+        "certificate": { "uri": "https://github.com/acme/tools", "id": "77", "owner_uri": "https://github.com/acme", "owner_id": "999" }
+      },
+      "previous_signer": "https://github.com/jdx/tools/.github/workflows/release.yml",
+      "expect": { "outcome": "renamed", "signer_continues": true }
+    },
+    {
+      "name": "another tool of the transferred monorepo is not the requested tool",
+      "pin": { "project": "github.com/jdx/tools/hk", "repository_id": "77" },
+      "requested": "github.com/jdx/tools/hk",
+      "release": {
+        "project": "github.com/acme/tools/other",
+        "signer": "https://github.com/acme/tools/.github/workflows/release.yml",
+        "certificate": { "uri": "https://github.com/acme/tools", "id": "77", "owner_uri": "https://github.com/acme", "owner_id": "999" }
+      },
+      "expect": { "outcome": "refuse", "reason": "project-mismatch" }
+    },
+    {
+      "name": "a GitLab project moved to another group",
+      "comment": "A GitLab project's owner is its immediate group, so a move between subgroups changes the owner ID. The project ID is unchanged.",
+      "pin": { "project": "gitlab.com/group/sub/tool", "repository_id": "42" },
+      "requested": "gitlab.com/group/sub/tool",
+      "release": {
+        "project": "gitlab.com/group/other/tool",
+        "signer": "https://gitlab.com/group/other/tool//.gitlab-ci.yml",
+        "certificate": { "uri": "https://gitlab.com/group/other/tool", "id": "42", "owner_uri": "https://gitlab.com/group/other", "owner_id": "8" }
+      },
+      "previous_signer": "https://gitlab.com/group/sub/tool//.gitlab-ci.yml",
+      "expect": { "outcome": "renamed", "signer_continues": true }
+    }
+  ]
+}

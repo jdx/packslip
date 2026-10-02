@@ -340,8 +340,8 @@ fn forge_policy(bundle: &str, expected: &forge::Expected<'_>) -> Result<Policy, 
 /// implies, then check that it was signed by the repository the consumer
 /// expected, by the forge's immutable repository ID where the certificate
 /// and the consumer's pin or forge lookup give one ([`forge::check`]). A
-/// renamed repository's releases verify under the new name, and its older
-/// releases under the old one; a transfer or a recreated name does not.
+/// renamed or transferred repository's releases verify under the new name,
+/// and its older releases under the old one; a recreated name does not.
 ///
 /// The caller still applies signer continuity, with
 /// [`forge::Check::continues_signer`], and records
@@ -416,10 +416,7 @@ mod tests {
         assert_eq!(ok.verified.project, "github.com/jdx/hk");
         assert_eq!(ok.check.continuity, Continuity::Same);
         let pin = ok.check.pin.clone().unwrap();
-        assert_eq!(
-            pin,
-            ForgePin::new("github.com/jdx/hk", "922514152", Some("216188".into()))
-        );
+        assert_eq!(pin, ForgePin::of("github.com/jdx/hk", "922514152"));
         assert!(
             ok.check
                 .continues_signer("https://github.com/jdx/hk/.github/workflows/release.yml")
@@ -427,7 +424,7 @@ mod tests {
 
         // Were hk renamed to hook, a user asking for the new name with the
         // pin would still take this release, signed under the old name.
-        let pinned = ForgePin::new("github.com/jdx/hook", "922514152", Some("216188".into()));
+        let pinned = ForgePin::of("github.com/jdx/hook", "922514152");
         let ok = verify_forge(
             HK,
             &Expected::new("github.com/jdx/hook").pinned(Some(&pinned)),
@@ -458,7 +455,7 @@ mod tests {
             "{err}"
         );
         // A pin for another repository under the same name is a recreated name.
-        let other = ForgePin::new("github.com/jdx/hk", "1", Some("216188".into()));
+        let other = ForgePin::of("github.com/jdx/hk", "1");
         let err = verify_forge(
             HK,
             &Expected::new("github.com/jdx/hk").pinned(Some(&other)),
@@ -505,12 +502,9 @@ mod tests {
         let pins = [
             (
                 PinSource::Local,
-                ForgePin::new("github.com/jdx/hk", "922514152", Some("216188".into())),
+                ForgePin::of("github.com/jdx/hk", "922514152"),
             ),
-            (
-                PinSource::Lockfile,
-                ForgePin::new("github.com/jdx/hk", "1", Some("216188".into())),
-            ),
+            (PinSource::Lockfile, ForgePin::of("github.com/jdx/hk", "1")),
         ];
         let err = verify_forge(
             HK,

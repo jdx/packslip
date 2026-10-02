@@ -5,7 +5,8 @@
 //! be read and run by any implementation, not only this one. They cover
 //! the parts of packslip that are packslip's own: which artifact a host
 //! installs, which resource entries apply to it, which version a tag
-//! names, and whether a statement is structurally valid. Signature
+//! names, whether a statement is structurally valid, and whether a
+//! verified release is the forge project the consumer pinned. Signature
 //! verification is sigstore's and is not restated here.
 //!
 //! These run with `--no-default-features` too: everything they touch is
@@ -13,9 +14,11 @@
 
 use std::path::Path;
 
+use packslip::forge::{self, Continuity, Expected, ForgePin, IdentityError};
 use packslip::model::{
     Artifact, Host, Selection, Statement, select_artifact, select_resources, tag_version,
 };
+use packslip::sigstore::{GITHUB_ISSUER, GITLAB_ISSUER, SourceRepository};
 
 fn vectors(name: &str) -> serde_json::Value {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -135,6 +138,82 @@ fn statement_validity() {
             ("accept", Err(e)) => panic!("{name}: expected accept, was rejected: {e}"),
             ("reject", Ok(())) => panic!("{name}: expected reject, was accepted"),
             (other, _) => panic!("{name}: expect must be accept or reject, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn forge_identity() {
+    for case in cases("forge-identity.json") {
+        let name = case_name(&case);
+        let text = |value: &serde_json::Value, key: &str| -> String {
+            value[key]
+                .as_str()
+                .unwrap_or_else(|| panic!("{name}: {key} is a string"))
+                .to_string()
+        };
+        let pin = ForgePin::of(
+            text(&case["pin"], "project"),
+            text(&case["pin"], "repository_id"),
+        );
+        let requested = text(&case, "requested");
+        let release = &case["release"];
+        let project = text(release, "project");
+
+        let certificate = &release["certificate"];
+        let mut source = SourceRepository::new(text(certificate, "uri"));
+        if let Some(id) = certificate["id"].as_str() {
+            source = source.with_id(id);
+        }
+        if let Some(owner_uri) = certificate["owner_uri"].as_str() {
+            source = source.with_owner(owner_uri, text(certificate, "owner_id"));
+        }
+
+        let issuer = if project.starts_with("gitlab.com/") {
+            GITLAB_ISSUER
+        } else {
+            GITHUB_ISSUER
+        };
+        let identity = format!("{}@refs/tags/v1.0.0", text(release, "signer"));
+        let got = forge::check(
+            &Expected::new(&requested).pinned(Some(&pin)),
+            &project,
+            &identity,
+            Some(issuer),
+            Some(&source),
+        );
+
+        let expect = &case["expect"];
+        let outcome = text(expect, "outcome");
+        match (outcome.as_str(), &got) {
+            ("same", Ok(check)) => assert_eq!(check.continuity, Continuity::Same, "{name}"),
+            ("renamed", Ok(check)) => assert_eq!(
+                check.continuity,
+                Continuity::Renamed {
+                    requested: requested.clone(),
+                    signed: project.clone(),
+                },
+                "{name}"
+            ),
+            ("refuse", Err(err)) => {
+                let reason = match err {
+                    IdentityError::DifferentRepository { .. } => "different-repository",
+                    IdentityError::ProjectMismatch { .. } => "project-mismatch",
+                    other => {
+                        panic!("{name}: refused for a reason the vectors do not name: {other}")
+                    }
+                };
+                assert_eq!(reason, text(expect, "reason"), "{name}");
+            }
+            (want, got) => panic!("{name}: expected {want}, got {got:?}"),
+        }
+
+        if let (Some(previous), Some(want), Ok(check)) = (
+            case["previous_signer"].as_str(),
+            expect["signer_continues"].as_bool(),
+            &got,
+        ) {
+            assert_eq!(check.continues_signer(previous), want, "{name}: signer");
         }
     }
 }

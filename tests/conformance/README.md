@@ -16,6 +16,7 @@ working around it.
 | `resource-selection.json` | [Resources](https://packslip.dev/release/v1/#resources) |
 | `tag-versions.json` | [Tags](https://packslip.dev/release/v1/#tags) |
 | `statement-validity.json` | [The release statement](https://packslip.dev/release/v1/#the-release-statement) |
+| `forge-identity.json` | [Forge identity](https://packslip.dev/release/v1/#forge-identity) |
 
 Each file is a JSON object with a `rule` link, a `description` of what the
 cases mean, and a `cases` array. Every case has a `name`; some carry a
@@ -25,8 +26,9 @@ field defines that file's case shape — read it before writing a runner.
 ## Scope
 
 These cover what is packslip's own: which artifact a host installs, which
-resource entries apply to it, which version a tag names, and whether a
-statement is structurally valid.
+resource entries apply to it, which version a tag names, whether a
+statement is structurally valid, and whether a verified forge release is
+the repository a consumer pinned.
 
 They deliberately do not cover signature verification. A packslip is a
 [sigstore bundle](https://github.com/sigstore/protobuf-specs) and its
@@ -39,11 +41,14 @@ push to `main`.
 
 Nor do they cover the parts of the
 [consumer rules](https://packslip.dev/release/v1/#consumer-rules) that
-depend on state a consumer carries between installs — signer continuity,
-no-downgrade, release-list sequence, minimum release age. Those are
-properties of a consumer's history, not of a document, so a vector cannot
-express them; the specification states them normatively and a consumer
-tests them against its own store.
+depend on state a consumer carries between installs — no-downgrade,
+release-list sequence, minimum release age, where a pin is stored. Those
+are properties of a consumer's history, not of a document, so a vector
+cannot express them; the specification states them normatively and a
+consumer tests them against its own store. The forge identity vectors are
+the exception that fits: the remembered pin is part of each case, so
+they state how a release is compared with it without saying how it was
+stored.
 
 ## Running them
 
