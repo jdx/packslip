@@ -400,8 +400,18 @@ fn snapshot(
     }
     let slot = tempfile::NamedTempFile::new_in(parent)?.into_temp_path();
     std::fs::remove_file(&slot)?;
-    if std::fs::hard_link(input, &slot).is_err() {
-        std::fs::copy(input, &slot)?;
+    if let Err(link_error) = std::fs::hard_link(input, &slot) {
+        // Linking is an optimization, not an access/trust requirement. A read
+        // plus a private copy is equally valid, including when link permission
+        // differs from read permission. Retain both errors if neither works.
+        std::fs::copy(input, &slot).map_err(|copy_error| {
+            std::io::Error::new(
+                copy_error.kind(),
+                format!(
+                    "cache snapshot: hard link failed ({link_error}); copy failed ({copy_error})"
+                ),
+            )
+        })?;
     }
     if !std::fs::symlink_metadata(&slot)?.is_file() {
         return Err(std::io::Error::other(
