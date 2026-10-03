@@ -45,7 +45,7 @@ cli = ["verify-cli", "create", "manifest", "schema"]
 verify-cli = ["dep:color-eyre", "dep:eyre", "dep:usage_rs"]
 # Authenticated, fresh trust-root refresh and offline cache replay.
 trust-root = ["dep:sigstore-tuf", "dep:reqwest", "dep:tempfile", "sigstore-trust-root/tuf"]
-discovery = ["trust-root"]
+discovery = ["trust-root", "dep:rustix", "dep:windows-sys"]
 # `packslip create`: build a statement from a set of built artifacts.
 create = ["archive", "linkage", "sign"]
 # Read a release TOML manifest for `packslip create --manifest`.
@@ -99,6 +99,12 @@ x509-cert = { version = "0.3", default-features = false }
 zip = { version = "8", default-features = false, features = ["deflate"], optional = true }
 # usage-rs derives scan this table line by line for the alias below.
 usage_rs = { package = "usage-rs", version = "6", features = ["completions"], optional = true }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["fs"], optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"], optional = true }
 
 [dev-dependencies]
 dsse = "0.1.1"

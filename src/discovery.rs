@@ -4,7 +4,7 @@ use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use sha2::Digest as _;
 use std::collections::BTreeMap;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]
@@ -288,20 +288,33 @@ impl Client {
         Err(Error::Redirects)
     }
     /// Stream a potentially large artifact to the command cache, enforcing the
-    /// signed size while reading. The caller checks its digest before extraction.
-    pub async fn download(&self, input: &str, expected_size: u64) -> Result<PathBuf, Error> {
+    /// signed size while reading. The returned file owns a private snapshot;
+    /// replacing the URL-keyed cache cannot change its bytes. Keep it alive
+    /// through digest verification and extraction, using its path or file handle.
+    pub async fn download(
+        &self,
+        input: &str,
+        expected_size: u64,
+    ) -> Result<tempfile::NamedTempFile, Error> {
         let initial = parse_url(input)?;
         let path = self.cache_path(&initial);
         if self.offline {
-            let metadata =
-                std::fs::metadata(&path).map_err(|_| Error::Offline(display_url(&initial)))?;
-            if metadata.len() != expected_size {
+            let snapshot =
+                snapshot(&path, &self.cache, expected_size.saturating_add(1)).map_err(|error| {
+                    if error.kind() == std::io::ErrorKind::NotFound {
+                        Error::Offline(display_url(&initial))
+                    } else {
+                        Error::Io(error)
+                    }
+                })?;
+            let metadata = snapshot.as_file().metadata()?;
+            if !metadata.is_file() || metadata.len() != expected_size {
                 return Err(Error::Limit {
                     limit: expected_size,
                     url: display_url(&initial),
                 });
             }
-            return Ok(path);
+            return Ok(snapshot);
         }
         let deadline = std::time::Instant::now()
             .checked_add(self.download_timeout)
@@ -366,12 +379,77 @@ impl Client {
                     url: display_url(&current),
                 });
             }
-            tmp.as_file().sync_all()?;
-            tmp.persist(&path).map_err(|e| e.error)?;
-            return Ok(path);
+            return Ok(publish_download(tmp, &path)?);
         }
         Err(Error::Redirects)
     }
+}
+
+/// Publish a separate cached snapshot while retaining the owned file, rewound
+/// for reading. Atomic replacement leaves existing callers' snapshots intact.
+fn publish_download(
+    mut file: tempfile::NamedTempFile,
+    cache: &std::path::Path,
+) -> Result<tempfile::NamedTempFile, std::io::Error> {
+    file.as_file().sync_all()?;
+    snapshot(
+        file.path(),
+        cache
+            .parent()
+            .ok_or_else(|| std::io::Error::other("cache has no parent"))?,
+        file.as_file().metadata()?.len().saturating_add(1),
+    )?
+    .persist(cache)
+    .map_err(|error| error.error)?;
+    file.as_file_mut().rewind()?;
+    Ok(file)
+}
+
+/// Open a regular cache file without following a Unix symlink or Windows
+/// reparse point, then validate the opened object instead of its pathname.
+fn cache_file(input: &std::path::Path) -> Result<std::fs::File, std::io::Error> {
+    #[cfg(unix)]
+    let file = {
+        use rustix::fs::{Mode, OFlags};
+        std::fs::File::from(rustix::fs::open(
+            input,
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
+            Mode::empty(),
+        )?)
+    };
+    #[cfg(windows)]
+    let file = {
+        use std::os::windows::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(input)?
+    };
+    #[cfg(not(any(unix, windows)))]
+    let file = std::fs::File::open(input)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err(std::io::Error::other(
+            "artifact cache is not a regular file",
+        ));
+    }
+    Ok(file)
+}
+
+/// Copy at most `limit` bytes through open handles into an exclusively created
+/// snapshot. Keeping the destination open avoids a pathname replacement race.
+/// The caller checks signed size on the completed, synchronized, rewound file.
+fn snapshot(
+    input: &std::path::Path,
+    parent: &std::path::Path,
+    limit: u64,
+) -> Result<tempfile::NamedTempFile, std::io::Error> {
+    let source = cache_file(input)?;
+    let mut file = tempfile::NamedTempFile::new_in(parent)?;
+    std::io::copy(&mut source.take(limit), file.as_file_mut())?;
+    file.as_file().sync_all()?;
+    file.as_file_mut().rewind()?;
+    Ok(file)
 }
 
 /// Bytes obtained through the named host's authenticated HTTPS origin (or its
@@ -884,6 +962,54 @@ mod tests {
         assert!(!error.contains("VALUE"));
     }
 
+    #[test]
+    fn owned_downloads_survive_concurrent_cache_replacement() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = Client::new(dir.path().into(), true, HttpConfig::default()).unwrap();
+        let url = parse_url("https://example.invalid/artifact").unwrap();
+        let cache = client.cache_path(&url);
+        std::fs::write(&cache, b"first").unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let first = rt.block_on(client.download(url.as_str(), 5)).unwrap();
+        let first_path = first.path().to_owned();
+        std::fs::write(&cache, b"alter").unwrap();
+        assert_eq!(std::fs::read(first.path()).unwrap(), b"first");
+        let mut next = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
+        next.write_all(b"later").unwrap();
+        let mut next = publish_download(next, &cache).unwrap();
+        let mut handle_bytes = Vec::new();
+        next.read_to_end(&mut handle_bytes).unwrap();
+        assert_eq!(handle_bytes, b"later");
+        let second = rt.block_on(client.download(url.as_str(), 5)).unwrap();
+        assert_eq!(std::fs::read(first.path()).unwrap(), b"first");
+        assert_eq!(std::fs::read(second.path()).unwrap(), b"later");
+        assert!(rt.block_on(client.download(url.as_str(), 4)).is_err());
+        drop(first);
+        assert!(!first_path.exists());
+        assert_eq!(std::fs::read(cache).unwrap(), b"later");
+        let directory = parse_url("https://example.invalid/directory").unwrap();
+        std::fs::create_dir(client.cache_path(&directory)).unwrap();
+        assert!(matches!(
+            rt.block_on(client.download(directory.as_str(), 0)),
+            Err(Error::Io(_))
+        ));
+        assert!(matches!(
+            rt.block_on(client.download("https://example.invalid/missing", 0)),
+            Err(Error::Offline(_))
+        ));
+        #[cfg(unix)]
+        {
+            let linked = parse_url("https://example.invalid/symlink").unwrap();
+            std::os::unix::fs::symlink(next.path(), client.cache_path(&linked)).unwrap();
+            assert!(matches!(
+                rt.block_on(client.download(linked.as_str(), 5)),
+                Err(Error::Io(_))
+            ));
+        }
+    }
     #[test]
     fn recommendation_precedes_highest_semver() {
         let releases = vec![
