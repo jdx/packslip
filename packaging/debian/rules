@@ -26,3 +26,7 @@ override_dh_auto_install:
 
 override_dh_auto_clean:
 	rm -rf target .cargo-home
+
+# These upstream files are covered by Cargo's vendor checksums.
+override_dh_clean:
+	dh_clean --exclude=vendor/

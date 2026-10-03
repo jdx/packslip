@@ -1604,7 +1604,7 @@ impl Statement {
             }
             match resource.kind.as_str() {
                 "completion" => {
-                    if resource.shell.is_some() == !resource.shells.is_empty() {
+                    if resource.shell.is_some() != resource.shells.is_empty() {
                         return Err(InvalidDocument::CompletionShell(label));
                     }
                     if let Some(bad) = resource
