@@ -299,8 +299,13 @@ impl Client {
         let initial = parse_url(input)?;
         let path = self.cache_path(&initial);
         if self.offline {
-            let snapshot =
-                snapshot(&path, &self.cache).map_err(|_| Error::Offline(display_url(&initial)))?;
+            let snapshot = snapshot(&path, &self.cache).map_err(|error| {
+                if error.kind() == std::io::ErrorKind::NotFound {
+                    Error::Offline(display_url(&initial))
+                } else {
+                    Error::Io(error)
+                }
+            })?;
             let metadata = snapshot.as_file().metadata()?;
             if !metadata.is_file() || metadata.len() != expected_size {
                 return Err(Error::Limit {
@@ -958,6 +963,16 @@ mod tests {
         drop(first);
         assert!(!first_path.exists());
         assert_eq!(std::fs::read(cache).unwrap(), b"later");
+        let directory = parse_url("https://example.invalid/directory").unwrap();
+        std::fs::create_dir(client.cache_path(&directory)).unwrap();
+        assert!(matches!(
+            rt.block_on(client.download(directory.as_str(), 0)),
+            Err(Error::Io(_))
+        ));
+        assert!(matches!(
+            rt.block_on(client.download("https://example.invalid/missing", 0)),
+            Err(Error::Offline(_))
+        ));
     }
     #[test]
     fn recommendation_precedes_highest_semver() {
