@@ -34,6 +34,7 @@ jobs:
       - run: cargo clippy --no-default-features --all-targets -- -D warnings
       - run: cargo test --no-default-features
       - run: mise run lint
+      - run: hk check --all
       - run: mise run render
       - run: usage lint packslip.usage.kdl
       - run: mise run docs:check
