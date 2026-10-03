@@ -117,7 +117,9 @@ jobs:
       - name: Install the COPR client
         run: |
           python3 -m venv "$RUNNER_TEMP/copr-cli"
-          "$RUNNER_TEMP/copr-cli/bin/pip" install copr-cli==2.5
+          # copr-cli 2.5 imports rich but omits it from its package dependencies.
+          "$RUNNER_TEMP/copr-cli/bin/pip" install copr-cli==2.5 rich==14.2.0
+          "$RUNNER_TEMP/copr-cli/bin/copr-cli" --version
       - name: Submit and wait for both architecture builds
         env:
           COPR_API_LOGIN: ${{ secrets.COPR_API_LOGIN }}
@@ -132,7 +134,7 @@ jobs:
           config=$(mktemp)
           trap 'rm -f "$config"' EXIT
           printf '[copr-cli]\nlogin = %s\nusername = %s\ntoken = %s\ncopr_url = https://copr.fedorainfracloud.org\n' "$COPR_API_LOGIN" "$COPR_OWNER" "$COPR_API_TOKEN" > "$config"
-          args=(build --timeout 10800)
+          args=(build --timeout 10800 --enable-net off)
           read -r -a chroots <<< "$COPR_CHROOTS"
           test "${#chroots[@]}" -gt 0
           for chroot in "${chroots[@]}"; do
