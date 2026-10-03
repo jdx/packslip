@@ -65,9 +65,13 @@ fn path(input: &str) -> Result<PathBuf, Error> {
         }
         let base = component.split('.').next().unwrap().to_ascii_uppercase();
         if ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"].contains(&base.as_str())
-            || (base.len() == 4
-                && (base.starts_with("COM") || base.starts_with("LPT"))
-                && base.as_bytes()[3].is_ascii_digit())
+            || base
+                .strip_prefix("COM")
+                .or_else(|| base.strip_prefix("LPT"))
+                .is_some_and(|suffix| {
+                    (suffix.len() == 1 && suffix.as_bytes()[0].is_ascii_digit())
+                        || ["¹", "²", "³"].contains(&suffix)
+                })
         {
             return Err(Error::Unsafe(format!("reserved path {input:?}")));
         }
@@ -848,6 +852,9 @@ mod tests {
             "dir/NUL",
             "dir/conin$",
             "dir/CONOUT$.txt",
+            "dir/com¹.txt",
+            "dir/LPT²",
+            "dir/COM³",
             "dir/tool.",
             ".packslip-owner.json",
         ] {
