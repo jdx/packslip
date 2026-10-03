@@ -18,7 +18,7 @@ use packslip::model::{Attestor, RELEASES_PREDICATE_TYPE};
 use packslip::model::{Bin, Evidence, Extensions, RequiredBin, Resource, Source};
 #[cfg(feature = "schema")]
 use packslip::model::{ReleaseListStatement, Statement};
-#[cfg(feature = "sign")]
+#[cfg(all(feature = "create", feature = "manifest"))]
 use packslip::sigstore::Signer;
 use packslip::sigstore::{self, Policy, Trust};
 use packslip::verify::Options;
@@ -266,13 +266,13 @@ impl RunWith<BinInfo> for Show {
 /// How to sign: `oidc` (keyless, with the CI job's identity) or `key` (an
 /// Ed25519 key given with --key).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg(feature = "sign")]
+#[cfg(all(feature = "create", feature = "manifest"))]
 enum SignWith {
     Oidc,
     Key,
 }
 
-#[cfg(feature = "sign")]
+#[cfg(all(feature = "create", feature = "manifest"))]
 impl std::str::FromStr for SignWith {
     type Err = String;
 
@@ -306,7 +306,7 @@ impl std::str::FromStr for AttestorArg {
 }
 
 /// Resolve who signs from the shared signing flags.
-#[cfg(feature = "sign")]
+#[cfg(all(feature = "create", feature = "manifest"))]
 fn signer(key: &Option<PathBuf>, sign: Option<SignWith>, no_log: bool) -> Result<Signer> {
     let sign_with = sign.unwrap_or(if key.is_some() {
         SignWith::Key
@@ -532,7 +532,7 @@ struct Create {
 
 /// The `identity` block the signer declares, with `pin_workflow: false`
 /// when the publisher asked for it. Only a keyless signer has a workflow.
-#[cfg(feature = "sign")]
+#[cfg(all(feature = "create", feature = "manifest"))]
 fn declared_identity(signer: &Signer, no_pin_workflow: bool) -> Result<packslip::model::Identity> {
     let mut identity = signer.identity();
     if no_pin_workflow {

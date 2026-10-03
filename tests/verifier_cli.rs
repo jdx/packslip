@@ -58,11 +58,49 @@ fn verifier_checks_real_historical_bundle_and_repository_pin() {
     assert!(!output.status.success());
 }
 
-#[cfg(not(feature = "create"))]
 #[test]
-fn verifier_refuses_publishing_commands() {
-    for command in ["create", "releases", "keygen"] {
-        let output = run(&[command]);
-        assert!(!output.status.success(), "{command} unexpectedly available");
+fn publishing_commands_follow_their_features() {
+    let dir = tempfile::tempdir().unwrap();
+    for (command, enabled) in [
+        (
+            "create",
+            cfg!(all(feature = "create", feature = "manifest")),
+        ),
+        (
+            "releases",
+            cfg!(all(feature = "create", feature = "manifest")),
+        ),
+        ("keygen", cfg!(feature = "sign")),
+    ] {
+        if !enabled {
+            let output = Command::new(env!("CARGO_BIN_EXE_packslip"))
+                .arg(command)
+                .current_dir(dir.path())
+                .output()
+                .unwrap();
+            assert!(!output.status.success(), "{command} unexpectedly available");
+        }
     }
+}
+
+#[test]
+fn pin_and_show_work_without_publishing() {
+    let bundle = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/hk-v2.3.0.sigstore.json"
+    );
+    let output = run(&["pin", bundle]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap().trim(),
+        "ps1_snirenkjwr7m5ozgcufameodnm"
+    );
+    let output = run(&["show", bundle]);
+    assert!(output.status.success());
+    let document: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(document["predicate"]["project"], "github.com/jdx/hk");
 }

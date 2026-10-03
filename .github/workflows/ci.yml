@@ -35,6 +35,8 @@ jobs:
       - run: cargo test --no-default-features
       - run: cargo clippy --no-default-features --features verify-cli --all-targets -- -D warnings
       - run: cargo test --no-default-features --features verify-cli
+      - run: cargo clippy --no-default-features --features verify-cli,sign --all-targets -- -D warnings
+      - run: cargo test --no-default-features --features verify-cli,sign --test verifier_cli
       - run: mise run lint
       - run: hk check --all
       - run: mise run render
