@@ -219,6 +219,15 @@ Windows arm64 is built on a native arm64 runner rather than cross-compiled,
 because `aws-lc-sys` — the crypto behind rustls — compiles C and assembly
 for the host toolchain.
 
+Both Windows builds link the C runtime statically: `.cargo/config.toml`
+sets `+crt-static` for MSVC targets, and `aws-lc-sys` compiles its C
+against the matching static runtime. `packslip.exe` therefore starts on a
+machine without the Visual C++ Redistributable, such as Windows Sandbox
+or a Server Core container, and the release's packslip records an empty
+`requires.libs` for the Windows archives. A `RUSTFLAGS` variable in the
+build job would replace the setting and bring back the
+`vcruntime140.dll` dependency.
+
 ## macOS signing and notarization
 
 The macOS binary is signed with the `Developer ID Application: Jeffrey

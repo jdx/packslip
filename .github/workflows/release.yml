@@ -99,7 +99,8 @@ jobs:
         env:
           # aws-lc-sys (rustls' crypto) builds C on every target: point cc
           # at musl-gcc for the musl targets and use prebuilt NASM objects
-          # on Windows.
+          # on Windows. Leave RUSTFLAGS unset: it would replace the static
+          # C runtime that .cargo/config.toml gives the Windows builds.
           CC_x86_64_unknown_linux_musl: musl-gcc
           CC_aarch64_unknown_linux_musl: musl-gcc
           AWS_LC_SYS_PREBUILT_NASM: "1"

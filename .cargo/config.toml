@@ -1,0 +1,5 @@
+# Link the C runtime into Windows builds, so packslip.exe starts on a machine
+# without the Visual C++ Redistributable (vcruntime140.dll), such as Windows
+# Sandbox or a Server Core container. A RUSTFLAGS variable replaces this.
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]
