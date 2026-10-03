@@ -136,11 +136,22 @@ fn installation_key(project: &str, repository_id: Option<&str>) -> String {
 
 fn read_optional(path: &Path) -> Result<Option<String>> {
     use std::io::Read as _;
-    let file = match std::fs::File::open(path) {
+    let mut open = std::fs::OpenOptions::new();
+    open.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        // A replaced configuration path must not block while opening a FIFO.
+        open.custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32);
+    }
+    let file = match open.open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
+    if !file.metadata()?.is_file() {
+        bail!("installation configuration must be a regular file");
+    }
     let mut text = String::new();
     file.take(4 * 1024 * 1024 + 1).read_to_string(&mut text)?;
     if text.len() > 4 * 1024 * 1024 {
@@ -171,10 +182,11 @@ fn constraints(
     )?;
     let mut caller = caller.clone();
     if let Some(text) = &caller.pubkey {
-        caller.pubkey = Some(if Path::new(text).is_file() {
-            read_optional(Path::new(text))?.unwrap()
-        } else {
+        caller.pubkey = Some(if crate::minisign::PublicKey::parse(text).is_ok() {
             text.clone()
+        } else {
+            read_optional(Path::new(text))?
+                .ok_or_else(|| eyre::eyre!("public-key file is missing"))?
         });
     }
     constraints.push(caller);
@@ -899,6 +911,52 @@ mod tests {
                 .contains("different remembered repository ID")
         );
         assert!(report.receipt.exports.keys().all(|p| p.exists()));
+    }
+
+    #[test]
+    fn public_key_files_are_read_once_and_the_key_is_remembered() {
+        let f = Fixture::new();
+        let path = f.root.path().join("release.pub");
+        std::fs::write(&path, f.key.public_key().to_file()).unwrap();
+        let mut request = f.request(false);
+        request.constraints.pubkey = Some(path.to_str().unwrap().into());
+        let report = f.run(request).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        f.run(f.request(false)).unwrap();
+        let mut request = f.request(false);
+        request.constraints.pubkey = Some(path.to_str().unwrap().into());
+        request.force = true;
+        assert!(
+            f.run(request)
+                .unwrap_err()
+                .to_string()
+                .contains("public-key file is missing")
+        );
+        std::fs::create_dir(&path).unwrap();
+        let mut request = f.request(false);
+        request.constraints.pubkey = Some(path.to_str().unwrap().into());
+        assert!(f.run(request).is_err());
+        assert!(report.receipt.exports.keys().all(|p| p.exists()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn configuration_fifo_is_rejected_without_waiting_for_a_writer() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("key.pub");
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(&path)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            read_optional(&path)
+                .unwrap_err()
+                .to_string()
+                .contains("regular file")
+        );
     }
 
     #[test]
