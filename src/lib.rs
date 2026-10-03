@@ -28,6 +28,8 @@ pub mod discovery;
 pub mod dsse;
 pub mod fingerprint;
 pub mod forge;
+#[cfg(feature = "install-policy")]
+pub mod install_policy;
 #[cfg(feature = "linkage")]
 pub mod linkage;
 #[cfg(feature = "manifest")]

@@ -46,6 +46,7 @@ verify-cli = ["dep:color-eyre", "dep:eyre", "dep:usage_rs"]
 # Authenticated, fresh trust-root refresh and offline cache replay.
 trust-root = ["dep:sigstore-tuf", "dep:reqwest", "dep:tempfile", "sigstore-trust-root/tuf"]
 discovery = ["trust-root", "dep:rustix", "dep:windows-sys"]
+install-policy = ["discovery", "dep:toml"]
 # `packslip create`: build a statement from a set of built artifacts.
 create = ["archive", "linkage", "sign"]
 # Read a release TOML manifest for `packslip create --manifest`.
