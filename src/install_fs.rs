@@ -894,6 +894,11 @@ impl Session {
                 "extraction stage is outside the locked installation parent",
             ));
         }
+        // Validation must not recreate a vanished extraction stage. A missing
+        // stage is an error, never a successful empty replacement.
+        if !fs::symlink_metadata(extracted.tree.path())?.is_dir() {
+            return Err(conflict("extraction stage is not a directory"));
+        }
         directory(extracted.tree.path(), false)?;
         let previous = self.receipt(project)?;
         if entry(&self.tree)?.is_some() && !force {
@@ -1302,6 +1307,43 @@ mod tests {
         assert!(!session.tree.exists());
         assert!(!session.bin.join(export_name("tool").unwrap()).exists());
         assert!(session.receipt("example.test/tool").unwrap().is_none());
+    }
+
+    #[test]
+    fn vanished_stage_preserves_the_previous_installation() {
+        let root = tempfile::tempdir().unwrap();
+        let session = Session::open(
+            &root.path().join("state"),
+            &root.path().join("tree/tool"),
+            &root.path().join("bin"),
+        )
+        .unwrap();
+        let project = "example.test/tool";
+        session
+            .commit(
+                staged(session.tree.parent().unwrap(), &["tool"]),
+                project,
+                "1",
+                false,
+                History::default(),
+                export,
+            )
+            .unwrap();
+        let extracted = staged(session.tree.parent().unwrap(), &["tool"]);
+        let stage = extracted.tree.path().to_owned();
+        fs::remove_dir_all(&stage).unwrap();
+        assert!(
+            session
+                .commit(extracted, project, "2", true, History::default(), export)
+                .is_err()
+        );
+        assert!(!stage.exists());
+        assert_eq!(session.receipt(project).unwrap().unwrap().version, "1");
+        assert_eq!(
+            fs::read(session.tree.join("runtime/data")).unwrap(),
+            b"runtime dependency"
+        );
+        assert!(session.bin.join(export_name("tool").unwrap()).exists());
     }
 
     #[test]
