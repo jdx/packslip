@@ -87,7 +87,7 @@ pub struct Record {
     pub provenance: Vec<Provenance>,
 }
 /// Preserve each artifact's linked-provenance count within its stable build
-/// scope, format and exported commands. URLs themselves change with build
+/// scope. Formats carrying the same build remain interchangeable. URLs change with build
 /// digests and versions; deduplicating scopes would hide partial reductions.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Provenance {
@@ -100,20 +100,13 @@ fn scopes(statement: &crate::Statement) -> Vec<Provenance> {
         .artifacts
         .iter()
         .filter(|a| !a.provenance.is_empty())
-        .map(|a| {
-            let mut commands: Vec<_> = a.bin.iter().map(|bin| &bin.name).collect();
-            commands.sort();
-            Provenance {
-                scope: format!(
-                    "{:?}",
-                    (&a.os, &a.arch, &a.libc, &a.variant, &a.format, commands)
-                ),
-                links: a
-                    .provenance
-                    .iter()
-                    .collect::<std::collections::BTreeSet<_>>()
-                    .len(),
-            }
+        .map(|a| Provenance {
+            scope: format!("{:?}", (&a.os, &a.arch, &a.libc, &a.variant)),
+            links: a
+                .provenance
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
         })
         .collect();
     scopes.sort();
@@ -567,6 +560,8 @@ mod tests {
         statement.predicate.artifacts[1]
             .provenance
             .push("https://two.test/build2".into());
+        assert!(retains_provenance(&before, &scopes(&statement)));
+        statement.predicate.artifacts[1].format = Some("zip".into());
         assert!(retains_provenance(&before, &scopes(&statement)));
     }
     #[test]
