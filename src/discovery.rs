@@ -157,8 +157,28 @@ impl Client {
     /// Fetch at most `limit` bytes, with no network at all in offline mode.
     /// Only 404 means an optional document is absent; malformed/failed ones fail.
     pub async fn fetch(&self, input: &str, limit: u64) -> Result<Option<Vec<u8>>, Error> {
+        self.fetch_under(input, limit, None).await
+    }
+    fn host_cache_path(&self, url: &Url) -> PathBuf {
+        self.cache.join(format!(
+            "host-{}",
+            hex::encode(sha2::Sha256::digest(url.as_str().as_bytes()))
+        ))
+    }
+    async fn fetch_under(
+        &self,
+        input: &str,
+        limit: u64,
+        host_origin: Option<&str>,
+    ) -> Result<Option<Vec<u8>>, Error> {
         let initial = parse_url(input)?;
-        let path = self.cache_path(&initial);
+        // Host first-use authority has its own cache namespace; bytes fetched
+        // with the general cross-origin redirect policy cannot gain authority.
+        let path = if host_origin.is_some() {
+            self.host_cache_path(&initial)
+        } else {
+            self.cache_path(&initial)
+        };
         if self.offline {
             if path.with_extension("missing").is_file() && !path.is_file() {
                 return Ok(None);
@@ -200,6 +220,9 @@ impl Client {
                     .and_then(|h| h.to_str().ok())
                     .ok_or(Error::Url)?;
                 current = parse_url(current.join(location).map_err(|_| Error::Url)?.as_str())?;
+                if host_origin.is_some_and(|allowed| origin(&current) != allowed) {
+                    return Err(Error::Url);
+                }
                 continue;
             }
             if response.status() == reqwest::StatusCode::NOT_FOUND {
@@ -324,7 +347,8 @@ impl Client {
 
 /// Bytes obtained through the named host's authenticated HTTPS origin (or its
 /// local offline cache). The private fields prevent arbitrary supplied bundles
-/// from claiming that transport authority. Redirects remain HTTPS-only.
+/// from claiming that transport authority. Redirects stay within that origin;
+/// general HTTPS downloads may redirect when independent pins establish trust.
 #[derive(Debug)]
 pub struct HostDocument {
     project: Project,
@@ -353,10 +377,13 @@ impl Client {
         {
             return Err(Error::Url);
         }
-        Ok(self.fetch(input, limit).await?.map(|bytes| HostDocument {
-            project: project.clone(),
-            bytes,
-        }))
+        Ok(self
+            .fetch_under(input, limit, Some(&origin(&url)))
+            .await?
+            .map(|bytes| HostDocument {
+                project: project.clone(),
+                bytes,
+            }))
     }
 }
 
@@ -389,6 +416,16 @@ pub struct Github {
     /// Keep the forge hint even when only the signed list maps its tag.
     pub latest_tag: Option<String>,
     pub repository_id: String,
+}
+
+impl Github {
+    pub fn choose(
+        &self,
+        list: Option<&crate::ReleaseListStatement>,
+        requested: Option<&str>,
+    ) -> Result<Release, Error> {
+        choose_with_latest(&self.releases, list, requested, self.latest_tag.as_deref())
+    }
 }
 
 pub async fn github(client: &Client, project: &Project) -> Result<Github, Error> {
@@ -442,9 +479,6 @@ pub async fn github(client: &Client, project: &Project) -> Result<Github, Error>
                     })
                     .map(|a| a.browser_download_url)
                     .collect();
-                if bundles.is_empty() {
-                    continue;
-                }
                 releases.push(Release {
                     version: version.to_string(),
                     recommended: latest
@@ -536,6 +570,8 @@ pub fn choose_with_latest(
                 .map_err(|_| Error::Version(entry.version.clone()))?;
         }
     }
+    // Keep assetless forge tags as metadata for list tag mapping and yanks;
+    // filter them from installable choices after merging the signed list.
     let mut choices: BTreeMap<String, Release> = live
         .iter()
         .map(|r| (r.version.clone(), r.clone()))
@@ -579,6 +615,7 @@ pub fn choose_with_latest(
             }
         }
     }
+    choices.retain(|_, release| !release.bundles.is_empty());
     if let Some(request) = requested.filter(|r| *r != "latest") {
         let mut matches: Vec<_> = choices
             .into_values()
@@ -689,7 +726,7 @@ mod tests {
         let releases = [Release {
             version: "2.0.0".into(),
             tag: "v2.0.0".into(),
-            bundles: vec![],
+            bundles: vec!["https://example.test/bundle".into()],
             recommended: true,
         }];
         assert!(matches!(
@@ -750,13 +787,13 @@ mod tests {
             Release {
                 version: "1.0.0".into(),
                 tag: "v1.0.0".into(),
-                bundles: vec![],
+                bundles: vec!["https://example.test/bundle".into()],
                 recommended: true,
             },
             Release {
                 version: "2.0.0".into(),
                 tag: "v2.0.0".into(),
-                bundles: vec![],
+                bundles: vec!["https://example.test/bundle".into()],
                 recommended: false,
             },
         ];
@@ -774,7 +811,7 @@ mod tests {
             .map(|version| Release {
                 version: version.into(),
                 tag: format!("v{version}"),
-                bundles: vec![],
+                bundles: vec!["https://example.test/bundle".into()],
                 recommended: false,
             })
             .collect();
@@ -831,7 +868,28 @@ mod tests {
         );
     }
     #[test]
-    fn github_excludes_uninstallable_releases_and_retains_unmapped_latest() {
+    fn signed_list_maps_assetless_forge_tags_and_withdrawals() {
+        let live = vec![Release {
+            version: "2.0.0".into(),
+            tag: "v2.0.0".into(),
+            bundles: vec![],
+            recommended: true,
+        }];
+        let mut list = signed_list();
+        list.predicate.releases[0].tag = None;
+        list.predicate.releases[0].status = None;
+        let release = choose_with_latest(&live, Some(&list), None, Some("v2.0.0")).unwrap();
+        assert_eq!(release.tag, "v2.0.0");
+        assert!(release.recommended);
+        assert!(choose(&live, None, None).is_err());
+        list.predicate.releases[0].status = Some(crate::model::ReleaseStatus::Yanked);
+        assert!(matches!(
+            choose(&live, Some(&list), Some("v2.0.0")),
+            Err(Error::Yanked(_))
+        ));
+    }
+    #[test]
+    fn github_filters_uninstallable_choices_and_retains_unmapped_latest() {
         let dir = tempfile::tempdir().unwrap();
         let client = Client::new(dir.path().into(), true, HttpConfig::default()).unwrap();
         let base = "https://api.github.com/repos/jdx/tool";
@@ -869,7 +927,7 @@ mod tests {
             .unwrap();
         assert_eq!(view.repository_id, "123");
         assert_eq!(view.latest_tag.as_deref(), Some("stable"));
-        assert_eq!(view.releases.len(), 1);
+        assert_eq!(view.releases.len(), 2);
         assert_eq!(choose(&view.releases, None, None).unwrap().version, "1.0.0");
     }
     #[test]
@@ -890,7 +948,12 @@ mod tests {
                 .is_err()
         );
         let url = parse_url("https://example.test/list").unwrap();
-        std::fs::write(client.cache_path(&url), b"document").unwrap();
+        std::fs::write(client.cache_path(&url), b"untrusted referral").unwrap();
+        assert!(
+            rt.block_on(client.fetch_host(&project, url.as_str(), 30))
+                .is_err()
+        );
+        std::fs::write(client.host_cache_path(&url), b"document").unwrap();
         let document = rt
             .block_on(client.fetch_host(&project, url.as_str(), 10))
             .unwrap()
