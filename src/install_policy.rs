@@ -84,44 +84,91 @@ pub struct Record {
     pub repository: Option<ForgePin>,
     pub pin_workflow: bool,
     pub attested_by: Attestor,
-    // Match build scopes across versions rather than versioned archive names.
-    pub provenance_scopes: Vec<String>,
+    pub provenance: Vec<Provenance>,
 }
-fn scopes(statement: &crate::Statement) -> Vec<String> {
+/// Preserve each artifact's linked-provenance count within its stable build
+/// scope, format and exported commands. URLs themselves change with build
+/// digests and versions; deduplicating scopes would hide partial reductions.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Provenance {
+    pub scope: String,
+    pub links: usize,
+}
+fn scopes(statement: &crate::Statement) -> Vec<Provenance> {
     let mut scopes: Vec<_> = statement
         .predicate
         .artifacts
         .iter()
         .filter(|a| !a.provenance.is_empty())
         .map(|a| {
-            format!(
-                "{}/{}/{}/{}",
-                a.os.as_deref().unwrap_or("any"),
-                a.arch.as_deref().unwrap_or("any"),
-                a.libc.as_deref().unwrap_or("any"),
-                a.variant.as_deref().unwrap_or("default")
-            )
+            let mut commands: Vec<_> = a.bin.iter().map(|bin| &bin.name).collect();
+            commands.sort();
+            Provenance {
+                scope: format!(
+                    "{:?}",
+                    (&a.os, &a.arch, &a.libc, &a.variant, &a.format, commands)
+                ),
+                links: a
+                    .provenance
+                    .iter()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len(),
+            }
         })
         .collect();
     scopes.sort();
-    scopes.dedup();
     scopes
+}
+fn retains_provenance(previous: &[Provenance], next: &[Provenance]) -> bool {
+    fn group(entries: &[Provenance]) -> BTreeMap<&str, Vec<usize>> {
+        let mut groups: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+        for entry in entries {
+            groups.entry(&entry.scope).or_default().push(entry.links);
+        }
+        for links in groups.values_mut() {
+            links.sort_by(|a, b| b.cmp(a));
+        }
+        groups
+    }
+    let before = group(previous);
+    let now = group(next);
+    before.iter().all(|(scope, counts)| {
+        now.get(scope).is_some_and(|next| {
+            next.len() >= counts.len()
+                && counts
+                    .iter()
+                    .zip(next)
+                    .all(|(before, after)| after >= before)
+        })
+    })
 }
 fn changes(previous: &Record, next: &Record) -> Vec<String> {
     let mut changes = Vec::new();
     if previous.scheme == Scheme::SigstoreOidc && next.scheme == Scheme::SigstoreKey {
         changes.push("OIDC identity replaced by a long-lived key".into());
     }
-    let signer_continues = match (&previous.repository, &next.repository) {
-        (Some(before), Some(now)) if now.continues(before) && previous.issuer == next.issuer => {
-            if previous.pin_workflow && next.pin_workflow {
-                crate::forge::same_workflow(&previous.signer, Some(before), &next.signer, Some(now))
-            } else {
-                true
+    let signer_continues = previous.scheme == next.scheme
+        && previous.issuer == next.issuer
+        && match (&previous.repository, &next.repository) {
+            (Some(before), Some(now)) => {
+                now.continues(before)
+                    && (!next.pin_workflow
+                        || crate::forge::same_workflow(
+                            &previous.signer,
+                            Some(before),
+                            &next.signer,
+                            Some(now),
+                        ))
             }
-        }
-        _ => previous.signer == next.signer && previous.issuer == next.issuer,
-    };
+            (Some(_), None) => false,
+            _ if previous.scheme == Scheme::SigstoreOidc => crate::forge::same_workflow(
+                &previous.signer,
+                None,
+                &next.signer,
+                next.repository.as_ref(),
+            ),
+            _ => previous.signer == next.signer,
+        };
     if !signer_continues {
         changes.push(format!(
             "signer changed from {:?} to {:?}",
@@ -134,11 +181,7 @@ fn changes(previous: &Record, next: &Record) -> Vec<String> {
     if previous.attested_by == Attestor::Vendor && next.attested_by == Attestor::Repackager {
         changes.push("vendor attestation replaced by repackager".into());
     }
-    if previous
-        .provenance_scopes
-        .iter()
-        .any(|scope| !next.provenance_scopes.contains(scope))
-    {
+    if !retains_provenance(&previous.provenance, &next.provenance) {
         changes.push("previous build provenance links dropped".into());
     }
     changes
@@ -156,6 +199,11 @@ pub fn continuity(
     constraints: &[Constraints],
     accepted_ids: &[String],
 ) -> Result<(), Error> {
+    if next.project != project || previous.is_some_and(|record| record.project != project) {
+        return Err(Error::Constraint(
+            "trust record belongs to a different project".into(),
+        ));
+    }
     let Some(previous) = previous else {
         return Ok(());
     };
@@ -237,7 +285,18 @@ fn check_constraints(
     }
     Ok(())
 }
-fn host_policy(bundle: &str) -> Result<Policy, Error> {
+fn host_policy(
+    bundle: &str,
+    constraints: &[Constraints],
+    host_authority: bool,
+) -> Result<Policy, Error> {
+    if !host_authority {
+        return constraints.iter().find(|c| c.issuer.is_some()
+            && (c.identity.is_some() || c.identity_prefix.is_some()))
+            .map(|c| Policy { issuer: c.issuer.clone(), identity: c.identity.clone(),
+                identity_prefix: c.identity_prefix.clone() })
+            .ok_or_else(|| Error::Constraint("host bundle requires a pinned identity and issuer, or authenticated named-host discovery".into()));
+    }
     // For a host project, HTTPS to that host is the first-use authority. Never
     // infer project intent here: the caller still requires an exact project.
     let payload = crate::sigstore::peek_statement(bundle)?;
@@ -262,6 +321,27 @@ pub fn release(
     constraints: &[Constraints],
     options: crate::Options<'_>,
 ) -> Result<Release, Error> {
+    release_under(project, resolved_id, bundle, constraints, options, false)
+}
+/// First-use host trust requires bytes fetched from the named HTTPS host.
+/// Arbitrary supplied bundles must instead use independent key/identity pins.
+pub fn release_host(
+    document: &crate::discovery::HostDocument,
+    constraints: &[Constraints],
+    options: crate::Options<'_>,
+) -> Result<Release, Error> {
+    let bundle = std::str::from_utf8(document.bytes())
+        .map_err(|_| Error::Constraint("host bundle is not UTF-8".into()))?;
+    release_under(document.project(), None, bundle, constraints, options, true)
+}
+fn release_under(
+    project: &str,
+    resolved_id: Option<&str>,
+    bundle: &str,
+    constraints: &[Constraints],
+    options: crate::Options<'_>,
+    host_authority: bool,
+) -> Result<Release, Error> {
     let key = key(constraints)?;
     let (verified, repository) = if let Some(key) = &key {
         (crate::verify(bundle, &Trust::Key(key), options, &[])?, None)
@@ -277,7 +357,7 @@ pub fn release(
         (
             crate::verify(
                 bundle,
-                &Trust::Identity(&host_policy(bundle)?),
+                &Trust::Identity(&host_policy(bundle, constraints, host_authority)?),
                 options,
                 &[],
             )?,
@@ -299,7 +379,7 @@ pub fn release(
         repository,
         pin_workflow: verified.pin_workflow,
         attested_by: verified.attested_by,
-        provenance_scopes: scopes(&statement),
+        provenance: scopes(&statement),
     };
     check_constraints(constraints, &record, bundle)?;
     Ok(Release {
@@ -319,6 +399,26 @@ pub fn list(
     constraints: &[Constraints],
     options: crate::Options<'_>,
 ) -> Result<List, Error> {
+    list_under(project, resolved_id, bundle, constraints, options, false)
+}
+/// Verify a first-use host list only with the named transport authority.
+pub fn list_host(
+    document: &crate::discovery::HostDocument,
+    constraints: &[Constraints],
+    options: crate::Options<'_>,
+) -> Result<List, Error> {
+    let bundle = std::str::from_utf8(document.bytes())
+        .map_err(|_| Error::Constraint("host bundle is not UTF-8".into()))?;
+    list_under(document.project(), None, bundle, constraints, options, true)
+}
+fn list_under(
+    project: &str,
+    resolved_id: Option<&str>,
+    bundle: &str,
+    constraints: &[Constraints],
+    options: crate::Options<'_>,
+    host_authority: bool,
+) -> Result<List, Error> {
     let key = key(constraints)?;
     let (verified, repository) = if let Some(key) = &key {
         (
@@ -334,7 +434,11 @@ pub fn list(
         (accepted.verified, accepted.check.pin)
     } else {
         (
-            crate::verify_release_list(bundle, &Trust::Identity(&host_policy(bundle)?), options)?,
+            crate::verify_release_list(
+                bundle,
+                &Trust::Identity(&host_policy(bundle, constraints, host_authority)?),
+                options,
+            )?,
             None,
         )
     };
@@ -351,7 +455,7 @@ pub fn list(
         repository,
         pin_workflow: verified.pin_workflow,
         attested_by: Attestor::Vendor,
-        provenance_scopes: vec![],
+        provenance: vec![],
     };
     check_constraints(constraints, &record, bundle)?;
     Ok(List { verified, record })
@@ -369,7 +473,10 @@ mod tests {
             repository: Some(ForgePin::of("github.com/jdx/tool", "123")),
             pin_workflow,
             attested_by: Attestor::Vendor,
-            provenance_scopes: vec!["linux/x86_64/gnu/default".into()],
+            provenance: vec![Provenance {
+                scope: "linux/x86_64/gnu/default".into(),
+                links: 1,
+            }],
         }
     }
     #[test]
@@ -385,6 +492,76 @@ mod tests {
             )
             .is_empty()
         );
+    }
+    #[test]
+    fn repository_ids_and_unpinned_workflow_refs_are_compared() {
+        let old = record("release.yml@refs/tags/v1", true);
+        let mut recreated = old.clone();
+        recreated.repository = Some(ForgePin::of("github.com/jdx/tool", "456"));
+        assert!(!changes(&old, &recreated).is_empty());
+        let mut old = old;
+        old.repository = None;
+        let mut next = record("release.yml@refs/tags/v2", true);
+        next.repository = None;
+        assert!(changes(&old, &next).is_empty());
+        next.signer = record("other.yml@refs/tags/v2", true).signer;
+        assert!(!changes(&old, &next).is_empty());
+    }
+    #[test]
+    fn arbitrary_host_bundles_cannot_supply_their_own_trust_policy() {
+        let bundle = include_str!("../tests/fixtures/hk-v2.3.0.sigstore.json");
+        let root = crate::sigstore::trusted_root(None).unwrap();
+        let options = crate::Options {
+            require_log: true,
+            trusted_root: &root,
+        };
+        assert!(matches!(
+            release("example.test", None, bundle, &[], options),
+            Err(Error::Constraint(_))
+        ));
+        assert!(matches!(
+            list("example.test", None, bundle, &[], options),
+            Err(Error::Constraint(_))
+        ));
+        let policy = host_policy(
+            "invalid",
+            &[Constraints {
+                issuer: Some("https://issuer.test".into()),
+                identity: Some("person@example.test".into()),
+                ..Constraints::default()
+            }],
+            false,
+        )
+        .unwrap();
+        assert_eq!(policy.identity.as_deref(), Some("person@example.test"));
+    }
+    #[test]
+    fn provenance_tracks_artifacts_and_link_counts_without_deduplicating_scopes() {
+        let mut statement: crate::Statement = serde_json::from_slice(
+            &crate::sigstore::peek_statement(include_str!(
+                "../tests/fixtures/hk-v2.3.0.sigstore.json"
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        statement.predicate.artifacts.truncate(1);
+        statement.predicate.artifacts[0].provenance = vec![
+            "https://one.test/build1".into(),
+            "https://two.test/build1".into(),
+        ];
+        statement
+            .predicate
+            .artifacts
+            .push(statement.predicate.artifacts[0].clone());
+        let before = scopes(&statement);
+        statement.predicate.artifacts[1].provenance.clear();
+        assert!(!retains_provenance(&before, &scopes(&statement)));
+        statement.predicate.artifacts[1].provenance = vec!["https://one.test/build2".into()];
+        assert!(!retains_provenance(&before, &scopes(&statement)));
+        statement.predicate.artifacts[1]
+            .provenance
+            .push("https://two.test/build2".into());
+        assert!(retains_provenance(&before, &scopes(&statement)));
     }
     #[test]
     fn proposal_is_bound_to_policy_and_previous_record() {
@@ -495,6 +672,72 @@ mod tests {
         );
     }
     #[test]
+    #[cfg(feature = "sign")]
+    fn explicit_key_authority_still_requires_exact_project_and_all_constraints() {
+        let key = crate::minisign::SecretKey::from_seed([7; 32]);
+        let public = key.public_key();
+        let mut statement: crate::Statement = serde_json::from_slice(
+            &crate::sigstore::peek_statement(include_str!(
+                "../tests/fixtures/hk-v2.3.0.sigstore.json"
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        statement.predicate.identity.scheme = Scheme::SigstoreKey;
+        statement.predicate.identity.key_id = crate::minisign::key_id_hex(&public.key_id);
+        statement.predicate.identity.issuer = None;
+        statement.predicate.identity.pin_workflow = None;
+        let bundle = crate::sigstore::sign(
+            crate::sigstore::Signer::Key { key, log: false },
+            &serde_json::to_vec(&statement).unwrap(),
+        )
+        .unwrap();
+        let root = crate::sigstore::trusted_root(None).unwrap();
+        let options = crate::Options {
+            require_log: false,
+            trusted_root: &root,
+        };
+        let pinned = Constraints {
+            pubkey: Some(public.to_file()),
+            ..Constraints::default()
+        };
+        let accepted = release(
+            "github.com/jdx/hk",
+            None,
+            &bundle,
+            std::slice::from_ref(&pinned),
+            options,
+        )
+        .unwrap();
+        assert_eq!(accepted.record.scheme, Scheme::SigstoreKey);
+        assert!(accepted.record.repository.is_none()); // No claim of forge ownership.
+        assert!(
+            release(
+                "github.com/jdx/other",
+                None,
+                &bundle,
+                std::slice::from_ref(&pinned),
+                options
+            )
+            .is_err()
+        );
+        assert!(release("github.com/jdx/hk", None, &bundle, &[], options).is_err());
+        let forge_pin = Constraints {
+            pins: vec!["ps1_snirenkjwr7m5ozgcufameodnm".into()],
+            ..Constraints::default()
+        };
+        assert!(
+            release(
+                "github.com/jdx/hk",
+                None,
+                &bundle,
+                &[pinned, forge_pin],
+                options
+            )
+            .is_err()
+        );
+    }
+    #[test]
     fn administrator_files_are_independent_and_malformed_pins_fail() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
@@ -528,11 +771,11 @@ mod tests {
     fn provenance_and_attestation_reductions_are_proposals() {
         let old = record("release.yml@refs/tags/v1", true);
         let mut next = old.clone();
-        next.provenance_scopes.clear();
+        next.provenance.clear();
         next.attested_by = Attestor::Repackager;
         assert_eq!(changes(&old, &next).len(), 2);
         assert!(
-            changes(
+            !changes(
                 &record("release.yml@refs/tags/v1", false),
                 &record("other.yml@refs/tags/v2", true)
             )
