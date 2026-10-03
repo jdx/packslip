@@ -49,6 +49,7 @@ discovery = ["trust-root", "dep:rustix", "dep:windows-sys"]
 install-policy = ["discovery", "dep:toml"]
 install-extract = ["archive", "dep:tempfile", "dep:lzma-rust2"]
 install-fs = ["install-policy", "install-extract", "dep:windows-permissions", "dep:exacl", "dep:nix", "dep:libc"]
+install-launcher = ["install-fs"]
 # `packslip create`: build a statement from a set of built artifacts.
 create = ["archive", "linkage", "sign"]
 # Read a release TOML manifest for `packslip create --manifest`.
