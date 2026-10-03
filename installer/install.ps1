@@ -39,18 +39,16 @@
     throw 'packslip install: this script is for Windows; on Linux and macOS run: curl -fsSL https://packslip.sh | sh'
   }
 
-  # The OS architecture rather than this process's, so an x64 PowerShell
-  # emulated on an ARM64 machine still gets the ARM64 build. Older .NET
-  # lacks RuntimeInformation; the environment says the same there.
-  $arch = $null
-  try {
-    $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
-  } catch {
+  # The machine's architecture, not this process's. PowerShell can run
+  # emulated, as the 32-bit Windows PowerShell or an x64 build on an ARM64
+  # machine, and then both .NET's OSArchitecture and PROCESSOR_ARCHITECTURE
+  # name the emulated one. The system environment in the registry keeps the
+  # native value for every process; the process environment is the fallback.
+  $arch = (Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment' -Name PROCESSOR_ARCHITECTURE -ErrorAction SilentlyContinue).PROCESSOR_ARCHITECTURE
+  if (-not $arch) {
     $arch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
   }
-  # Hashtable keys match without regard to case: X64 and Arm64 from .NET,
-  # AMD64 and ARM64 from the environment.
-  $asset = @{ 'X64' = 'windows-x64'; 'AMD64' = 'windows-x64'; 'ARM64' = 'windows-arm64' }[[string]$arch]
+  $asset = @{ 'AMD64' = 'windows-x64'; 'ARM64' = 'windows-arm64' }[[string]$arch]
   if (-not $asset) {
     throw "packslip install: packslip publishes no build for Windows on $arch"
   }

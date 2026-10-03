@@ -252,6 +252,16 @@ jobs:
         env:
           ASSET: ${{ matrix.asset }}
         run: installer/test.ps1 -Dir work -Template installer/install.ps1 -Asset $env:ASSET
+      # The 32-bit Windows PowerShell runs emulated on ARM64, where .NET and
+      # the process environment name x86 or x64; it must still get the
+      # machine's build.
+      - name: Test install.ps1 under 32-bit Windows PowerShell
+        shell: pwsh
+        env:
+          ASSET: ${{ matrix.asset }}
+        run: |
+          & "$env:SystemRoot\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File installer/test.ps1 -Dir work -Template installer/install.ps1 -Asset $env:ASSET
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   # Aggregator that required-status-checks can target. If any upstream job
   # failed, was cancelled, or was unexpectedly skipped, this step exits non-zero
