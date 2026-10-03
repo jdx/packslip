@@ -294,10 +294,16 @@ fn tar_entries(file: &mut std::fs::File, limits: Limits) -> Result<Vec<Entry>, E
         let p = path(p)?;
         let kind = entry.header().entry_type();
         let link = || {
-            entry
+            let target = entry
                 .link_name()?
-                .and_then(|p| p.to_str().map(str::to_owned))
-                .ok_or_else(|| std::io::Error::other("invalid archive link"))
+                .ok_or_else(|| std::io::Error::other("invalid archive link"))?;
+            let target = target
+                .to_str()
+                .ok_or_else(|| std::io::Error::other("non-UTF8 archive link"))?;
+            if target.len() > 4096 || target.split('/').count() > 128 {
+                return Err(std::io::Error::other("archive link exceeds path limits"));
+            }
+            Ok(target.to_owned())
         };
         let kind = if kind.is_file() {
             Kind::File
@@ -934,6 +940,16 @@ mod tests {
         }
         for target in ["a/".repeat(129), "a".repeat(4097)] {
             assert!(link_path(Path::new(""), &target).is_err());
+            let input = parent.path().join("long-link.tar");
+            let mut builder = tar::Builder::new(std::fs::File::create(&input).unwrap());
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Symlink);
+            header.set_size(0);
+            header.set_mode(0o777);
+            builder.append_link(&mut header, "link", &target).unwrap();
+            builder.finish().unwrap();
+            let mut file = std::fs::File::open(&input).unwrap();
+            assert!(tar_entries(&mut file, Limits::default()).is_err());
         }
         let input = parent.path().join("link.tar");
         let mut builder = tar::Builder::new(std::fs::File::create(&input).unwrap());
