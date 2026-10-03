@@ -27,6 +27,8 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("discovery JSON: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("discovery version is not strict semver: {0:?}")]
+    Version(String),
     #[error("no eligible release found")]
     NoRelease,
     #[error("release {0} was withdrawn")]
@@ -458,6 +460,16 @@ pub fn choose(
     list: Option<&crate::ReleaseListStatement>,
     requested: Option<&str>,
 ) -> Result<Release, Error> {
+    for release in live {
+        semver::Version::parse(&release.version)
+            .map_err(|_| Error::Version(release.version.clone()))?;
+    }
+    if let Some(list) = list {
+        for entry in &list.predicate.releases {
+            semver::Version::parse(&entry.version)
+                .map_err(|_| Error::Version(entry.version.clone()))?;
+        }
+    }
     let mut choices: BTreeMap<String, Release> = live
         .iter()
         .map(|r| (r.version.clone(), r.clone()))
@@ -707,5 +719,23 @@ mod tests {
                 .version,
             "3.12.9"
         );
+    }
+    #[test]
+    fn malformed_versions_fail_without_panicking_even_when_requested() {
+        let mut list = signed_list();
+        list.predicate.releases[0].version = "broken".into();
+        list.predicate.releases[0].status = None;
+        assert!(matches!(
+            choose(&[], Some(&list), Some("broken")),
+            Err(Error::Version(_))
+        ));
+        assert!(matches!(
+            choose(&[], Some(&list), Some("v2.0.0")),
+            Err(Error::Version(_))
+        ));
+        assert!(matches!(
+            choose(&[], Some(&list), None),
+            Err(Error::Version(_))
+        ));
     }
 }
