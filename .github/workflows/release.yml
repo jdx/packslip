@@ -189,6 +189,14 @@ jobs:
             tar -C dist -cJf "dist/$name.tar.xz" "$name"
           fi
           rm -r "dist/$name"
+          # The executable alone too, which installer/install.sh and
+          # install.ps1 download: many container images cannot unpack
+          # .tar.xz, and some have no tar at all.
+          if [[ "$PACKAGE_TARGET" == *windows* ]]; then
+            cp "target/${{ matrix.target }}/release/packslip.exe" "dist/$name.exe"
+          else
+            cp "target/${{ matrix.target }}/release/packslip" "dist/$name"
+          fi
           ls -la dist
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -259,6 +267,11 @@ jobs:
           }
           POWERSHELL
           pwsh -NoProfile -NonInteractive -File completion-syntax-check.ps1
+      # Written into dist/ before the attestation, so the scripts are
+      # attested, attached to the release, and copied to R2 for packslip.sh
+      # with every other release file.
+      - name: Write the install scripts
+        run: installer/render.sh "${GITHUB_REF_NAME#v}" dist
       - name: Attest the release files
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:

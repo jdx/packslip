@@ -18,8 +18,8 @@ env = { MBX_CARGO_SHIM_MODE = "1" }
 run = "cargo build"
 
 [tasks.lint]
-description = "Check the shell scripts the actions and workflows run"
-run = "shellcheck scripts/*.sh"
+description = "Check the shell scripts the actions, workflows, and install scripts run"
+run = "shellcheck scripts/*.sh installer/*.sh"
 
 [tasks.render]
 description = "Generate the usage spec, CLI reference, schemas, and spec page"

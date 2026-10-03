@@ -22,10 +22,14 @@ documentation generation, see [CONTRIBUTING.md](CONTRIBUTING.md).
    `vX.Y.Z` tag.
 4. The tag starts `release.yml`, which:
    - checks that the tag matches the version in `Cargo.toml`;
-   - builds the five platform archives (see [Platforms](#platforms)) and
-     signs and notarizes the macOS binary;
+   - builds each of the five platforms' archive and its executable on its
+     own (see [Platforms](#platforms)), and signs and notarizes the macOS
+     binary;
    - adds the usage spec, the man page, and bash, zsh, fish, and
-     PowerShell completions, and attests every release file;
+     PowerShell completions;
+   - writes the install scripts `install.sh` and `install.ps1` with
+     `installer/render.sh`, which fills in the SHA-256 of each executable,
+     and attests every release file;
    - creates a draft GitHub release and rewrites its notes with
      Communiqué, keeping GitHub's generated notes if that step fails;
    - signs the release's packslip as the project `packslip.dev`, uploads
@@ -39,6 +43,8 @@ documentation generation, see [CONTRIBUTING.md](CONTRIBUTING.md).
      and every rebuild applies the withdrawals committed under
      `.github/packslip/`; see
      [Withdraw a release or mark a security fix](#withdraw-a-release-or-mark-a-security-fix).
+     Once the list names the release, [packslip.sh](#packslipsh) serves
+     its install scripts.
 
 ## After a release
 
@@ -72,6 +78,50 @@ packslip show list.json | jq -r '.predicate.releases[].version'
 
 [Verify a release](https://packslip.dev/docs/verifying/) explains what
 verification checks and what its output means.
+
+Last, confirm that packslip.sh serves the new release's install script.
+`content-location` names the release it came from:
+
+```sh
+curl -fsSI https://packslip.sh | grep -i '^content-location'
+```
+
+## packslip.sh
+
+`https://packslip.sh` serves the install scripts each release publishes,
+from the release files in R2. The Worker is `packslip-sh`, configured in
+`cloudflare/installer/` and deployed by `site.yml` on every push to
+`main`:
+
+| Path | Serves |
+| --- | --- |
+| `/`, `/install.sh` | `install.sh` of the latest release |
+| `/install.ps1` | `install.ps1` of the latest release |
+| `/vX.Y.Z`, `/vX.Y.Z/install.sh` | `install.sh` of that release |
+| `/vX.Y.Z/install.ps1` | `install.ps1` of that release |
+
+The latest release is the one the signed release list recommends with
+`latest`, or else its highest release that is neither withdrawn nor a
+prerelease, so a withdrawal reaches packslip.sh with the next list. A
+release from before the install scripts existed has none, and its paths
+answer 404. Every client gets the same bytes from a URL: the Worker reads
+the user agent only to count downloads, so a script a browser shows is
+the one a shell runs, and a checksum taken of a versioned URL holds for
+everyone. Each script pins the executables by SHA-256, so its own
+checksum pins the release for every platform, for example in a
+Dockerfile for an image that has curl or wget:
+
+```dockerfile
+ADD --checksum=sha256:<sha256 of install.sh> https://packslip.sh/vX.Y.Z /tmp/install-packslip.sh
+RUN sh /tmp/install-packslip.sh
+```
+
+The domain was set up once, by hand: the `packslip.sh` zone is in the
+same Cloudflare account as `jdx-releases`, with Always Use HTTPS on, so
+plain HTTP is redirected and never answered with a script, and
+`packslip.sh` is attached to the `packslip-sh` Worker as a custom
+domain. Like packslip.dev's, the attachment outlives deploys, so the
+deploy token needs no zone access.
 
 ## Action versions and tags
 
@@ -208,6 +258,13 @@ releases, so a consumer sees one signer throughout.
 | `windows-x64`   | `x86_64-pc-windows-msvc`     | `windows-latest`   |
 | `windows-arm64` | `aarch64-pc-windows-msvc`    | `windows-11-arm`   |
 
+Each platform ships twice: as an archive (`.tar.xz`, or `.zip` on Windows)
+and as the executable alone (`packslip-vX.Y.Z-<asset>`, with `.exe` on
+Windows). Package managers take the archive. The install scripts download
+the executable alone, because many container images cannot unpack an
+archive: Debian and Ubuntu images have no `xz` for GNU tar to call, and
+Amazon Linux 2023 and UBI minimal images have no tar at all.
+
 There is no `darwin-x64` asset, so Intel Macs have no prebuilt binary:
 Rosetta 2 runs x86_64 code on Apple silicon, not arm64 code on Intel.
 Signing, notarizing, and supporting a second macOS artifact for a
@@ -243,7 +300,7 @@ behind the "cannot be verified" dialog.
 | Secrets `CERTIFICATES_P12`, `CERTIFICATES_P12_PASS` | The base64-encoded Developer ID Application certificate and its export password, the same pair the other jdx.dev CLIs use. The macOS build fails at signing without them. |
 | Secrets `APPLE_API_KEY_P8`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID` | A base64-encoded App Store Connect API key and its key and issuer IDs. The signing step checks all three before it signs and fails with "Notarization credentials missing" rather than shipping an unnotarized binary. |
 | Secrets `CLOUDFLARE_ACCESS_KEY_ID`, `CLOUDFLARE_SECRET_ACCESS_KEY` | S3 credentials for the `jdx-releases` R2 bucket, from an R2 token scoped to that bucket alone. The release job and `packslip-releases.yml` write the release files, bundles, and list under `packslip/`. |
-| Secret `CLOUDFLARE_TOKEN` | An API token with account `Workers Scripts:Edit` and read on the `jdx-releases` bucket, and no zone access at all. `site.yml` deploys packslip.dev with it. The custom domain is attached to the Worker by hand rather than by wrangler, so deploys never need `DNS:Edit`. |
+| Secret `CLOUDFLARE_TOKEN` | An API token with account `Workers Scripts:Edit` and read on the `jdx-releases` bucket, and no zone access at all. `site.yml` deploys packslip.dev and packslip.sh with it. The custom domains are attached to the Workers by hand rather than by wrangler, so deploys never need `DNS:Edit`. |
 | Secrets `MISE_LOCK_APP_ID`, `MISE_LOCK_APP_PRIVATE_KEY` | A GitHub App that `mise-lock.yml` uses to push a regenerated `mise.lock`, and the files `mise run render` changes with it, to Renovate branches. |
 
 Communiqué's context and tone are configured in `communique.toml`.
