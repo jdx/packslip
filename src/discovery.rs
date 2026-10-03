@@ -97,6 +97,7 @@ pub struct Client {
     auth: BTreeMap<String, String>,
     cache: PathBuf,
     offline: bool,
+    download_timeout: std::time::Duration,
 }
 fn origin(url: &Url) -> String {
     url.origin().ascii_serialization()
@@ -149,7 +150,14 @@ impl Client {
             auth,
             cache,
             offline,
+            download_timeout: std::time::Duration::from_secs(24 * 60 * 60),
         })
+    }
+    /// Bound the entire artifact transfer, including redirects, while the
+    /// per-read timeout still rejects a stalled connection. Default: 24 hours.
+    pub fn with_download_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.download_timeout = timeout;
+        self
     }
     fn cache_path(&self, url: &Url) -> PathBuf {
         self.cache
@@ -285,9 +293,16 @@ impl Client {
             }
             return Ok(path);
         }
+        let deadline = std::time::Instant::now()
+            .checked_add(self.download_timeout)
+            .ok_or(Error::Url)?;
         let mut current = initial.clone();
         for redirects in 0..=10 {
-            let mut request = self.inner.get(current.clone());
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(Error::Network(display_url(&current)));
+            }
+            let mut request = self.inner.get(current.clone()).timeout(remaining);
             if let Some(token) = self.auth.get(&origin(&current)) {
                 request = request.bearer_auth(token);
             }
@@ -576,6 +591,7 @@ pub fn choose_with_latest(
     }
     // Keep assetless forge tags as metadata for list tag mapping and yanks;
     // filter them from installable choices after merging the signed list.
+    let exact_tag = requested.and_then(|tag| live.iter().find(|release| release.tag == tag));
     let mut choices: BTreeMap<String, Release> = BTreeMap::new();
     for release in live {
         match choices.entry(release.version.clone()) {
@@ -597,6 +613,7 @@ pub fn choose_with_latest(
                 let removed = choices.remove(&entry.version);
                 if requested.is_some_and(|v| {
                     v == entry.version
+                        || exact_tag.is_some_and(|release| release.version == entry.version)
                         || entry.tag.as_deref() == Some(v)
                         || removed.as_ref().is_some_and(|r| r.tag == v)
                 }) {
@@ -632,6 +649,22 @@ pub fn choose_with_latest(
     }
     choices.retain(|_, release| !release.bundles.is_empty());
     if let Some(request) = requested.filter(|r| *r != "latest") {
+        if let Some(exact) = exact_tag {
+            // Signed entries remain authoritative over every forge tag alias.
+            // Otherwise an exact tag retains that release's own bundle URLs.
+            if list.is_some_and(|list| {
+                list.predicate
+                    .releases
+                    .iter()
+                    .any(|entry| entry.version == exact.version)
+            }) {
+                return choices.get(&exact.version).cloned().ok_or(Error::NoRelease);
+            }
+            if !exact.bundles.is_empty() {
+                return Ok(exact.clone());
+            }
+            return choices.get(&exact.version).cloned().ok_or(Error::NoRelease);
+        }
         let mut matches: Vec<_> = choices
             .into_values()
             .filter(|r| matches_request(r, request))
@@ -904,6 +937,38 @@ mod tests {
             assert_eq!(release.bundles, vec!["https://example.test/bundle"]);
             assert!(release.recommended);
         }
+    }
+    #[test]
+    fn exact_tag_aliases_retain_their_bundle_and_cannot_bypass_a_yank() {
+        let first = Release {
+            version: "2.0.0".into(),
+            tag: "v2.0.0".into(),
+            bundles: vec!["https://example.test/first".into()],
+            recommended: false,
+        };
+        let alias = Release {
+            tag: "tool-v2.0.0".into(),
+            bundles: vec!["https://example.test/alias".into()],
+            ..first.clone()
+        };
+        let live = vec![first, alias];
+        assert_eq!(
+            choose(&live, None, Some("tool-v2.0.0")).unwrap().bundles,
+            vec!["https://example.test/alias"]
+        );
+        let list = signed_list();
+        assert!(matches!(
+            choose(&live, Some(&list), Some("tool-v2.0.0")),
+            Err(Error::Yanked(_))
+        ));
+        let mut list = list;
+        list.predicate.releases[0].status = None;
+        assert_eq!(
+            choose(&live, Some(&list), Some("tool-v2.0.0"))
+                .unwrap()
+                .bundles,
+            vec![list.predicate.releases[0].packslip.clone()]
+        );
     }
     #[test]
     fn signed_list_maps_assetless_forge_tags_and_withdrawals() {
