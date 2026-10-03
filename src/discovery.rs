@@ -404,6 +404,36 @@ fn publish_download(
     Ok(file)
 }
 
+// Check the opened object rather than trusting a check-then-open pathname.
+fn cache_file(input: &std::path::Path) -> Result<std::fs::File, std::io::Error> {
+    #[cfg(unix)]
+    let file = {
+        use rustix::fs::{Mode, OFlags};
+        std::fs::File::from(rustix::fs::open(
+            input,
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
+            Mode::empty(),
+        )?)
+    };
+    #[cfg(windows)]
+    let file = {
+        use std::os::windows::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(input)?
+    };
+    #[cfg(not(any(unix, windows)))]
+    let file = std::fs::File::open(input)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err(std::io::Error::other(
+            "artifact cache is not a regular file",
+        ));
+    }
+    Ok(file)
+}
+
 // Copy through open file handles into an exclusively created snapshot. Keeping
 // the destination open avoids an unlink/link hole and never follows a replaced
 // destination pathname. The caller checks size on the completed snapshot.
@@ -412,17 +442,7 @@ fn snapshot(
     parent: &std::path::Path,
     limit: u64,
 ) -> Result<tempfile::NamedTempFile, std::io::Error> {
-    if !std::fs::symlink_metadata(input)?.is_file() {
-        return Err(std::io::Error::other(
-            "artifact cache is not a regular file",
-        ));
-    }
-    let source = std::fs::File::open(input)?;
-    if !source.metadata()?.is_file() {
-        return Err(std::io::Error::other(
-            "artifact cache is not a regular file",
-        ));
-    }
+    let source = cache_file(input)?;
     let mut file = tempfile::NamedTempFile::new_in(parent)?;
     std::io::copy(&mut source.take(limit), file.as_file_mut())?;
     file.as_file().sync_all()?;
@@ -978,6 +998,15 @@ mod tests {
             rt.block_on(client.download("https://example.invalid/missing", 0)),
             Err(Error::Offline(_))
         ));
+        #[cfg(unix)]
+        {
+            let linked = parse_url("https://example.invalid/symlink").unwrap();
+            std::os::unix::fs::symlink(next.path(), client.cache_path(&linked)).unwrap();
+            assert!(matches!(
+                rt.block_on(client.download(linked.as_str(), 5)),
+                Err(Error::Io(_))
+            ));
+        }
     }
     #[test]
     fn recommendation_precedes_highest_semver() {
