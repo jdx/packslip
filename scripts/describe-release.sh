@@ -23,13 +23,23 @@ export AWS_REGION=auto
 export AWS_ENDPOINT_URL=https://6e243906ff257b965bcae8025c2fc344.r2.cloudflarestorage.com
 
 version="${TAG#v}"
+# The install scripts (installer/render.sh) are published with the release
+# but are not artifacts: nothing selects them for a host, and they pin the
+# executables by digest themselves.
+files=()
+for f in dist/*; do
+  case "${f##*/}" in
+    install.sh | install.ps1) ;;
+    *) files+=("$f") ;;
+  esac
+done
 args=()
 if [ -n "${PUBLISHED_AT:-}" ]; then
   args+=(--published-at "$PUBLISHED_AT")
 fi
 # Every file was attested when it was built; GitHub serves that provenance
 # by digest, so the link is the same whichever run made the file.
-for f in dist/*; do
+for f in "${files[@]}"; do
   digest=$(sha256sum "$f" | cut -d' ' -f1)
   args+=(--provenance "${f##*/}=${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/attestations/sha256:${digest}")
 done
@@ -50,6 +60,11 @@ for shell in bash zsh fish powershell; do
     resource_artifacts+=(--artifact "dist/packslip.$shell")
   fi
 done
+# Releases from before the install scripts have no uncompressed executable.
+executables=()
+if [ -f "dist/packslip-v${version}-linux-x64" ]; then
+  executables+=(--artifact "dist/packslip-v${version}-linux-x64")
+fi
 packslip create \
   --project "$host" \
   --version "$version" \
@@ -62,13 +77,14 @@ packslip create \
   --bin packslip \
   --resource cli-spec/usage=asset:dist/packslip.usage.kdl \
   "${args[@]}" \
-  dist/*
+  "${files[@]}"
 packslip verify packslip/packslip.sigstore.json \
   --identity-prefix "https://github.com/${GITHUB_REPOSITORY}/" \
   --issuer https://token.actions.githubusercontent.com \
   --artifact "dist/packslip-v${version}-linux-x64.tar.xz" \
   --artifact dist/packslip.usage.kdl \
-  "${resource_artifacts[@]}"
+  "${resource_artifacts[@]}" \
+  "${executables[@]}"
 
 # The files first and the bundle last: a release is only discoverable once
 # its list names the bundle, and the bundle only lands when everything it

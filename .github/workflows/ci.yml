@@ -41,6 +41,8 @@ jobs:
       - run: cargo test --no-default-features --features verify-cli,sign --test verifier_cli
       - run: mise run lint
       - run: hk check --all
+      - name: Test the packslip.sh Worker
+        run: node --test cloudflare/installer/worker.test.mjs
       - run: mise run render
       - run: usage lint packslip.usage.kdl
       - run: mise run docs:check
@@ -198,12 +200,96 @@ jobs:
           ./target/release/packslip show "$LIST" \
             | jq -e '.predicate.project == "ci.packslip.invalid" and (.predicate.releases | length == 1)' >/dev/null
 
+  # install.sh on each host it supports, with the shells, download tools,
+  # and hash tools each one has: dash and GNU coreutils on Ubuntu, bash 3.2,
+  # shasum, and LibreSSL on macOS, and busybox inside the containers.
+  installer:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Test install.sh
+        env:
+          INSTALLER_TEST_IMAGES: ${{ runner.os == 'Linux' && 'alpine:3 busybox:latest' || '' }}
+        run: installer/test.sh
+
+  # install.ps1 under Windows PowerShell 5.1 and PowerShell 7, on both
+  # Windows architectures, the way `irm ... | iex` runs it.
+  installer-windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            asset: windows-x64
+          - runner: windows-11-arm
+            asset: windows-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      # Stand-ins for each Windows build that say which build they are,
+      # compiled here so the test downloads nothing.
+      - name: Build stand-in executables
+        shell: powershell
+        run: |
+          $null = New-Item -ItemType Directory -Force -Path work\release, work\tampered
+          foreach ($asset in 'windows-x64', 'windows-arm64') {
+            $class = 'StandIn' + ($asset -replace '\W', '')
+            Add-Type -OutputType ConsoleApplication -OutputAssembly "work\release\packslip-v0.0.0-$asset.exe" -TypeDefinition @"
+          public static class $class {
+            public static int Main(string[] args) {
+              System.Console.WriteLine("packslip 0.0.0 ($asset)");
+              return 0;
+            }
+          }
+          "@
+          }
+      - name: Stage a release to install from
+        shell: bash
+        run: |
+          set -euo pipefail
+          for asset in linux-x64 linux-arm64 darwin-arm64; do
+            echo "stand-in for $asset" >"work/release/packslip-v0.0.0-$asset"
+          done
+          echo "not packslip" >work/tampered/packslip-v0.0.0-windows-x64.exe
+          echo "not packslip" >work/tampered/packslip-v0.0.0-windows-arm64.exe
+          bash installer/render.sh 0.0.0 work/release
+      - name: Test install.ps1 under Windows PowerShell
+        shell: powershell
+        env:
+          ASSET: ${{ matrix.asset }}
+        run: installer/test.ps1 -Dir work -Template installer/install.ps1 -Asset $env:ASSET
+      - name: Test install.ps1 under PowerShell 7
+        shell: pwsh
+        env:
+          ASSET: ${{ matrix.asset }}
+        run: installer/test.ps1 -Dir work -Template installer/install.ps1 -Asset $env:ASSET
+      # The 32-bit Windows PowerShell runs emulated on ARM64, where .NET and
+      # the process environment name x86 or x64; it must still get the
+      # machine's build.
+      - name: Test install.ps1 under 32-bit Windows PowerShell
+        shell: pwsh
+        env:
+          ASSET: ${{ matrix.asset }}
+        run: |
+          & "$env:SystemRoot\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File installer/test.ps1 -Dir work -Template installer/install.ps1 -Asset $env:ASSET
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
   # Aggregator that required-status-checks can target. If any upstream job
   # failed, was cancelled, or was unexpectedly skipped, this step exits non-zero
   # so the PR is blocked. Lets the branch-protection rule depend on one name
   # instead of N.
   final:
     needs:
+      - installer
+      - installer-windows
       - signing
       - test
       - zizmor

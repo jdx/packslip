@@ -46,6 +46,8 @@ toolchain, for example `RUSTUP_TOOLCHAIN=1.95.0 mise run docs`.
 | Test fixtures | `tests/fixtures/` (see its README) |
 | Release example on the homepage and quickstart | `docs/examples/release-excerpt.json` |
 | The site's Worker | `wrangler.jsonc`, `cloudflare/worker.js` |
+| Install scripts that packslip.sh serves | `installer/install.sh` and `installer/install.ps1`, filled in for each release by `installer/render.sh` |
+| packslip.sh's Worker | `cloudflare/installer/` |
 | Site layout and styling | `layouts/`, `static/style.css`, `static/docs.js` |
 | Social preview images | `layouts/partials/social-image.html`, `assets/social/` (see its README) |
 | Release process | `RELEASING.md`, `.github/workflows/`, `release-plz.toml`, `cliff.toml` (changelog), `communique.toml` (release notes), `scripts/describe-release.sh` (packslip.dev's own packslip) |
@@ -106,7 +108,9 @@ cargo test --all-features
 # The verify-only build that library consumers use:
 cargo clippy --no-default-features --all-targets -- -D warnings
 cargo test --no-default-features
-mise run lint        # Shellcheck the scripts the actions and workflows run.
+mise run lint        # Shellcheck the scripts the actions, workflows, and installer run.
+installer/test.sh    # Run install.sh against a stand-in release with each local shell.
+node --test cloudflare/installer/worker.test.mjs  # packslip.sh's Worker.
 mise run docs:check  # Also runs `mise run render`.
 mise exec -- usage lint packslip.usage.kdl
 git status --short   # Lists generated files to commit.
@@ -120,6 +124,11 @@ fixes them.
 CI sets `RUSTFLAGS=-D warnings`, so any compiler warning fails CI. CI also
 fails if `mise run render` changes a committed file, so commit regenerated
 files with the source change that caused them.
+`installer/test.sh` needs Python 3 for a local HTTP server, and the Worker
+test needs Node.js 20 or newer. CI also runs the installer test on macOS
+and Linux ARM64 and in Alpine and busybox containers, and runs
+`installer/test.ps1` under Windows PowerShell 5.1 and PowerShell 7 on
+Windows x64 and ARM64.
 `cargo test --all-features` includes `tests/action.rs`, which runs
 `action.yml`'s create step against a mock CLI; `cargo test --test action`
 runs it alone. The `signing` job runs only on pushes to `main`, where a CI
