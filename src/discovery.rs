@@ -322,6 +322,44 @@ impl Client {
     }
 }
 
+/// Bytes obtained through the named host's authenticated HTTPS origin (or its
+/// local offline cache). The private fields prevent arbitrary supplied bundles
+/// from claiming that transport authority. Redirects remain HTTPS-only.
+#[derive(Debug)]
+pub struct HostDocument {
+    project: Project,
+    bytes: Vec<u8>,
+}
+impl HostDocument {
+    pub fn project(&self) -> &str {
+        self.project.as_str()
+    }
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+impl Client {
+    pub async fn fetch_host(
+        &self,
+        project: &Project,
+        input: &str,
+        limit: u64,
+    ) -> Result<Option<HostDocument>, Error> {
+        let url = parse_url(input)?;
+        let host = project.as_str().split('/').next().ok_or(Error::Url)?;
+        if url.host_str() != Some(host)
+            || url.port_or_known_default() != Some(443)
+            || crate::sigstore::Policy::for_project(project.as_str()).is_some()
+        {
+            return Err(Error::Url);
+        }
+        Ok(self.fetch(input, limit).await?.map(|bytes| HostDocument {
+            project: project.clone(),
+            bytes,
+        }))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Release {
     pub version: String,
@@ -345,7 +383,15 @@ struct GithubAsset {
 /// GitHub's live release view and the default branch's supplementary-list URL.
 /// Pages are bounded; a larger repository fails rather than exposing a silently
 /// truncated version history. Assets still need verified project matching.
-pub async fn github(client: &Client, project: &Project) -> Result<(Vec<Release>, String), Error> {
+pub struct Github {
+    pub releases: Vec<Release>,
+    pub list_url: String,
+    /// Keep the forge hint even when only the signed list maps its tag.
+    pub latest_tag: Option<String>,
+    pub repository_id: String,
+}
+
+pub async fn github(client: &Client, project: &Project) -> Result<Github, Error> {
     let repo = project
         .github_repo()
         .ok_or_else(|| Error::Project(project.0.clone()))?;
@@ -357,6 +403,7 @@ pub async fn github(client: &Client, project: &Project) -> Result<(Vec<Release>,
             .ok_or(Error::NoRelease)?,
     )?;
     let branch = info["default_branch"].as_str().ok_or(Error::NoRelease)?;
+    let repository_id = info["id"].as_u64().ok_or(Error::NoRelease)?.to_string();
     let mut list_url = Url::parse("https://api.github.com").unwrap();
     {
         let mut segments = list_url.path_segments_mut().map_err(|_| Error::Url)?;
@@ -387,7 +434,7 @@ pub async fn github(client: &Client, project: &Project) -> Result<(Vec<Release>,
         let done = page_releases.len() < 100;
         for release in page_releases.into_iter().filter(|r| !r.draft) {
             if let Some(version) = crate::tag_version(&release.tag_name, project.as_str()) {
-                let bundles = release
+                let bundles: Vec<_> = release
                     .assets
                     .into_iter()
                     .filter(|a| {
@@ -395,6 +442,9 @@ pub async fn github(client: &Client, project: &Project) -> Result<(Vec<Release>,
                     })
                     .map(|a| a.browser_download_url)
                     .collect();
+                if bundles.is_empty() {
+                    continue;
+                }
                 releases.push(Release {
                     version: version.to_string(),
                     recommended: latest
@@ -406,7 +456,12 @@ pub async fn github(client: &Client, project: &Project) -> Result<(Vec<Release>,
             }
         }
         if done {
-            return Ok((releases, list_url.to_string()));
+            return Ok(Github {
+                releases,
+                list_url: list_url.to_string(),
+                latest_tag: latest.map(|r| r.tag_name),
+                repository_id,
+            });
         }
     }
     Err(Error::Limit {
@@ -460,6 +515,17 @@ pub fn choose(
     list: Option<&crate::ReleaseListStatement>,
     requested: Option<&str>,
 ) -> Result<Release, Error> {
+    choose_with_latest(live, list, requested, None)
+}
+
+/// Like [`choose`], preserving a GitHub latest tag that the signed list maps
+/// to a version even when the forge tag itself is not semver.
+pub fn choose_with_latest(
+    live: &[Release],
+    list: Option<&crate::ReleaseListStatement>,
+    requested: Option<&str>,
+    latest_tag: Option<&str>,
+) -> Result<Release, Error> {
     for release in live {
         semver::Version::parse(&release.version)
             .map_err(|_| Error::Version(release.version.clone()))?;
@@ -477,24 +543,33 @@ pub fn choose(
     if let Some(list) = list {
         for entry in &list.predicate.releases {
             if entry.is_yanked() {
-                choices.remove(&entry.version);
-                if requested.is_some_and(|v| v == entry.version || entry.tag.as_deref() == Some(v))
-                {
+                let removed = choices.remove(&entry.version);
+                if requested.is_some_and(|v| {
+                    v == entry.version
+                        || entry.tag.as_deref() == Some(v)
+                        || removed.as_ref().is_some_and(|r| r.tag == v)
+                }) {
                     return Err(Error::Yanked(entry.version.clone()));
                 }
                 continue;
             }
+            let tag = entry
+                .tag
+                .clone()
+                .or_else(|| choices.get(&entry.version).map(|r| r.tag.clone()))
+                .unwrap_or_else(|| entry.version.clone());
             choices.insert(
                 entry.version.clone(),
                 Release {
                     version: entry.version.clone(),
-                    tag: entry.tag.clone().unwrap_or_else(|| entry.version.clone()),
-                    bundles: vec![entry.packslip.clone()],
                     recommended: list.predicate.latest.as_deref() == Some(&entry.version)
                         || (list.predicate.latest.is_none()
-                            && live
-                                .iter()
-                                .any(|r| r.version == entry.version && r.recommended)),
+                            && (latest_tag == Some(tag.as_str())
+                                || live
+                                    .iter()
+                                    .any(|r| r.version == entry.version && r.recommended))),
+                    tag,
+                    bundles: vec![entry.packslip.clone()],
                 },
             );
         }
@@ -719,6 +794,109 @@ mod tests {
                 .version,
             "3.12.9"
         );
+    }
+    #[test]
+    fn list_preserves_forge_tags_and_maps_latest_hint() {
+        let live = vec![Release {
+            version: "2.0.0".into(),
+            tag: "release-2".into(),
+            bundles: vec!["https://example.test/live".into()],
+            recommended: false,
+        }];
+        let mut list = signed_list();
+        list.predicate.releases[0].status = None;
+        list.predicate.releases[0].tag = None;
+        assert_eq!(
+            choose(&live, Some(&list), Some("release-2")).unwrap().tag,
+            "release-2"
+        );
+        list.predicate.releases[0].status = Some(crate::model::ReleaseStatus::Yanked);
+        assert!(matches!(
+            choose(&live, Some(&list), Some("release-2")),
+            Err(Error::Yanked(_))
+        ));
+        list.predicate.releases[0].status = None;
+        list.predicate.releases[0].tag = Some("stable".into());
+        let newer = vec![Release {
+            version: "3.0.0".into(),
+            tag: "v3.0.0".into(),
+            bundles: vec!["https://example.test/new".into()],
+            recommended: false,
+        }];
+        assert_eq!(
+            choose_with_latest(&newer, Some(&list), None, Some("stable"))
+                .unwrap()
+                .version,
+            "2.0.0"
+        );
+    }
+    #[test]
+    fn github_excludes_uninstallable_releases_and_retains_unmapped_latest() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = Client::new(dir.path().into(), true, HttpConfig::default()).unwrap();
+        let base = "https://api.github.com/repos/jdx/tool";
+        for (url, value) in [
+            (
+                base.to_string(),
+                serde_json::json!({"id": 123, "default_branch": "main"}),
+            ),
+            (
+                format!("{base}/releases/latest"),
+                serde_json::json!({"tag_name": "stable", "draft": false}),
+            ),
+            (
+                format!("{base}/releases?per_page=100&page=1"),
+                serde_json::json!([
+                    {"tag_name":"v9.0.0","draft":false,"assets":[]},
+                    {"tag_name":"v1.0.0","draft":false,"prerelease":true,"assets":[
+                        {"name":"packslip.sigstore.json","browser_download_url":"https://github.com/jdx/tool/bundle"}]},
+                    {"tag_name":"stable","draft":false,"assets":[]}
+                ]),
+            ),
+        ] {
+            std::fs::write(
+                client.cache_path(&parse_url(&url).unwrap()),
+                serde_json::to_vec(&value).unwrap(),
+            )
+            .unwrap();
+        }
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let view = rt
+            .block_on(github(&client, &Project::parse("jdx/tool").unwrap()))
+            .unwrap();
+        assert_eq!(view.repository_id, "123");
+        assert_eq!(view.latest_tag.as_deref(), Some("stable"));
+        assert_eq!(view.releases.len(), 1);
+        assert_eq!(choose(&view.releases, None, None).unwrap().version, "1.0.0");
+    }
+    #[test]
+    fn host_transport_authority_cannot_be_claimed_by_another_origin() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = Client::new(dir.path().into(), true, HttpConfig::default()).unwrap();
+        let project = Project::parse("example.test").unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        assert!(
+            rt.block_on(client.fetch_host(&project, "https://other.test/list", 10))
+                .is_err()
+        );
+        assert!(
+            rt.block_on(client.fetch_host(&project, "https://example.test:8443/list", 10))
+                .is_err()
+        );
+        let url = parse_url("https://example.test/list").unwrap();
+        std::fs::write(client.cache_path(&url), b"document").unwrap();
+        let document = rt
+            .block_on(client.fetch_host(&project, url.as_str(), 10))
+            .unwrap()
+            .unwrap();
+        assert_eq!(document.project(), "example.test");
+        assert_eq!(document.bytes(), b"document");
     }
     #[test]
     fn malformed_versions_fail_without_panicking_even_when_requested() {
