@@ -5,15 +5,22 @@ use std::path::{Path, PathBuf};
 
 use eyre::{Context as _, Result, bail};
 use packslip::cli::{BinInfo, Version};
+#[cfg(all(feature = "create", feature = "manifest"))]
 use packslip::create::{ArtifactInput, AssetInput, ListRequest, ListedRelease, Request};
 use packslip::fingerprint::Fingerprint;
+#[cfg(all(feature = "create", feature = "manifest"))]
 use packslip::manifest::Manifest;
-use packslip::minisign::{PublicKey, SecretKey, key_id_hex};
-use packslip::model::{
-    Attestor, Bin, Evidence, Extensions, RELEASES_PREDICATE_TYPE, ReleaseListStatement,
-    RequiredBin, Resource, Source, Statement,
-};
-use packslip::sigstore::{self, Policy, Signer, Trust};
+use packslip::minisign::PublicKey;
+#[cfg(feature = "sign")]
+use packslip::minisign::{SecretKey, key_id_hex};
+use packslip::model::{Attestor, RELEASES_PREDICATE_TYPE};
+#[cfg(all(feature = "create", feature = "manifest"))]
+use packslip::model::{Bin, Evidence, Extensions, RequiredBin, Resource, Source};
+#[cfg(feature = "schema")]
+use packslip::model::{ReleaseListStatement, Statement};
+#[cfg(all(feature = "create", feature = "manifest"))]
+use packslip::sigstore::Signer;
+use packslip::sigstore::{self, Policy, Trust};
 use packslip::verify::Options;
 use usage_rs::RunWith;
 
@@ -26,6 +33,7 @@ const BIN: BinInfo = BinInfo {
 /// a monorepo named `github.com/owner/repo/sub/path`,
 /// `packslip.sub-path.sigstore.json`, so several tools can share one
 /// release. Consumers match on the statement's `project`, not the name.
+#[cfg(all(feature = "create", feature = "manifest"))]
 pub fn bundle_name(project: &str) -> String {
     match packslip::model::repository_subpath(project) {
         Some(sub) => format!("packslip.{}.sigstore.json", sub.replace('/', "-")),
@@ -57,10 +65,14 @@ struct Cli {
 #[usage(run_with)]
 enum Commands {
     Completion(Completion),
+    #[cfg(all(feature = "create", feature = "manifest"))]
     Create(Box<Create>),
+    #[cfg(feature = "sign")]
     Keygen(Keygen),
     Pin(Box<Pin>),
+    #[cfg(all(feature = "create", feature = "manifest"))]
     Releases(Box<Releases>),
+    #[cfg(feature = "schema")]
     Schema(Schema),
     Show(Show),
     #[usage(hide)]
@@ -133,12 +145,14 @@ impl RunWith<BinInfo> for Usage {
     "packslip keygen --out release.key",
     header = "Write release.key and release.pub"
 ))]
+#[cfg(feature = "sign")]
 struct Keygen {
     /// Where to write the secret key
     #[usage(short = 'o', long, default = "packslip.key")]
     out: PathBuf,
 }
 
+#[cfg(feature = "sign")]
 impl RunWith<BinInfo> for Keygen {
     type Output = Result<()>;
 
@@ -196,6 +210,7 @@ impl RunWith<BinInfo> for Keygen {
 /// published at https://packslip.dev/schema/release-v1.json and
 /// https://packslip.dev/schema/releases-v1.json.
 #[derive(Debug, usage_rs::Args)]
+#[cfg(feature = "schema")]
 struct Schema {
     /// Print the releases/v1 list schema instead of the release/v1 statement
     /// schema
@@ -203,6 +218,7 @@ struct Schema {
     releases: bool,
 }
 
+#[cfg(feature = "schema")]
 impl RunWith<BinInfo> for Schema {
     type Output = Result<()>;
 
@@ -250,11 +266,13 @@ impl RunWith<BinInfo> for Show {
 /// How to sign: `oidc` (keyless, with the CI job's identity) or `key` (an
 /// Ed25519 key given with --key).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(all(feature = "create", feature = "manifest"))]
 enum SignWith {
     Oidc,
     Key,
 }
 
+#[cfg(all(feature = "create", feature = "manifest"))]
 impl std::str::FromStr for SignWith {
     type Err = String;
 
@@ -269,8 +287,10 @@ impl std::str::FromStr for SignWith {
 
 /// `vendor` or `repackager`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(all(feature = "create", feature = "manifest"))]
 struct AttestorArg(Attestor);
 
+#[cfg(all(feature = "create", feature = "manifest"))]
 impl std::str::FromStr for AttestorArg {
     type Err = String;
 
@@ -286,6 +306,7 @@ impl std::str::FromStr for AttestorArg {
 }
 
 /// Resolve who signs from the shared signing flags.
+#[cfg(all(feature = "create", feature = "manifest"))]
 fn signer(key: &Option<PathBuf>, sign: Option<SignWith>, no_log: bool) -> Result<Signer> {
     let sign_with = sign.unwrap_or(if key.is_some() {
         SignWith::Key
@@ -349,6 +370,7 @@ fn signer(key: &Option<PathBuf>, sign: Option<SignWith>, no_log: bool) -> Result
         header = "Sign with a key from packslip keygen"
     )
 )]
+#[cfg(all(feature = "create", feature = "manifest"))]
 struct Create {
     /// The project's name: a host path such as github.com/owner/repo, or
     /// github.com/owner/repo/tool for one tool of a monorepo. Required
@@ -510,6 +532,7 @@ struct Create {
 
 /// The `identity` block the signer declares, with `pin_workflow: false`
 /// when the publisher asked for it. Only a keyless signer has a workflow.
+#[cfg(all(feature = "create", feature = "manifest"))]
 fn declared_identity(signer: &Signer, no_pin_workflow: bool) -> Result<packslip::model::Identity> {
     let mut identity = signer.identity();
     if no_pin_workflow {
@@ -522,6 +545,7 @@ fn declared_identity(signer: &Signer, no_pin_workflow: bool) -> Result<packslip:
 }
 
 /// `PATH` or `NAME=PATH`.
+#[cfg(all(feature = "create", feature = "manifest"))]
 fn parse_bin(spec: &str) -> Bin {
     match spec.split_once('=') {
         Some((name, path)) if !name.is_empty() && !path.is_empty() => Bin::named(path, name),
@@ -531,6 +555,7 @@ fn parse_bin(spec: &str) -> Bin {
 
 /// A parsed `--resource`: the entry, and the local file behind an `asset`
 /// source.
+#[cfg(all(feature = "create", feature = "manifest"))]
 struct ResourceSpec {
     resource: Resource,
     asset_path: Option<PathBuf>,
@@ -549,6 +574,7 @@ struct ResourceSpec {
 /// words, so an `@` there is always the scope and never part of a name.
 /// The value is left alone, and an `@` inside an exec argv or a path
 /// stays where it is.
+#[cfg(all(feature = "create", feature = "manifest"))]
 fn parse_resource(spec: &str, default_bin: Option<&str>) -> Result<ResourceSpec> {
     let Some((head, value)) = spec.split_once('=') else {
         bail!("--resource wants KIND[/QUALIFIER]=SOURCE:VALUE, got {spec:?}");
@@ -660,6 +686,7 @@ fn parse_resource(spec: &str, default_bin: Option<&str>) -> Result<ResourceSpec>
 }
 
 /// `bin:NAME` or `bin:NAME@MIN` for `--require`.
+#[cfg(all(feature = "create", feature = "manifest"))]
 fn parse_require(spec: &str) -> Result<RequiredBin> {
     let Some(rest) = spec.strip_prefix("bin:") else {
         bail!("--require wants bin:NAME or bin:NAME@MIN, got {spec:?}");
@@ -681,6 +708,7 @@ fn parse_require(spec: &str) -> Result<RequiredBin> {
 }
 
 /// `KIND` or `KIND=DETAIL`.
+#[cfg(all(feature = "create", feature = "manifest"))]
 fn parse_evidence(spec: &str) -> Evidence {
     match spec.split_once('=') {
         Some((kind, detail)) => Evidence {
@@ -695,6 +723,7 @@ fn parse_evidence(spec: &str) -> Evidence {
 }
 
 /// `NAME=JSON` for `--extension`.
+#[cfg(all(feature = "create", feature = "manifest"))]
 fn parse_extension(spec: &str) -> Result<(String, serde_json::Value)> {
     let Some((name, json)) = spec.split_once('=') else {
         bail!("--extension wants NAME=JSON, got {spec:?}");
@@ -709,12 +738,14 @@ fn parse_extension(spec: &str) -> Result<(String, serde_json::Value)> {
 
 /// The file name of a local path, for matching `--url`, `--provenance`,
 /// and manifest entries against command-line artifacts.
+#[cfg(all(feature = "create", feature = "manifest"))]
 fn file_name_of(path: &Path) -> &str {
     path.file_name()
         .and_then(|n| n.to_str())
         .unwrap_or_default()
 }
 
+#[cfg(all(feature = "create", feature = "manifest"))]
 impl RunWith<BinInfo> for Create {
     type Output = Result<()>;
 
@@ -1000,6 +1031,7 @@ impl RunWith<BinInfo> for Create {
 
 /// An artifact argument: a path, optionally with `:os/arch[/libc]` or
 /// `:any`, and `@variant`.
+#[cfg(all(feature = "create", feature = "manifest"))]
 struct ArtifactArg {
     path: PathBuf,
     os: Option<String>,
@@ -1013,6 +1045,7 @@ struct ArtifactArg {
 /// trailing `@variant`. In particular, colons inside timestamped
 /// directory names remain part of the path, and so does an `@` inside a
 /// file name that is not followed by a plain word.
+#[cfg(all(feature = "create", feature = "manifest"))]
 fn parse_spec(spec: &str) -> ArtifactArg {
     let (rest, variant) = match spec.rsplit_once('@') {
         Some((rest, variant)) if valid_word(variant) && !rest.is_empty() => {
@@ -1047,6 +1080,7 @@ fn parse_spec(spec: &str) -> ArtifactArg {
 
 /// A variant is a word like `fips` or `install_only`, never something
 /// with a dot in it, so `scoped@pkg-1.0.tgz` stays a file name.
+#[cfg(all(feature = "create", feature = "manifest"))]
 fn valid_word(part: &str) -> bool {
     part.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
         && part
@@ -1057,11 +1091,13 @@ fn valid_word(part: &str) -> bool {
 /// A `--resource` scope: `os`, `os/arch`, or `os/arch/libc`. Unlike an
 /// artifact's, the os alone is enough, which is how a resource says it is
 /// in every Linux build without naming their architectures.
+#[cfg(all(feature = "create", feature = "manifest"))]
 fn valid_scope(scope: &str) -> bool {
     let parts: Vec<_> = scope.split('/').collect();
     (1..=3).contains(&parts.len()) && parts.iter().all(|part| valid_word(part))
 }
 
+#[cfg(all(feature = "create", feature = "manifest"))]
 fn valid_platform(platform: &str) -> bool {
     let parts: Vec<_> = platform.split('/').collect();
     (parts.len() == 2 || parts.len() == 3)
@@ -1093,6 +1129,7 @@ fn valid_platform(platform: &str) -> bool {
     "packslip releases \\\n        --project mytool.example.com \\\n        --sequence 1 --valid-for 30d \\\n        --latest 1.2.3 \\\n        --release https://mytool.example.com/v1.2.3/packslip.sigstore.json=releases/1.2.3/packslip.sigstore.json \\\n        --key release.key \\\n        --out site/.well-known/packslip.json",
     header = "List one key-signed release of a self-hosted project"
 ))]
+#[cfg(all(feature = "create", feature = "manifest"))]
 struct Releases {
     /// The project's name, which every --release bundle must name
     #[usage(long)]
@@ -1152,6 +1189,7 @@ struct Releases {
     out: PathBuf,
 }
 
+#[cfg(all(feature = "create", feature = "manifest"))]
 impl RunWith<BinInfo> for Releases {
     type Output = Result<()>;
 
@@ -1229,6 +1267,7 @@ impl RunWith<BinInfo> for Releases {
 }
 
 /// `30d`, `12h`, `2w`, `90m`, `45s`.
+#[cfg(all(feature = "create", feature = "manifest"))]
 fn parse_duration(s: &str) -> Result<std::time::Duration> {
     let s = s.trim();
     let split = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
@@ -1773,7 +1812,7 @@ fn main() -> Result<()> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "create", feature = "manifest"))]
 mod tests {
     use super::*;
 

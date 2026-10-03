@@ -178,12 +178,23 @@ are unaffected:
 | Feature | Adds |
 | --- | --- |
 | `cli` (default) | The `packslip` binary; implies the rest. |
+| `verify-cli` | The verifier binary: `verify`, `pin`, `show`, completions, and version, without publishing, archive inspection, or schema generation. |
 | `create` | Build a statement from built artifacts; implies `archive`, `linkage`, and `sign`. |
 | `archive` | Read tar and zip archives to resolve declared executable paths. |
 | `linkage` | Derive `requires.libs` from ELF, Mach-O, and PE executables. |
 | `sign` | Sign statements, keylessly through Fulcio or with a minisign key. |
 | `manifest` | Read a TOML manifest (`release.toml`) for `create --manifest`. |
 | `schema` | `Statement::schema()` and `ReleaseListStatement::schema()`. |
+
+Distribution packagers can build a verifier without the signing stack:
+
+```sh
+cargo build --release --no-default-features --features verify-cli
+```
+
+The default build still includes every existing CLI command. The verifier
+build omits `create`, `releases`, `keygen`, and `schema`; consumers that need
+the library alone can continue using `--no-default-features`.
 
 The samples below also use `serde_json`, and the release-list check
 needs a `jiff::Timestamp` from `jiff` 0.2, the version packslip depends

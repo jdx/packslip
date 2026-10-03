@@ -19,7 +19,7 @@
 
 #[cfg(feature = "archive")]
 pub mod archive;
-#[cfg(feature = "cli")]
+#[cfg(feature = "verify-cli")]
 pub mod cli;
 #[cfg(feature = "create")]
 pub mod create;
