@@ -19,7 +19,8 @@ git archive HEAD | tar -xf - -C "$work/$name"
   # No additional package manager, network fetch, or rustup runs in the build.
   # Keep Cargo checksum files: modifying vendor contents must fail verification.
 )
-tar -C "$work" -czf "$out/$name.tar.gz" "$name"
+# BSD tar otherwise emits macOS AppleDouble metadata as binary source files.
+COPYFILE_DISABLE=1 tar -C "$work" -czf "$out/$name.tar.gz" "$name"
 cp "$out/$name.tar.gz" "$out/packslip_$version.orig.tar.gz"
 python3 - "$version" "$out" <<'PY'
 import pathlib, sys
