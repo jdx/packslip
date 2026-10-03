@@ -103,7 +103,8 @@ pub fn decoder(path: &Path, format: &str) -> Result<Box<dyn Read>, Error> {
 }
 
 /// The regular files inside an archive, as paths from its root with any
-/// leading `./` removed. Directories are not listed.
+/// leading `./` removed and, in a zip, `\` read as `/` (see [`zip_path`]).
+/// Directories are not listed.
 pub fn entries(path: &Path, format: &str) -> Result<Vec<String>, Error> {
     let io = |source: std::io::Error| Error::Io {
         path: path.display().to_string(),
@@ -125,7 +126,7 @@ pub fn entries(path: &Path, format: &str) -> Result<Vec<String>, Error> {
                     .by_index_raw(i)
                     .map_err(|e| undecodable(e.to_string()))?;
                 if entry.is_file() {
-                    names.push(entry.name().to_string());
+                    names.push(zip_path(entry.name()));
                 }
             }
             names
@@ -155,6 +156,17 @@ pub fn normalize(path: &str) -> String {
         name = rest;
     }
     name.to_string()
+}
+
+/// A zip entry's name as a path, with `\` read as `/`. The ZIP format
+/// separates directories with `/`, but Windows PowerShell 5.1's
+/// `Compress-Archive` writes `tool-1.0\bin\tool.exe`, which Windows, 7-Zip,
+/// and the `zip` crate that consumers such as mise unpack with all read as
+/// a path. A Unix file name may contain `\`, but such a file cannot be
+/// unpacked on Windows, and the `zip` crate splits it everywhere. Tar
+/// member names are POSIX paths and are taken as written.
+pub fn zip_path(name: &str) -> String {
+    name.replace('\\', "/")
 }
 
 fn tar_entries<R: Read>(reader: R) -> Result<Vec<String>, Error> {
@@ -378,5 +390,33 @@ mod tests {
             Err(Error::BinNotFound { .. })
         ));
         assert!(resolve_bins(&path, "zip", &[], false).unwrap().is_empty());
+    }
+
+    #[test]
+    fn zip_entries_may_separate_directories_with_backslashes() {
+        // Windows PowerShell 5.1's Compress-Archive writes names like these,
+        // with no directory entries.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.zip");
+        std::fs::write(
+            &path,
+            zip_bytes(&[("t-1.0\\bin\\tool.exe", b"a"), ("t-1.0\\README.md", b"b")]),
+        )
+        .unwrap();
+        let mut listed = entries(&path, "zip").unwrap();
+        listed.sort();
+        assert_eq!(listed, ["t-1.0/README.md", "t-1.0/bin/tool.exe"]);
+        assert_eq!(
+            resolve_bins(&path, "zip", &[Bin::new("tool")], true).unwrap(),
+            [Bin::new("t-1.0/bin/tool.exe")]
+        );
+        assert_eq!(
+            resolve_bins(&path, "zip", &[Bin::new("t-1.0/bin/tool.exe")], true).unwrap(),
+            [Bin::new("t-1.0/bin/tool.exe")]
+        );
+        // In a tar, `\` is part of the file name.
+        let tar = dir.path().join("t.tar");
+        std::fs::write(&tar, tar_bytes(&[("t-1.0\\tool", b"a")])).unwrap();
+        assert_eq!(entries(&tar, "tar").unwrap(), ["t-1.0\\tool"]);
     }
 }
