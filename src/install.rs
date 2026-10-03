@@ -450,7 +450,7 @@ async fn run_in(request: Request, scope: Scope) -> Result<Report> {
         }
         // A forge release can describe several monorepo tools. The peek only
         // filters candidates; it never establishes identity or authorizes use.
-        if may_skip && !candidate_matches(&bundle, project.as_str()) {
+        if may_skip && !candidate_matches(&bundle, project.as_str(), repository_id) {
             continue;
         }
         let release = match &document {
@@ -579,7 +579,7 @@ async fn run_in(request: Request, scope: Scope) -> Result<Report> {
 
 // Unlisted forge assets are discovery candidates. Invalid siblings do not
 // establish policy and must not prevent finding the requested monorepo tool.
-fn candidate_matches(bundle: &str, project: &str) -> bool {
+fn candidate_matches(bundle: &str, project: &str, repository_id: Option<&str>) -> bool {
     let Ok(payload) = crate::sigstore::peek_statement(bundle) else {
         return false;
     };
@@ -587,9 +587,29 @@ fn candidate_matches(bundle: &str, project: &str) -> bool {
         return false;
     };
     let name = payload["predicate"]["project"].as_str().unwrap_or_default();
-    payload["predicateType"] == crate::model::PREDICATE_TYPE
-        && crate::model::repository(name).is_some()
-        && crate::model::repository_subpath(name) == crate::model::repository_subpath(project)
+    if payload["predicateType"] != crate::model::PREDICATE_TYPE
+        || crate::model::repository(name).is_none()
+        || crate::model::repository_subpath(name) != crate::model::repository_subpath(project)
+    {
+        return false;
+    }
+    if crate::model::repository(name) == crate::model::repository(project) {
+        return true;
+    }
+    // A renamed or transferred repository can keep publishing its old name.
+    // This unverified certificate peek only keeps a candidate for subsequent
+    // authentication; the resolved ID and every trust constraint are checked
+    // again by release verification before anything can be installed.
+    crate::sigstore::source_repository(bundle)
+        .ok()
+        .flatten()
+        .is_some_and(|source| {
+            source.id.as_deref().is_some()
+                && source.id.as_deref() == repository_id
+                && crate::model::repository(name).is_some_and(|(host, owner, repo)| {
+                    source.uri == format!("https://{host}/{owner}/{repo}")
+                })
+        })
 }
 
 #[cfg(test)]
@@ -617,13 +637,57 @@ mod tests {
     fn malformed_and_unrelated_forge_candidates_are_skipped() {
         let f = Fixture::new();
         let requested = "github.com/owner/repo/tool";
-        assert!(!candidate_matches("not a bundle", requested));
-        assert!(!candidate_matches(&f.signed(&f.statement), requested));
+        assert!(!candidate_matches("not a bundle", requested, Some("42")));
+        assert!(!candidate_matches(
+            &f.signed(&f.statement),
+            requested,
+            Some("42")
+        ));
         let mut statement = f.statement.clone();
         statement["predicate"]["project"] = json!(requested);
-        assert!(candidate_matches(&f.signed(&statement), requested));
+        assert!(candidate_matches(
+            &f.signed(&statement),
+            requested,
+            Some("42")
+        ));
+        statement["predicate"]["project"] = json!("github.com/unrelated/repo/tool");
+        assert!(!candidate_matches(
+            &f.signed(&statement),
+            requested,
+            Some("42")
+        ));
         statement["predicate"]["project"] = json!("github.com/owner/repo/other");
-        assert!(!candidate_matches(&f.signed(&statement), requested));
+        assert!(!candidate_matches(
+            &f.signed(&statement),
+            requested,
+            Some("42")
+        ));
+    }
+
+    #[test]
+    fn forge_candidate_renames_require_the_resolved_repository_id() {
+        let bundle = include_str!("../tests/fixtures/hk-v2.3.0.sigstore.json");
+        assert!(candidate_matches(
+            bundle,
+            "github.com/jdx/renamed-hk",
+            Some("922514152")
+        ));
+        assert!(candidate_matches(
+            bundle,
+            "github.com/new-owner/hk",
+            Some("922514152")
+        ));
+        assert!(!candidate_matches(
+            bundle,
+            "github.com/unrelated/hk",
+            Some("43")
+        ));
+        assert!(!candidate_matches(bundle, "github.com/new-owner/hk", None));
+        assert!(!candidate_matches(
+            bundle,
+            "github.com/new-owner/hk/other",
+            Some("922514152")
+        ));
     }
 
     #[test]
