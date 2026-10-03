@@ -829,15 +829,22 @@ impl Session {
                 }
                 boundary(index * 2 + 2)?;
             }
-            journal.committed = true;
-            atomic(&path, &journal)?;
+            let mut committed = journal.clone();
+            committed.committed = true;
+            atomic(&path, &committed)?;
+            journal = committed;
             boundary(journal.operations.len() * 2 + 1)?;
             Ok(())
         })();
         if let Err(e) = result {
             // Simulated interruption tests terminate the subprocess in the hook;
             // ordinary I/O errors instead perform the same idempotent recovery.
-            recover(&path, &journal)?;
+            // Publication can succeed before its directory flush reports an
+            // error. Recover from the record actually published, never from a
+            // proposed in-memory phase or a guess about how far atomic got.
+            let persisted: Journal =
+                read(&path)?.ok_or_else(|| conflict("transaction journal disappeared"))?;
+            recover(&path, &persisted)?;
             return Err(e);
         }
         recover(&path, &journal)?;
@@ -1143,6 +1150,73 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+        assert_eq!(
+            session
+                .receipt("example.test/tool")
+                .unwrap()
+                .unwrap()
+                .version,
+            "1"
+        );
+        assert!(!session.state.join("journal.json").exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn failed_commit_record_keeps_the_prior_installation_recoverable() {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::{FILE_SHARE_READ, FILE_SHARE_WRITE};
+        let root = tempfile::tempdir().unwrap();
+        let state = root.path().join("state");
+        let tree = root.path().join("tree/tool");
+        let bin = root.path().join("bin");
+        let session = Session::open(&state, &tree, &bin).unwrap();
+        session
+            .commit(
+                staged(session.tree.parent().unwrap(), &["old"]),
+                "example.test/tool",
+                "1",
+                false,
+                History::default(),
+                export,
+            )
+            .unwrap();
+        let mut deny_delete = None;
+        let result = session.commit_inner(
+            staged(session.tree.parent().unwrap(), &["new"]),
+            "example.test/tool",
+            "2",
+            false,
+            History::default(),
+            export,
+            |step| {
+                if step == 0 {
+                    // A real sharing violation prevents atomic publication of
+                    // the commit record, while leaving the destinations writable.
+                    deny_delete = Some(
+                        fs::OpenOptions::new()
+                            .read(true)
+                            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+                            .open(session.state.join("journal.json"))?,
+                    );
+                }
+                Ok(())
+            },
+        );
+        assert!(result.is_err());
+        assert!(session.tree.join("old").is_file());
+        assert!(!session.tree.join("new").exists());
+        assert_eq!(
+            session
+                .receipt("example.test/tool")
+                .unwrap()
+                .unwrap()
+                .version,
+            "1"
+        );
+        drop(deny_delete);
+        drop(session);
+        let session = Session::open(&state, &tree, &bin).unwrap();
         assert_eq!(
             session
                 .receipt("example.test/tool")
