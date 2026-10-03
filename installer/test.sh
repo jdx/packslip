@@ -29,6 +29,9 @@ fail() {
 pass() {
   echo "ok: $*"
 }
+skip() {
+  echo "skip: $*"
+}
 
 # A release of version 0.0.0 whose executables print which build they
 # are, so installing the wrong platform's build shows.
@@ -184,20 +187,32 @@ for shell in "${shells[@]}"; do
     *) fail "$name: the template failed the wrong way: $out" ;;
   esac
 
-  try_install "$name-nohash" "$shell" PATH="$(only nohash curl wget)"
-  case "$status/$out" in
-    0/*) fail "$name: installed without a hash tool" ;;
-    *"needs sha256sum, shasum, or openssl"*) pass "$name: refuses without a hash tool" ;;
-    *) fail "$name: no hash tool failed the wrong way: $out" ;;
-  esac
-  [ ! -e "$dest/packslip" ] || fail "$name: installed without a hash tool"
+  # Taking a tool off PATH only removes it from a shell that has no copy
+  # of its own: busybox sh runs its built-in sha256sum and wget regardless.
+  nohash=$(only nohash curl wget)
+  if env PATH="$nohash" "$shell" -c 'command -v sha256sum || command -v shasum || command -v openssl' >/dev/null 2>&1; then
+    skip "$name: has a hash tool built in"
+  else
+    try_install "$name-nohash" "$shell" PATH="$nohash"
+    case "$status/$out" in
+      0/*) fail "$name: installed without a hash tool" ;;
+      *"needs sha256sum, shasum, or openssl"*) pass "$name: refuses without a hash tool" ;;
+      *) fail "$name: no hash tool failed the wrong way: $out" ;;
+    esac
+    [ ! -e "$dest/packslip" ] || fail "$name: a download was left installed without a hash tool"
+  fi
 
-  try_install "$name-nofetch" "$shell" PATH="$(only nofetch sha256sum shasum)"
-  case "$status/$out" in
-    0/*) fail "$name: installed without curl or wget" ;;
-    *"needs curl or wget"*) pass "$name: refuses without curl or wget" ;;
-    *) fail "$name: no download tool failed the wrong way: $out" ;;
-  esac
+  nofetch=$(only nofetch sha256sum shasum)
+  if env PATH="$nofetch" "$shell" -c 'command -v curl || command -v wget' >/dev/null 2>&1; then
+    skip "$name: has a download tool built in"
+  else
+    try_install "$name-nofetch" "$shell" PATH="$nofetch"
+    case "$status/$out" in
+      0/*) fail "$name: installed without curl or wget" ;;
+      *"needs curl or wget"*) pass "$name: refuses without curl or wget" ;;
+      *) fail "$name: no download tool failed the wrong way: $out" ;;
+    esac
+  fi
 
   # Each hash tool and each download tool alone.
   for tools in "curl sha256sum" "curl shasum" "curl openssl" "wget sha256sum"; do
