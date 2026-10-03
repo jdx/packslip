@@ -5,10 +5,13 @@ kind=${1:?usage: check-distro-packages.sh deb|rpm SOURCE_DIRECTORY OUTPUT_DIRECT
 source_dir=$(realpath "${2:?}")
 out=$(python3 -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve())' "${3:?}")
 mkdir -p "$out"
+container=
+trap 'if [ -n "$container" ]; then docker rm -f "$container" >/dev/null; fi' EXIT
 case "$kind" in
   deb)
     docker build -t packslip-deb-builder -f packaging/debian/Dockerfile packaging/debian
-    docker run --rm --network=none -v "$source_dir:/source:ro" -v "$out:/out" packslip-deb-builder bash -euo pipefail -c '
+    container=$(docker create --network=none packslip-deb-builder bash -euo pipefail -c '
+      mkdir -p /out
       tar -xf /source/packslip-*.tar.gz -C /build
       cd /build/packslip-*
       cp -R packaging/debian debian
@@ -23,11 +26,12 @@ case "$kind" in
       grep -q "cmd install" /out/installer.usage.kdl
       ! grep -E "cmd (create|releases|keygen|schema)" /out/installer.usage.kdl
       test -d /etc/packslip/pins.d
-    '
+    ')
     ;;
   rpm)
     docker build -t packslip-rpm-builder -f packaging/rpm/Dockerfile packaging/rpm
-    docker run --rm --network=none -v "$source_dir:/source:ro" -v "$out:/out" packslip-rpm-builder bash -euo pipefail -c '
+    container=$(docker create --network=none packslip-rpm-builder bash -euo pipefail -c '
+      mkdir -p /out
       mkdir -p /build/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
       cp /source/packslip-*.tar.gz /build/SOURCES/
       cp /source/packslip.spec /build/SPECS/
@@ -39,7 +43,11 @@ case "$kind" in
       grep -q "cmd install" /out/installer.usage.kdl
       ! grep -E "cmd (create|releases|keygen|schema)" /out/installer.usage.kdl
       test -d /etc/packslip/pins.d
-    '
+    ')
     ;;
   *) echo "unknown package kind: $kind" >&2; exit 1 ;;
 esac
+docker cp "$source_dir" "$container:/source"
+docker start -a "$container"
+test "$(docker inspect --format '{{.State.ExitCode}}' "$container")" = 0
+docker cp "$container:/out/." "$out/"
