@@ -603,6 +603,12 @@ a package manager that installs into its own directory does not unpack
 them. A `.exe` that is the program itself is `raw`; `exe` means a
 Windows installer.
 
+Paths inside an archive, in `bin` and in an `archive` source, separate
+directories with `/`, as the ZIP format requires of its entry names.
+Windows PowerShell 5.1's `Compress-Archive` writes `\` there instead, so
+a consumer reads `\` in a zip entry name as `/`: the entry
+`tool-1.0\bin\tool.exe` is the path `tool-1.0/bin/tool.exe`.
+
 Every artifact carries a `format`. Selecting an artifact keeps only the
 formats the consumer handles, and no consumer handles an absent one, so
 an artifact without it could never be selected: it would claim a place

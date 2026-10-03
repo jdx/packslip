@@ -1700,6 +1700,59 @@ fn host_requirements_are_read_and_declared() {
 }
 
 #[test]
+fn zips_that_separate_directories_with_backslashes() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let (code, _, err) = packslip(d, &["keygen", "-o", "k.key"]);
+    assert_eq!(code, 0, "{err}");
+    let elf = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/needs-z"
+    ))
+    .unwrap();
+    // Windows PowerShell 5.1's Compress-Archive names entries this way, with
+    // no directory entries. A library the artifact ships is not asked of
+    // the host.
+    zip_file(
+        &d.join("tool-1.0.0-windows-x64.zip"),
+        &[
+            ("tool-1.0.0-windows-x64\\tool.exe", &elf),
+            ("tool-1.0.0-windows-x64\\lib\\libz.so.1", b"shipped"),
+        ],
+    );
+    let (code, out, err) = packslip(
+        d,
+        &[
+            "create",
+            "--project",
+            "tool.example.com",
+            "--version",
+            "1.0.0",
+            "--key",
+            "k.key",
+            "--no-log",
+            "--out",
+            "dist",
+            "--bin",
+            "tool",
+            "tool-1.0.0-windows-x64.zip",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.contains("requires tool-1.0.0-windows-x64.zip: libs none"),
+        "{out}"
+    );
+    let (code, out, err) = packslip(d, &["show", "dist/packslip.sigstore.json"]);
+    assert_eq!(code, 0, "{err}");
+    let doc: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(
+        doc["predicate"]["artifacts"][0]["bin"],
+        serde_json::json!(["tool-1.0.0-windows-x64/tool.exe"])
+    );
+}
+
+#[test]
 fn static_builds_and_unnamed_architectures() {
     let dir = tempfile::tempdir().unwrap();
     let d = dir.path();

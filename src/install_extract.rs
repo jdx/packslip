@@ -681,7 +681,9 @@ pub fn extract(
             let mut file = zip
                 .by_index(index)
                 .map_err(|e| Error::Unsafe(e.to_string()))?;
-            let file_path = path(file.name())?;
+            // `create` reads `\` in a zip entry name as `/`, so extraction
+            // does too; `path` still refuses `..\`, `\abs`, and `C:\` names.
+            let file_path = path(&crate::archive::zip_path(file.name()))?;
             let file_mode = file.unix_mode().unwrap_or(0o100644);
             let file_type = file_mode & 0o170000;
             let size = if file.is_dir() { 0 } else { file.size() };
@@ -1067,6 +1069,44 @@ mod tests {
             )
             .is_err()
         );
+    }
+    #[test]
+    fn zip_entries_may_separate_directories_with_backslashes() {
+        let parent = tempfile::tempdir().unwrap();
+        let zip_of = |names: &[&str]| {
+            let input = parent.path().join("tool.zip");
+            let mut zip = zip::ZipWriter::new(std::fs::File::create(&input).unwrap());
+            for name in names {
+                zip.start_file(*name, zip::write::SimpleFileOptions::default())
+                    .unwrap();
+                zip.write_all(name.as_bytes()).unwrap();
+            }
+            zip.finish().unwrap();
+            input
+        };
+        let tool = || artifact("tool.zip", "zip", vec![crate::Bin::new("pkg/bin/tool.exe")]);
+        let input = zip_of(&["pkg\\bin\\tool.exe", "pkg\\lib\\runtime.dll"]);
+        let extracted = extract(&input, &tool(), parent.path(), Limits::default()).unwrap();
+        assert_eq!(
+            extracted.bins,
+            vec![("tool".into(), PathBuf::from("bin/tool.exe"))]
+        );
+        assert!(extracted.tree.path().join("lib/runtime.dll").is_file());
+        for escape in [
+            "..\\escape",
+            "pkg\\..\\..\\escape",
+            "\\escape",
+            "C:\\escape",
+        ] {
+            let input = zip_of(&["pkg\\bin\\tool.exe", escape]);
+            assert!(
+                matches!(
+                    extract(&input, &tool(), parent.path(), Limits::default()),
+                    Err(Error::Unsafe(_))
+                ),
+                "{escape}"
+            );
+        }
     }
     #[test]
     fn zip_link_targets_count_toward_aggregate_bytes_before_retention() {
