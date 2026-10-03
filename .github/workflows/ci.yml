@@ -74,6 +74,25 @@ jobs:
           persist-credentials: false
       - uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
 
+  extraction:
+    name: extraction (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm, macos-26, windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: extraction-${{ matrix.runner }}
+      - run: cargo clippy --no-default-features --features install-extract --lib -- -D warnings
+      - run: cargo test --no-default-features --features install-extract --lib install_extract
+      # Cache snapshots must survive replacement on native Windows as well.
+      - run: cargo test --no-default-features --features discovery --lib discovery
+
   # Both schemes end to end against the public log. Only on main, where the
   # id-token permission is available.
   signing:
@@ -188,6 +207,8 @@ jobs:
       - signing
       - test
       - zizmor
+
+      - extraction
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions: {}
