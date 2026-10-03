@@ -343,6 +343,9 @@ fn release_under(
     host_authority: bool,
 ) -> Result<Release, Error> {
     let key = key(constraints)?;
+    if key.is_some() && Policy::for_project(project).is_some() {
+        return Err(Error::Constraint("forge projects require the forge's OIDC identity; a public-key constraint cannot replace that requirement".into()));
+    }
     let (verified, repository) = if let Some(key) = &key {
         (crate::verify(bundle, &Trust::Key(key), options, &[])?, None)
     } else if crate::sigstore::Policy::for_project(project).is_some() {
@@ -420,6 +423,9 @@ fn list_under(
     host_authority: bool,
 ) -> Result<List, Error> {
     let key = key(constraints)?;
+    if key.is_some() && Policy::for_project(project).is_some() {
+        return Err(Error::Constraint("forge projects require the forge's OIDC identity; a public-key constraint cannot replace that requirement".into()));
+    }
     let (verified, repository) = if let Some(key) = &key {
         (
             crate::verify_release_list(bundle, &Trust::Key(key), options)?,
@@ -673,7 +679,7 @@ mod tests {
     }
     #[test]
     #[cfg(feature = "sign")]
-    fn explicit_key_authority_still_requires_exact_project_and_all_constraints() {
+    fn key_authority_requires_exact_host_project_and_cannot_replace_forge_identity() {
         let key = crate::minisign::SecretKey::from_seed([7; 32]);
         let public = key.public_key();
         let mut statement: crate::Statement = serde_json::from_slice(
@@ -683,12 +689,16 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
+        statement.predicate.project = "example.test".into();
         statement.predicate.identity.scheme = Scheme::SigstoreKey;
         statement.predicate.identity.key_id = crate::minisign::key_id_hex(&public.key_id);
         statement.predicate.identity.issuer = None;
         statement.predicate.identity.pin_workflow = None;
         let bundle = crate::sigstore::sign(
-            crate::sigstore::Signer::Key { key, log: false },
+            crate::sigstore::Signer::Key {
+                key: key.clone(),
+                log: false,
+            },
             &serde_json::to_vec(&statement).unwrap(),
         )
         .unwrap();
@@ -702,18 +712,35 @@ mod tests {
             ..Constraints::default()
         };
         let accepted = release(
-            "github.com/jdx/hk",
+            "example.test",
             None,
             &bundle,
             std::slice::from_ref(&pinned),
             options,
         )
         .unwrap();
+        let mut forge_statement = statement.clone();
+        forge_statement.predicate.project = "github.com/jdx/hk".into();
+        let forge_bundle = crate::sigstore::sign(
+            crate::sigstore::Signer::Key { key, log: false },
+            &serde_json::to_vec(&forge_statement).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            release(
+                "github.com/jdx/hk",
+                None,
+                &forge_bundle,
+                std::slice::from_ref(&pinned),
+                options
+            )
+            .is_err()
+        );
         assert_eq!(accepted.record.scheme, Scheme::SigstoreKey);
         assert!(accepted.record.repository.is_none()); // No claim of forge ownership.
         assert!(
             release(
-                "github.com/jdx/other",
+                "other.test",
                 None,
                 &bundle,
                 std::slice::from_ref(&pinned),
@@ -721,21 +748,12 @@ mod tests {
             )
             .is_err()
         );
-        assert!(release("github.com/jdx/hk", None, &bundle, &[], options).is_err());
+        assert!(release("example.test", None, &bundle, &[], options).is_err());
         let forge_pin = Constraints {
             pins: vec!["ps1_snirenkjwr7m5ozgcufameodnm".into()],
             ..Constraints::default()
         };
-        assert!(
-            release(
-                "github.com/jdx/hk",
-                None,
-                &bundle,
-                &[pinned, forge_pin],
-                options
-            )
-            .is_err()
-        );
+        assert!(release("example.test", None, &bundle, &[pinned, forge_pin], options).is_err());
     }
     #[test]
     fn administrator_files_are_independent_and_malformed_pins_fail() {
