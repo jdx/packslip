@@ -180,6 +180,101 @@ fn atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), Error> {
     sync_dir(parent)
 }
 
+#[cfg(unix)]
+fn directory(path: &Path, private: bool) -> Result<PathBuf, Error> {
+    use rustix::fs::{AtFlags, FileType, Mode, OFlags};
+    use std::os::unix::fs::MetadataExt as _;
+    let absolute = if path.is_absolute() {
+        path.to_owned()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let uid = rustix::process::geteuid().as_raw();
+    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;
+    let mut parent =
+        File::from(rustix::fs::open("/", flags, Mode::empty()).map_err(std::io::Error::from)?);
+    let mut current = PathBuf::from("/");
+    for component in absolute.components() {
+        let name = match component {
+            std::path::Component::RootDir | std::path::Component::CurDir => continue,
+            std::path::Component::Normal(name) => name,
+            _ => return Err(conflict("installation paths must not contain '..'")),
+        };
+        current.push(name);
+        // Relative mkdir/open bind each component to the already validated
+        // directory handle. A raced symlink is never accepted by this open.
+        let mut opened = rustix::fs::openat(&parent, name, flags | OFlags::NOFOLLOW, Mode::empty());
+        if opened
+            .as_ref()
+            .is_err_and(|e| *e == rustix::io::Errno::NOENT)
+        {
+            match rustix::fs::mkdirat(&parent, name, Mode::from_raw_mode(0o755)) {
+                Ok(()) | Err(rustix::io::Errno::EXIST) => {}
+                Err(e) => return Err(std::io::Error::from(e).into()),
+            }
+            opened = rustix::fs::openat(&parent, name, flags | OFlags::NOFOLLOW, Mode::empty());
+        }
+        let opened = match opened {
+            Ok(fd) => fd,
+            Err(original) => {
+                // macOS /var and common distro /lib paths are trusted symlinks.
+                // Check the link's owner and its entire resolved parent chain
+                // before following it or creating anything beneath its target.
+                let link = rustix::fs::statat(&parent, name, AtFlags::SYMLINK_NOFOLLOW)
+                    .map_err(std::io::Error::from)?;
+                if FileType::from_raw_mode(link.st_mode) != FileType::Symlink
+                    || (link.st_uid != uid && link.st_uid != 0)
+                {
+                    return Err(std::io::Error::from(original).into());
+                }
+                protected(&fs::canonicalize(&current)?, uid, true)?;
+                rustix::fs::openat(&parent, name, flags, Mode::empty())
+                    .map_err(std::io::Error::from)?
+            }
+        };
+        let file = File::from(opened);
+        let meta = file.metadata()?;
+        if (meta.uid() != uid && meta.uid() != 0)
+            || (meta.mode() & 0o022 != 0 && meta.mode() & 0o1000 == 0)
+        {
+            return Err(conflict(format!(
+                "{} has unsafe directory ownership or permissions",
+                current.display()
+            )));
+        }
+        parent = file;
+    }
+    let canonical = fs::canonicalize(&current)?;
+    protected(&canonical, uid, false)?;
+    if private {
+        if parent.metadata()?.uid() != uid {
+            return Err(conflict("state directory belongs to another user"));
+        }
+        rustix::fs::fchmod(&parent, Mode::RUSR | Mode::WUSR | Mode::XUSR)
+            .map_err(std::io::Error::from)?;
+    }
+    Ok(canonical)
+}
+
+#[cfg(unix)]
+fn protected(path: &Path, uid: u32, allow_sticky: bool) -> Result<(), Error> {
+    use std::os::unix::fs::MetadataExt as _;
+    for ancestor in path.ancestors() {
+        let meta = fs::metadata(ancestor)?;
+        if (meta.uid() != uid && meta.uid() != 0)
+            || (meta.mode() & 0o022 != 0
+                && ((ancestor == path && !allow_sticky) || meta.mode() & 0o1000 == 0))
+        {
+            return Err(conflict(format!(
+                "{} is writable by another user",
+                ancestor.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
 fn directory(path: &Path, private: bool) -> Result<PathBuf, Error> {
     // Validate each existing component before creating beneath it. In particular,
     // root must not follow an attacker's pre-created symlink in a sticky directory.
@@ -213,55 +308,9 @@ fn directory(path: &Path, private: bool) -> Result<PathBuf, Error> {
             }
             Err(e) => return Err(e.into()),
         };
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt as _;
-            let uid = rustix::process::geteuid().as_raw();
-            if metadata.uid() != uid && metadata.uid() != 0 {
-                return Err(conflict(format!(
-                    "{} belongs to another user",
-                    current.display()
-                )));
-            }
-            if !metadata.file_type().is_symlink()
-                && metadata.mode() & 0o022 != 0
-                && metadata.mode() & 0o1000 == 0
-            {
-                return Err(conflict(format!(
-                    "{} is writable by another user",
-                    current.display()
-                )));
-            }
-        }
-        #[cfg(not(unix))]
         let _ = metadata;
     }
     let path = fs::canonicalize(path)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
-        let uid = rustix::process::geteuid().as_raw();
-        for ancestor in path.ancestors() {
-            let meta = fs::metadata(ancestor)?;
-            // A sticky ancestor such as /tmp cannot have a child owned by another
-            // user replaced. The destination itself must always be protected.
-            if (meta.uid() != uid && meta.uid() != 0)
-                || (meta.mode() & 0o022 != 0 && (ancestor == path || meta.mode() & 0o1000 == 0))
-            {
-                return Err(conflict(format!(
-                    "{} is writable by another user",
-                    ancestor.display()
-                )));
-            }
-        }
-        if private {
-            if fs::metadata(&path)?.uid() != uid {
-                return Err(conflict("state directory belongs to another user"));
-            }
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o700))?;
-        }
-    }
-    #[cfg(not(unix))]
     let _ = private;
     Ok(path)
 }
@@ -857,6 +906,21 @@ pub fn symlink_export(path: &Path, target: &Path) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_a_trusted_symlink_to_an_unprotected_target_before_creating_children() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let root = tempfile::tempdir().unwrap();
+        let unsafe_target = root.path().join("unsafe");
+        fs::create_dir(&unsafe_target).unwrap();
+        fs::set_permissions(&unsafe_target, fs::Permissions::from_mode(0o777)).unwrap();
+        let link = root.path().join("link");
+        std::os::unix::fs::symlink(&unsafe_target, &link).unwrap();
+        assert!(directory(&link.join("must-not-be-created"), false).is_err());
+        assert!(!unsafe_target.join("must-not-be-created").exists());
+        fs::set_permissions(unsafe_target, fs::Permissions::from_mode(0o700)).unwrap();
+    }
 
     fn staged(root: &Path, commands: &[&str]) -> Extracted {
         let tree = tempfile::tempdir_in(root).unwrap();
