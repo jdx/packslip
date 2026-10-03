@@ -765,6 +765,261 @@
         }
       },
       "reason": "`bin` names go on PATH; a name cannot contain a separator."
+    },
+    {
+      "name": "static completion names one shell",
+      "expect": "accept",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "github.com/example/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "libc": "gnu",
+              "size": 5,
+              "format": "tar.xz",
+              "bin": [
+                "tool"
+              ]
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-oidc",
+            "key_id": "https://github.com/example/tool/.github/workflows/release.yml@refs/tags/v1.0.0",
+            "issuer": "https://token.actions.githubusercontent.com"
+          },
+          "resources": [
+            {
+              "kind": "completion",
+              "shell": "bash",
+              "archive": "share/tool.bash"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "exec completion lists shells and substitutes in argv",
+      "expect": "accept",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "github.com/example/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "libc": "gnu",
+              "size": 5,
+              "format": "tar.xz",
+              "bin": [
+                "tool"
+              ]
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-oidc",
+            "key_id": "https://github.com/example/tool/.github/workflows/release.yml@refs/tags/v1.0.0",
+            "issuer": "https://token.actions.githubusercontent.com"
+          },
+          "resources": [
+            {
+              "kind": "completion",
+              "shells": [
+                "bash"
+              ],
+              "exec": [
+                "tool",
+                "completion",
+                "{shell}"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "exec completion substitutes shells in environment",
+      "expect": "accept",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "github.com/example/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "libc": "gnu",
+              "size": 5,
+              "format": "tar.xz",
+              "bin": [
+                "tool"
+              ]
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-oidc",
+            "key_id": "https://github.com/example/tool/.github/workflows/release.yml@refs/tags/v1.0.0",
+            "issuer": "https://token.actions.githubusercontent.com"
+          },
+          "resources": [
+            {
+              "kind": "completion",
+              "shells": [
+                "bash"
+              ],
+              "exec": [
+                "tool"
+              ],
+              "env": {
+                "COMPLETE": "{shell}"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "exec completion cannot use a static single-shell declaration",
+      "expect": "reject",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "github.com/example/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "libc": "gnu",
+              "size": 5,
+              "format": "tar.xz",
+              "bin": [
+                "tool"
+              ]
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-oidc",
+            "key_id": "https://github.com/example/tool/.github/workflows/release.yml@refs/tags/v1.0.0",
+            "issuer": "https://token.actions.githubusercontent.com"
+          },
+          "resources": [
+            {
+              "kind": "completion",
+              "shell": "bash",
+              "exec": [
+                "tool",
+                "completion",
+                "bash"
+              ]
+            }
+          ]
+        }
+      },
+      "reason": "With exec, shells lists every shell the command generates and {shell} stands for each in the argv or in an env value."
+    },
+    {
+      "name": "exec completion needs a shell placeholder",
+      "expect": "reject",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "github.com/example/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "libc": "gnu",
+              "size": 5,
+              "format": "tar.xz",
+              "bin": [
+                "tool"
+              ]
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-oidc",
+            "key_id": "https://github.com/example/tool/.github/workflows/release.yml@refs/tags/v1.0.0",
+            "issuer": "https://token.actions.githubusercontent.com"
+          },
+          "resources": [
+            {
+              "kind": "completion",
+              "shells": [
+                "bash"
+              ],
+              "exec": [
+                "tool",
+                "completion",
+                "bash"
+              ]
+            }
+          ]
+        }
+      },
+      "reason": "With exec, shells lists every shell the command generates and {shell} stands for each in the argv or in an env value."
     }
   ]
 }
