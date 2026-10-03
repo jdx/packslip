@@ -90,6 +90,8 @@ jobs:
           shared-key: extraction-${{ matrix.runner }}
       - run: cargo clippy --no-default-features --features install-extract --lib -- -D warnings
       - run: cargo test --no-default-features --features install-extract --lib install_extract
+      # Cache snapshots must survive replacement on native Windows as well.
+      - run: cargo test --no-default-features --features discovery --lib discovery
 
   # Both schemes end to end against the public log. Only on main, where the
   # id-token permission is available.
