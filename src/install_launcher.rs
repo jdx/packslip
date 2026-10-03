@@ -55,6 +55,9 @@ mod tests {
                     } else { 0 }
                 }
                 fn main() {
+                    // SSH/service parents can pass an inherited ignore-Ctrl+C
+                    // attribute. This probe explicitly opts in to both events.
+                    assert_ne!(unsafe {SetConsoleCtrlHandler(None,0)},0);
                     assert_ne!(unsafe {SetConsoleCtrlHandler(Some(handle),1)},0);
                     std::fs::write(std::env::var_os("READY").unwrap(), "ready").unwrap();
                     let release=std::path::PathBuf::from(std::env::var_os("RELEASE").unwrap());
