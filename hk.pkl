@@ -6,6 +6,12 @@ local linters = new Mapping<String, Step> {
     // CI runs clippy with -D warnings over all features and targets.
     ["cargo-clippy"] = (Builtins.cargo_clippy) {
         check = "cargo clippy -q --all-features --all-targets -- -D warnings"
+        fix = "cargo clippy -q --all-features --all-targets --fix --allow-dirty --allow-staged -- -D warnings"
+    }
+    // CI also checks the verify-only build that library consumers use.
+    ["cargo-clippy-no-default-features"] = (Builtins.cargo_clippy) {
+        check = "cargo clippy -q --no-default-features --all-targets -- -D warnings"
+        fix = "cargo clippy -q --no-default-features --all-targets --fix --allow-dirty --allow-staged -- -D warnings"
     }
     ["shellcheck"] = Builtins.shellcheck
 }
