@@ -23,6 +23,8 @@ pub mod archive;
 pub mod cli;
 #[cfg(feature = "create")]
 pub mod create;
+#[cfg(feature = "discovery")]
+pub mod discovery;
 pub mod dsse;
 pub mod fingerprint;
 pub mod forge;
