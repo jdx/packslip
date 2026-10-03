@@ -96,6 +96,7 @@ jobs:
       - run: cargo test --no-default-features --features install-fs --lib install_fs
       - run: cargo clippy --no-default-features --features install-launcher --lib -- -D warnings
       - run: cargo test --no-default-features --features install-launcher --lib install_launcher
+      - run: cargo test --no-default-features --features install-launcher --lib launcher_payload
 
   # Both schemes end to end against the public log. Only on main, where the
   # id-token permission is available.
