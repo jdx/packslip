@@ -42,6 +42,12 @@ fn numeric(value: &str) -> Option<Vec<u64>> {
     (!values.is_empty()).then_some(values)
 }
 
+#[cfg(any(windows, test))]
+fn windows_version(major: u32, minor: u32, build: &str) -> Option<String> {
+    let build: u32 = build.parse().ok()?;
+    Some(format!("{major}.{minor}.{build}"))
+}
+
 fn compare(actual: &str, minimum: &str) -> Option<std::cmp::Ordering> {
     let mut actual = numeric(actual)?;
     let mut minimum = numeric(minimum)?;
@@ -139,7 +145,7 @@ impl Snapshot {
                 let minor: Result<u32, _> = key.get_value("CurrentMinorVersionNumber");
                 let build: Result<String, _> = key.get_value("CurrentBuildNumber");
                 if let (Ok(major), Ok(minor), Ok(build)) = (major, minor, build) {
-                    host.os_version = Some(format!("{major}.{minor}.{build}"));
+                    host.os_version = windows_version(major, minor, &build);
                 }
             }
         }
@@ -300,7 +306,7 @@ impl Report {
 }
 
 fn library_paths(arch: &str) -> Vec<PathBuf> {
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     {
         let triple = match arch {
             "aarch64" => "aarch64-linux-gnu",
@@ -320,6 +326,20 @@ fn library_paths(arch: &str) -> Vec<PathBuf> {
         }
         paths
     }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = arch;
+        let mut paths: Vec<_> = ["/usr/lib", "/usr/local/lib", "/opt/homebrew/lib"]
+            .into_iter()
+            .map(PathBuf::from)
+            .collect();
+        for variable in ["DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH"] {
+            if let Some(extra) = std::env::var_os(variable) {
+                paths.extend(std::env::split_paths(&extra));
+            }
+        }
+        paths
+    }
     #[cfg(windows)]
     {
         let _ = arch;
@@ -332,7 +352,7 @@ fn library_paths(arch: &str) -> Vec<PathBuf> {
         }
         paths
     }
-    #[cfg(not(any(unix, windows)))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {
         let _ = arch;
         Vec::new()
@@ -434,6 +454,24 @@ fn loader_cache(output: &str, arch: &str) -> Option<BTreeSet<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn registry_build_must_be_numeric() {
+        assert_eq!(windows_version(10, 0, "26100"), Some("10.0.26100".into()));
+        assert_eq!(windows_version(10, 0, "26100\nmalformed"), None);
+        assert_eq!(windows_version(10, 0, ""), None);
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_uses_native_library_prefixes() {
+        let paths = library_paths("aarch64");
+        assert!(paths.contains(&PathBuf::from("/opt/homebrew/lib")));
+        assert!(paths.contains(&PathBuf::from("/usr/local/lib")));
+        assert!(
+            !paths
+                .iter()
+                .any(|p| p.to_string_lossy().contains("linux-gnu"))
+        );
+    }
     #[cfg(target_os = "linux")]
     #[test]
     fn linux_kernel_local_suffixes_preserve_the_numeric_baseline() {
