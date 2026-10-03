@@ -23,6 +23,9 @@ Generate a self\-contained shell completion script
 \fBcreate\fR
 Create and sign a packslip for a release
 .TP
+\fBinstall\fR
+Install an authenticated upstream release and export its declared commands
+.TP
 \fBkeygen\fR
 Generate an Ed25519 key pair for key\-signed releases (sigstore\-key)
 .TP
@@ -220,6 +223,86 @@ packslip create \\
         \-\-out dist \\
         dist/mytool\-1.2.3\-linux\-x64.tar.gz
 .RE
+.SH "PACKSLIP INSTALL"
+Install an authenticated upstream release and export its declared commands
+
+Keeps the complete installation tree. Does not run downloaded code, install dependencies, or edit shell configuration. Use \-\-system for a shared install.
+.PP
+\fBUsage:\fR packslip install [OPTIONS] <PROJECT>
+.PP
+\fBOptions:\fR
+.PP
+.TP
+\fB\-\-version\fR \fI<VERSION>\fR
+Version, prefix, tag, or latest (the default)
+.TP
+\fB\-\-system\fR
+Install for all users; Unix root uses this scope by default
+.TP
+\fB\-\-user\fR
+Explicitly select the current user's installation scope
+.TP
+\fB\-\-force\fR
+Replace conflicting command entries and unmarked installation directories
+.TP
+\fB\-\-offline\fR
+Use only locally cached, authenticated metadata and artifacts
+.TP
+\fB\-\-install\-dir\fR \fI<INSTALL_DIR>\fR
+Override the installation tree without moving trust state
+.TP
+\fB\-\-bin\-dir\fR \fI<BIN_DIR>\fR
+Override the command directory without moving trust state
+.TP
+\fB\-\-variant\fR \fI<VARIANT>\fR
+Select a publisher's named variant
+.TP
+\fB\-\-pin\fR \fI<PIN>\fR
+Allowed signer fingerprint (repeatable, alternatives within this option)
+.TP
+\fB\-\-pubkey\fR \fI<PUBKEY>\fR
+Ed25519 public key or path to its public\-key file
+.TP
+\fB\-\-issuer\fR \fI<ISSUER>\fR
+Require this OIDC issuer as well as the project's default identity
+.TP
+\fB\-\-identity\fR \fI<IDENTITY>\fR
+Require this exact certificate identity
+.TP
+\fB\-\-identity\-prefix\fR \fI<IDENTITY_PREFIX>\fR
+Require this certificate identity prefix
+.TP
+\fB\-\-accept\-trust\-change\fR \fI<ACCEPT_TRUST_CHANGE>\fR
+Approve one exact displayed trust\-change proposal (repeatable)
+.TP
+\fB\-\-trusted\-root\fR \fI<TRUSTED_ROOT>\fR
+Administrator\-supplied Sigstore trusted_root.json instead of TUF refresh
+.TP
+\fB\-\-allow\-unlogged\fR
+Accept signatures without transparency\-log entries for this attempt
+.TP
+\fB\-\-allow\-incompatible\-host\fR
+Accept the selected artifact's incompatible host requirements
+.TP
+\fB\-\-max\-extracted\-size\fR \fI<MAX_EXTRACTED_SIZE>\fR
+Local maximum expanded archive size in bytes
+.RS
+\fIDefault: \fR10737418240
+.RE
+.TP
+\fB\-\-max\-archive\-entries\fR \fI<MAX_ARCHIVE_ENTRIES>\fR
+Local maximum archive entry count
+.RS
+\fIDefault: \fR100000
+.RE
+.TP
+\fB\-h, \-\-help\fR
+Print help
+\fBArguments:\fR
+.PP
+.TP
+\fB<PROJECT>\fR
+Project name (owner/repo, github.com/owner/repo[/subpath], or host[/path])
 .SH "PACKSLIP KEYGEN"
 Generate an Ed25519 key pair for key\-signed releases (sigstore\-key)
 

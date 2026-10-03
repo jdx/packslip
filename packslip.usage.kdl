@@ -169,6 +169,63 @@ packslip create \
         dist/mytool-1.2.3-linux-x64.tar.gz
 """# header="Sign with a key from packslip keygen"
 }
+cmd install help="Install an authenticated upstream release and export its declared commands" {
+    long_help #"""
+Install an authenticated upstream release and export its declared commands
+
+Keeps the complete installation tree. Does not run downloaded code, install dependencies, or edit shell configuration. Use --system for a shared install.
+"""#
+    flag --version help="Version, prefix, tag, or latest (the default)" {
+        arg <VERSION>
+    }
+    flag --system help="Install for all users; Unix root uses this scope by default"
+    flag --user help="Explicitly select the current user's installation scope"
+    flag --force help="Replace conflicting command entries and unmarked installation directories"
+    flag --offline help="Use only locally cached, authenticated metadata and artifacts"
+    flag --install-dir help="Override the installation tree without moving trust state" {
+        arg <INSTALL_DIR>
+    }
+    flag --bin-dir help="Override the command directory without moving trust state" {
+        arg <BIN_DIR>
+    }
+    flag --variant help="Select a publisher's named variant" {
+        arg <VARIANT>
+    }
+    flag --pin help="Allowed signer fingerprint (repeatable, alternatives within this option)" var=#true {
+        arg <PIN>
+    }
+    flag --pubkey help="Ed25519 public key or path to its public-key file" {
+        arg <PUBKEY>
+    }
+    flag --issuer help="Require this OIDC issuer as well as the project's default identity" {
+        arg <ISSUER>
+    }
+    flag --identity help="Require this exact certificate identity" {
+        arg <IDENTITY>
+    }
+    flag --identity-prefix help="Require this certificate identity prefix" {
+        arg <IDENTITY_PREFIX>
+    }
+    flag --accept-trust-change help="Approve one exact displayed trust-change proposal (repeatable)" var=#true {
+        arg <ACCEPT_TRUST_CHANGE>
+    }
+    flag --trusted-root help="Administrator-supplied Sigstore trusted_root.json instead of TUF refresh" {
+        arg <TRUSTED_ROOT>
+    }
+    flag --allow-unlogged help="Accept signatures without transparency-log entries for this attempt"
+    flag --allow-incompatible-host help="Accept the selected artifact's incompatible host requirements"
+    flag --max-extracted-size help="Local maximum expanded archive size in bytes" default="10737418240" {
+        arg <MAX_EXTRACTED_SIZE>
+    }
+    flag --max-archive-entries help="Local maximum archive entry count" default="100000" {
+        arg <MAX_ARCHIVE_ENTRIES>
+    }
+    flag "-h --help" help="Print help" action=help builtin=#true
+    arg <PROJECT> help="Project name (owner/repo, github.com/owner/repo[/subpath], or host[/path])"
+    complete install_dir type=dir
+    complete bin_dir type=dir
+    complete trusted_root type=path
+}
 cmd keygen help="Generate an Ed25519 key pair for key-signed releases (sigstore-key)" {
     long_help #"""
 Generate an Ed25519 key pair for key-signed releases (sigstore-key)

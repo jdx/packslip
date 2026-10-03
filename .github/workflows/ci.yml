@@ -37,6 +37,8 @@ jobs:
       - run: cargo test --no-default-features --features trust-root
       - run: cargo clippy --no-default-features --features verify-cli --all-targets -- -D warnings
       - run: cargo test --no-default-features --features verify-cli
+      - run: cargo clippy --no-default-features --features install-cli --all-targets -- -D warnings
+      - run: cargo test --no-default-features --features install-cli
       - run: cargo clippy --no-default-features --features verify-cli,sign --all-targets -- -D warnings
       - run: cargo test --no-default-features --features verify-cli,sign --test verifier_cli
       - run: mise run lint
@@ -48,7 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           test -f public/cli/index.html
-          for page in completion create keygen pin releases schema show verify version; do
+          for page in completion create install keygen pin releases schema show verify version; do
             test -f "public/cli/${page}/index.html"
           done
           if grep -R -E 'href="[^"]+\.md([#?][^"]*)?"' public/cli; then
@@ -99,6 +101,8 @@ jobs:
       - run: cargo test --no-default-features --features install-launcher --lib launcher_payload
       - run: cargo clippy --no-default-features --features install-host --lib -- -D warnings
       - run: cargo test --no-default-features --features install-host --lib install_host
+      - run: cargo clippy --no-default-features --features install-cli --all-targets -- -D warnings
+      - run: cargo test --no-default-features --features install-cli --lib install::tests
 
   # Both schemes end to end against the public log. Only on main, where the
   # id-token permission is available.

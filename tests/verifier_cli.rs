@@ -28,6 +28,7 @@ fn commands_follow_enabled_features() {
         ),
         ("keygen", cfg!(feature = "sign")),
         ("schema", cfg!(feature = "schema")),
+        ("install", cfg!(feature = "install-cli")),
     ] {
         assert_eq!(spec.contains(&format!("cmd {command}")), enabled, "{spec}");
     }

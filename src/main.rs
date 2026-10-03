@@ -67,6 +67,8 @@ enum Commands {
     Completion(Completion),
     #[cfg(all(feature = "create", feature = "manifest"))]
     Create(Box<Create>),
+    #[cfg(feature = "install-cli")]
+    Install(Box<Install>),
     #[cfg(feature = "sign")]
     Keygen(Keygen),
     Pin(Box<Pin>),
@@ -79,6 +81,128 @@ enum Commands {
     Usage(Usage),
     Verify(Verify),
     Version(Version),
+}
+
+/// Install an authenticated upstream release and export its declared commands
+///
+/// Keeps the complete installation tree. Does not run downloaded code, install
+/// dependencies, or edit shell configuration. Use --system for a shared install.
+#[cfg(feature = "install-cli")]
+#[derive(Debug, usage_rs::Args)]
+struct Install {
+    /// Project name (owner/repo, github.com/owner/repo[/subpath], or host[/path])
+    #[usage(arg)]
+    project: String,
+    /// Version, prefix, tag, or latest (the default)
+    #[usage(long)]
+    version: Option<String>,
+    /// Install for all users; Unix root uses this scope by default
+    #[usage(long)]
+    system: bool,
+    /// Explicitly select the current user's installation scope
+    #[usage(long)]
+    user: bool,
+    /// Replace conflicting command entries and unmarked installation directories
+    #[usage(long)]
+    force: bool,
+    /// Use only locally cached, authenticated metadata and artifacts
+    #[usage(long)]
+    offline: bool,
+    /// Override the installation tree without moving trust state
+    #[usage(long, value_hint = usage_rs::ValueHint::DirPath)]
+    install_dir: Option<PathBuf>,
+    /// Override the command directory without moving trust state
+    #[usage(long, value_hint = usage_rs::ValueHint::DirPath)]
+    bin_dir: Option<PathBuf>,
+    /// Select a publisher's named variant
+    #[usage(long)]
+    variant: Option<String>,
+    /// Allowed signer fingerprint (repeatable, alternatives within this option)
+    #[usage(long)]
+    pin: Vec<String>,
+    /// Ed25519 public key or path to its public-key file
+    #[usage(long)]
+    pubkey: Option<String>,
+    /// Require this OIDC issuer as well as the project's default identity
+    #[usage(long)]
+    issuer: Option<String>,
+    /// Require this exact certificate identity
+    #[usage(long)]
+    identity: Option<String>,
+    /// Require this certificate identity prefix
+    #[usage(long)]
+    identity_prefix: Option<String>,
+    /// Approve one exact displayed trust-change proposal (repeatable)
+    #[usage(long)]
+    accept_trust_change: Vec<String>,
+    /// Administrator-supplied Sigstore trusted_root.json instead of TUF refresh
+    #[usage(long, value_hint = usage_rs::ValueHint::FilePath)]
+    trusted_root: Option<PathBuf>,
+    /// Accept signatures without transparency-log entries for this attempt
+    #[usage(long)]
+    allow_unlogged: bool,
+    /// Accept the selected artifact's incompatible host requirements
+    #[usage(long)]
+    allow_incompatible_host: bool,
+    /// Local maximum expanded archive size in bytes
+    #[usage(long, default = "10737418240")]
+    max_extracted_size: u64,
+    /// Local maximum archive entry count
+    #[usage(long, default = "100000")]
+    max_archive_entries: u64,
+}
+
+#[cfg(feature = "install-cli")]
+impl RunWith<BinInfo> for Install {
+    type Output = Result<()>;
+    fn run_with(self, _: BinInfo) -> Result<()> {
+        let request = packslip::install::Request {
+            project: self.project,
+            version: self.version,
+            system: self.system,
+            user: self.user,
+            force: self.force,
+            offline: self.offline,
+            install_dir: self.install_dir,
+            bin_dir: self.bin_dir,
+            variant: self.variant,
+            constraints: packslip::install_policy::Constraints {
+                pins: self.pin,
+                pubkey: self.pubkey,
+                issuer: self.issuer,
+                identity: self.identity,
+                identity_prefix: self.identity_prefix,
+            },
+            accept_trust_change: self.accept_trust_change,
+            trusted_root: self.trusted_root,
+            allow_unlogged: self.allow_unlogged,
+            allow_incompatible_host: self.allow_incompatible_host,
+            limits: packslip::install_extract::Limits {
+                bytes: self.max_extracted_size,
+                entries: self.max_archive_entries,
+            },
+        };
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        let report = runtime.block_on(packslip::install::run(request))?;
+        println!(
+            "Installed {} {} at {}",
+            report.project,
+            report.receipt.version,
+            report.receipt.tree.display()
+        );
+        if let Some(pin) = report.pin {
+            println!("Signer pin: {pin}");
+        }
+        for warning in report.warnings {
+            eprintln!("warning: {warning}");
+        }
+        for path in report.receipt.exports.keys() {
+            println!("Command: {}", path.display());
+        }
+        Ok(())
+    }
 }
 
 /// Generate a self-contained shell completion script

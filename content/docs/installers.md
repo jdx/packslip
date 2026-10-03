@@ -14,6 +14,9 @@ through one install, summarizes the
 [consumer rules](/release/v1/#consumer-rules), and shows the Rust library,
 which implements the verification and selection steps.
 
+For a ready-made command that performs discovery, verification, and installation
+with persistent trust state, see [Bootstrap a package manager](/docs/bootstrap/).
+
 ## Install a release
 
 1. **Find the bundle.** List the project's versions, choose one, and
@@ -179,6 +182,7 @@ are unaffected:
 | --- | --- |
 | `cli` (default) | The `packslip` binary; implies the rest. |
 | `verify-cli` | The verifier binary: `verify`, `pin`, `show`, completions, and version, without publishing, archive inspection, or schema generation. |
+| `install-cli` | The verifier commands plus `install`, complete-tree extraction, native command exports, and host checks; excludes publishing and schema generation. |
 | `create` | Build a statement from built artifacts; implies `archive`, `linkage`, and `sign`. |
 | `archive` | Read tar and zip archives to resolve declared executable paths. |
 | `linkage` | Derive `requires.libs` from ELF, Mach-O, and PE executables. |
@@ -186,15 +190,15 @@ are unaffected:
 | `manifest` | Read a TOML manifest (`release.toml`) for `create --manifest`. |
 | `schema` | `Statement::schema()` and `ReleaseListStatement::schema()`. |
 
-Distribution packagers can build a verifier without the signing stack:
+Distribution packagers can build the installer without the publishing stack:
 
 ```sh
-cargo build --release --no-default-features --features verify-cli
+cargo build --locked --release --no-default-features --features install-cli
 ```
 
-The default build still includes every existing CLI command. The verifier
-build omits `create`, `releases`, `keygen`, and `schema`; consumers that need
-the library alone can continue using `--no-default-features`.
+The installer build omits `create`, `releases`, `keygen`, and `schema`.
+Use `verify-cli` for a verifier-only binary, or `--no-default-features`
+for the library alone. The default build includes every CLI command.
 
 The samples below also use `serde_json`, and the release-list check
 needs a `jiff::Timestamp` from `jiff` 0.2, the version packslip depends
