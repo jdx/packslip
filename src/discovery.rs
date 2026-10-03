@@ -591,7 +591,13 @@ pub fn choose_with_latest(
     }
     // Keep assetless forge tags as metadata for list tag mapping and yanks;
     // filter them from installable choices after merging the signed list.
-    let exact_tag = requested.and_then(|tag| live.iter().find(|release| release.tag == tag));
+    let numeric = requested.and_then(numeric_request);
+    let numeric_prefix = numeric
+        .as_ref()
+        .is_some_and(|version| !version.contains(['-', '+']) && version.split('.').count() < 3);
+    let exact_tag = requested
+        .filter(|_| !numeric_prefix)
+        .and_then(|tag| live.iter().find(|release| release.tag == tag));
     let mut choices: BTreeMap<String, Release> = BTreeMap::new();
     for release in live {
         match choices.entry(release.version.clone()) {
@@ -612,10 +618,10 @@ pub fn choose_with_latest(
             if entry.is_yanked() {
                 let removed = choices.remove(&entry.version);
                 if requested.is_some_and(|v| {
-                    v == entry.version
+                    numeric.as_deref().unwrap_or(v) == entry.version
                         || exact_tag.is_some_and(|release| release.version == entry.version)
-                        || entry.tag.as_deref() == Some(v)
-                        || removed.as_ref().is_some_and(|r| r.tag == v)
+                        || (!numeric_prefix && entry.tag.as_deref() == Some(v))
+                        || (!numeric_prefix && removed.as_ref().is_some_and(|r| r.tag == v))
                 }) {
                     return Err(Error::Yanked(entry.version.clone()));
                 }
@@ -665,7 +671,7 @@ pub fn choose_with_latest(
             }
             // A numeric version may select any installable tag for that
             // version; a named tag without its own bundle cannot substitute.
-            if semver::Version::parse(request.strip_prefix('v').unwrap_or(request)).is_err() {
+            if numeric.is_none() {
                 return Err(Error::NoRelease);
             }
         }
@@ -697,10 +703,39 @@ pub fn choose_with_latest(
         .ok_or(Error::NoRelease)
 }
 
+// Numeric selectors use the same leading-zero normalization as forge tags,
+// while retaining missing components so `3.12` remains a prefix selector.
+fn numeric_request(request: &str) -> Option<String> {
+    let text = request.strip_prefix('v').unwrap_or(request);
+    let (core, tail) = text
+        .find(['-', '+'])
+        .map_or((text, ""), |i| (&text[..i], &text[i..]));
+    let parts: Vec<_> = core.split('.').collect();
+    if !(1..=3).contains(&parts.len())
+        || parts
+            .iter()
+            .any(|part| part.is_empty() || !part.bytes().all(|b| b.is_ascii_digit()))
+    {
+        return None;
+    }
+    let core = parts
+        .into_iter()
+        .map(|part| {
+            let value = part.trim_start_matches('0');
+            if value.is_empty() { "0" } else { value }
+        })
+        .collect::<Vec<_>>()
+        .join(".");
+    Some(format!("{core}{tail}"))
+}
+
 fn matches_request(release: &Release, request: &str) -> bool {
-    let requested = request.strip_prefix('v').unwrap_or(request);
-    if release.tag == request
-        || release.tag.strip_prefix('v') == Some(requested)
+    let numeric = numeric_request(request);
+    let requested = numeric
+        .as_deref()
+        .unwrap_or_else(|| request.strip_prefix('v').unwrap_or(request));
+    if (numeric.is_none()
+        && (release.tag == request || release.tag.strip_prefix('v') == Some(requested)))
         || release.version == requested
     {
         return true;
@@ -972,6 +1007,58 @@ mod tests {
                 .unwrap()
                 .bundles,
             vec![list.predicate.releases[0].packslip.clone()]
+        );
+    }
+    #[test]
+    fn numeric_tags_do_not_override_prefixes_and_calver_normalization() {
+        let releases: Vec<_> = [
+            ("3.12.0", "v3.12", false),
+            ("3.12.9", "v3.12.9", true),
+            ("25.7.1", "25.07.1", false),
+            ("25.7.1", "v25.7.1", true),
+        ]
+        .into_iter()
+        .map(|(version, tag, installable)| Release {
+            version: version.into(),
+            tag: tag.into(),
+            bundles: if installable {
+                vec!["https://example.test/bundle".into()]
+            } else {
+                vec![]
+            },
+            recommended: false,
+        })
+        .collect();
+        for request in ["3.12", "v3.12", "03.012", "3"] {
+            assert_eq!(
+                choose(&releases, None, Some(request)).unwrap().version,
+                "3.12.9"
+            );
+        }
+        for request in ["25.07.1", "v25.07.1", "25.07"] {
+            assert_eq!(
+                choose(&releases, None, Some(request)).unwrap().version,
+                "25.7.1"
+            );
+        }
+        let mut list = signed_list();
+        list.predicate.releases[0].version = "3.12.0".into();
+        list.predicate.releases[0].tag = Some("v3.12".into());
+        assert_eq!(
+            choose(&releases, Some(&list), Some("v3.12"))
+                .unwrap()
+                .version,
+            "3.12.9"
+        );
+        assert!(matches!(
+            choose(&releases, Some(&list), Some("3.12.0")),
+            Err(Error::Yanked(_))
+        ));
+        let mut releases = releases;
+        releases[0].bundles = vec!["https://example.test/old".into()];
+        assert_eq!(
+            choose(&releases, None, Some("v3.12")).unwrap().version,
+            "3.12.9"
         );
     }
     #[test]
