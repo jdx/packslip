@@ -907,8 +907,9 @@ impl Session {
         }
         directory(extracted.tree.path(), false)?;
         let previous = self.receipt(project)?;
-        if entry(&self.tree)?.is_some() && !force {
-            let owned = matches!(entry(&self.tree)?, Some(Entry::Directory { .. }))
+        let current_tree = entry(&self.tree)?;
+        if current_tree.is_some() && !force {
+            let owned = matches!(current_tree, Some(Entry::Directory { .. }))
                 && read::<String>(&self.tree.join(MARKER))?.as_deref() == Some(project);
             if !owned {
                 return Err(conflict(format!(
