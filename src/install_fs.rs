@@ -833,6 +833,15 @@ fn sync_tree(path: &Path) -> Result<(), Error> {
         if kind.is_dir() {
             sync_tree(&item.path())?;
         } else if kind.is_file() {
+            // Windows FlushFileBuffers requires a handle opened for writing;
+            // the extraction stage contains only our newly written files.
+            #[cfg(windows)]
+            fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(item.path())?
+                .sync_all()?;
+            #[cfg(not(windows))]
             File::open(item.path())?.sync_all()?;
         }
     }
