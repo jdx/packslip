@@ -10,7 +10,7 @@ section draws the line.
 
 ## Set up the repository
 
-You need Rust 1.95 or newer from rustup (this repository's `mise.toml`
+You need Rust 1.93 or newer from rustup (this repository's `mise.toml`
 does not pin Rust), and mise 2026.9.7 or newer. `mise install` installs the versions
 pinned in `mise.toml` and `mise.lock`: Hugo, usage, and shellcheck for the
 docs and lint tasks, Communiqué for release notes, and mr-boxington
@@ -26,7 +26,7 @@ cargo test --all-features
 ```
 
 If your default Rust toolchain is older, select a compatible installed
-toolchain, for example `RUSTUP_TOOLCHAIN=1.95.0 mise run docs`.
+toolchain, for example `RUSTUP_TOOLCHAIN=1.93.0 mise run docs`.
 
 ## Find the right source
 

@@ -56,7 +56,7 @@ packslip version
 {{< /tab >}}
 {{< tab "Build from source" >}}
 
-With Rust 1.95 or newer installed:
+With Rust 1.93 or newer installed:
 
 ```sh
 cargo install packslip --locked

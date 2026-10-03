@@ -10,7 +10,7 @@ License: MIT
 URL: https://packslip.dev
 Source0: packslip-%{version}.tar.gz
 ExclusiveArch: x86_64 aarch64
-BuildRequires: rust >= 1.95
+BuildRequires: rust >= 1.93
 BuildRequires: cargo
 BuildRequires: gcc
 BuildRequires: cmake
