@@ -282,6 +282,14 @@ pub fn continuity(
 fn key(constraints: &[Constraints]) -> Result<Option<crate::minisign::PublicKey>, Error> {
     let mut chosen: Option<crate::minisign::PublicKey> = None;
     for c in constraints {
+        if [&c.issuer, &c.identity, &c.identity_prefix]
+            .iter()
+            .any(|value| value.as_ref().is_some_and(|text| text.trim().is_empty()))
+        {
+            return Err(Error::Constraint(
+                "identity and issuer constraints must be nonempty".into(),
+            ));
+        }
         if let Some(text) = &c.pubkey {
             let key = crate::minisign::PublicKey::parse(text)
                 .map_err(|_| Error::Constraint("invalid pinned public key".into()))?;
@@ -647,6 +655,43 @@ mod tests {
             )
             .is_err()
         );
+    }
+    #[test]
+    fn empty_identity_pins_are_rejected_even_with_named_host_authority() {
+        let bundle = include_str!("../tests/fixtures/hk-v2.3.0.sigstore.json");
+        let root = crate::sigstore::trusted_root(None).unwrap();
+        for constraint in [
+            Constraints {
+                issuer: Some("".into()),
+                ..Default::default()
+            },
+            Constraints {
+                identity: Some(" ".into()),
+                ..Default::default()
+            },
+            Constraints {
+                issuer: Some(crate::sigstore::GITHUB_ISSUER.into()),
+                identity_prefix: Some("".into()),
+                ..Default::default()
+            },
+        ] {
+            for host_authority in [false, true] {
+                assert!(matches!(
+                    release_under(
+                        "example.test",
+                        None,
+                        bundle,
+                        std::slice::from_ref(&constraint),
+                        crate::Options {
+                            trusted_root: &root,
+                            require_log: true
+                        },
+                        host_authority
+                    ),
+                    Err(Error::Constraint(_))
+                ));
+            }
+        }
     }
     #[test]
     fn arbitrary_host_bundles_cannot_supply_their_own_trust_policy() {
