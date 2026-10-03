@@ -352,11 +352,20 @@ fn host_policy(
     host_authority: bool,
 ) -> Result<Policy, Error> {
     if !host_authority {
-        return constraints.iter().find(|c| c.issuer.is_some()
-            && (c.identity.is_some() || c.identity_prefix.is_some()))
-            .map(|c| Policy { issuer: c.issuer.clone(), identity: c.identity.clone(),
-                identity_prefix: c.identity_prefix.clone() })
-            .ok_or_else(|| Error::Constraint("host bundle requires a pinned identity and issuer, or authenticated named-host discovery".into()));
+        // Requirements may come from separate administrator and caller sources.
+        // Select a complete verification policy across them; check_constraints
+        // still requires every source to agree after signature verification.
+        let policy = Policy {
+            issuer: constraints.iter().find_map(|c| c.issuer.clone()),
+            identity: constraints.iter().find_map(|c| c.identity.clone()),
+            identity_prefix: constraints.iter().find_map(|c| c.identity_prefix.clone()),
+        };
+        if policy.issuer.is_none()
+            || (policy.identity.is_none() && policy.identity_prefix.is_none())
+        {
+            return Err(Error::Constraint("host bundle requires a pinned identity and issuer, or authenticated named-host discovery".into()));
+        }
+        return Ok(policy);
     }
     // For a host project, HTTPS to that host is the first-use authority. Never
     // infer project intent here: the caller still requires an exact project.
@@ -692,6 +701,39 @@ mod tests {
                 ));
             }
         }
+    }
+    #[test]
+    fn host_identity_and_issuer_can_come_from_independent_requirements() {
+        let bundle = include_str!("../tests/fixtures/hk-v2.3.0.sigstore.json");
+        let root = crate::sigstore::trusted_root(None).unwrap();
+        let payload = crate::sigstore::peek_statement(bundle).unwrap();
+        let statement: crate::Statement = serde_json::from_slice(&payload).unwrap();
+        let identity = statement.predicate.identity.key_id.clone();
+        let mut constraints = vec![
+            Constraints {
+                issuer: Some(crate::sigstore::GITHUB_ISSUER.into()),
+                ..Default::default()
+            },
+            Constraints {
+                identity: Some(identity.clone()),
+                ..Default::default()
+            },
+        ];
+        let options = crate::Options {
+            trusted_root: &root,
+            require_log: true,
+        };
+        let policy = host_policy(bundle, &constraints, false).unwrap();
+        crate::verify(bundle, &Trust::Identity(&policy), options, &[]).unwrap();
+        constraints.push(Constraints {
+            identity_prefix: Some("https://github.com/jdx/hk/".into()),
+            ..Default::default()
+        });
+        let policy = host_policy(bundle, &constraints, false).unwrap();
+        crate::verify(bundle, &Trust::Identity(&policy), options, &[]).unwrap();
+        constraints[0].issuer = Some("https://different-issuer.test".into());
+        let policy = host_policy(bundle, &constraints, false).unwrap();
+        assert!(crate::verify(bundle, &Trust::Identity(&policy), options, &[]).is_err());
     }
     #[test]
     fn arbitrary_host_bundles_cannot_supply_their_own_trust_policy() {
