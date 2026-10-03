@@ -252,9 +252,7 @@ fn check_release(
 pub async fn run(mut request: Request) -> Result<Report> {
     let project = discovery::Project::parse(&request.project)?;
     request.project = project.as_str().into();
-    if crate::model::repository(project.as_str()).is_some()
-        && !project.as_str().starts_with("github.com/")
-    {
+    if project.as_str().split('/').next() == Some("gitlab.com") {
         bail!(
             "bootstrap forge discovery currently supports github.com; other forges require a host-named project"
         );
@@ -596,6 +594,10 @@ mod tests {
             );
             let archive = root.path().join("tool.tar");
             let mut tar = tar::Builder::new(std::fs::File::create(&archive).unwrap());
+            // Rust/linker outputs may be sparse on the runner filesystem. This
+            // fixture publishes ordinary tar files; GNU sparse extensions are
+            // intentionally outside the bootstrap extractor's accepted entries.
+            tar.sparse(false);
             tar.append_dir_all("dist", &tree).unwrap();
             tar.finish().unwrap();
             drop(tar);
@@ -897,6 +899,21 @@ mod tests {
                 .contains("different remembered repository ID")
         );
         assert!(report.receipt.exports.keys().all(|p| p.exists()));
+    }
+
+    #[test]
+    fn unsupported_forge_is_reported_before_scope_or_network_access() {
+        let f = Fixture::new();
+        let mut request = f.request(true);
+        request.project = "gitlab.com/group/subgroup/tool".into();
+        request.system = true;
+        let error = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(run(request))
+            .unwrap_err();
+        assert!(error.to_string().contains("supports github.com"));
     }
 
     #[test]
