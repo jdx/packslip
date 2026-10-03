@@ -404,6 +404,27 @@ pub fn release_host(
         .map_err(|_| Error::Constraint("host bundle is not UTF-8".into()))?;
     release_under(document.project(), None, bundle, constraints, options, true)
 }
+
+/// A signed list fetched from the named host also authorizes exact bundle
+/// bytes on a CDN. Reverify its signature and digest binding before carrying
+/// that first-use authority across origins; every independent pin still applies.
+pub fn release_listed_host(
+    document: &crate::discovery::HostDocument,
+    url: &str,
+    bundle: &str,
+    constraints: &[Constraints],
+    options: crate::Options<'_>,
+) -> Result<Release, Error> {
+    let list = list_host(document, constraints, options)?;
+    if list.verified.list.digest_of(url)
+        != Some(hex::encode(sha2::Sha256::digest(bundle.as_bytes())).as_str())
+    {
+        return Err(Error::Constraint(
+            "release bundle differs from its named-host signed list digest".into(),
+        ));
+    }
+    release_under(document.project(), None, bundle, constraints, options, true)
+}
 fn release_under(
     project: &str,
     resolved_id: Option<&str>,

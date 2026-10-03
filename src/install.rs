@@ -5,6 +5,14 @@ use eyre::{Result, bail};
 use sha2::{Digest as _, Sha256};
 use std::path::{Path, PathBuf};
 
+#[cfg(unix)]
+fn xdg_home(value: Option<std::ffi::OsString>, home: &Path, fallback: &str) -> PathBuf {
+    value
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .unwrap_or_else(|| home.join(fallback))
+}
+
 pub struct Request {
     pub project: String,
     pub version: Option<String>,
@@ -74,12 +82,7 @@ impl Scope {
                     .into(),
             )?;
             let xdg = |name: &str, fallback: &str| -> Result<PathBuf> {
-                absolute(
-                    std::env::var_os(name)
-                        .filter(|v| !v.is_empty())
-                        .map(PathBuf::from)
-                        .unwrap_or_else(|| home.join(fallback)),
-                )
+                absolute(xdg_home(std::env::var_os(name), &home, fallback))
             };
             Ok(Self {
                 state: xdg("XDG_STATE_HOME", ".local/state")?.join("packslip"),
@@ -345,6 +348,7 @@ async fn run_in(request: Request, scope: Scope) -> Result<Report> {
         require_log: !request.allow_unlogged,
         trusted_root: &root,
     };
+    let mut host_list_document = None;
     let list = if let Some(github) = &github {
         if let Some(bytes) = discovery::github_list(&client, &github.list_url).await? {
             let bundle = std::str::from_utf8(&bytes)?;
@@ -386,6 +390,7 @@ async fn run_in(request: Request, scope: Scope) -> Result<Report> {
             &constraints,
             jiff::Timestamp::now(),
         )?;
+        host_list_document = Some(document);
         Some(list)
     };
     discovery::list_freshness(
@@ -404,6 +409,8 @@ async fn run_in(request: Request, scope: Scope) -> Result<Report> {
     };
     let mut accepted = None;
     for url in &selected.bundles {
+        let listed_digest = signed_list.and_then(|list| list.digest_of(url));
+        let may_skip = github.is_some() && listed_digest.is_none();
         let host_authority = github.is_none()
             && reqwest::Url::parse(url).ok().is_some_and(|u| {
                 u.host_str() == Some(project.as_str().split('/').next().unwrap())
@@ -419,16 +426,23 @@ async fn run_in(request: Request, scope: Scope) -> Result<Report> {
         } else {
             None
         };
-        let bundle = match &document {
-            Some(document) => std::str::from_utf8(document.bytes())?.to_owned(),
-            None => String::from_utf8(
-                client
-                    .fetch(url, 16 * 1024 * 1024)
-                    .await?
-                    .ok_or_else(|| eyre::eyre!("release bundle is missing"))?,
-            )?,
+        let fetched: Result<String> = async {
+            Ok(match &document {
+                Some(document) => std::str::from_utf8(document.bytes())?.to_owned(),
+                None => String::from_utf8(
+                    client
+                        .fetch(url, 16 * 1024 * 1024)
+                        .await?
+                        .ok_or_else(|| eyre::eyre!("release bundle is missing"))?,
+                )?,
+            })
+        }
+        .await;
+        let bundle = match fetched {
+            Ok(bundle) => bundle,
+            Err(_) if may_skip => continue,
+            Err(error) => return Err(error),
         };
-        let listed_digest = signed_list.and_then(|list| list.digest_of(url));
         if let Some(expected) = listed_digest
             && hex::encode(Sha256::digest(bundle.as_bytes())) != expected
         {
@@ -436,20 +450,20 @@ async fn run_in(request: Request, scope: Scope) -> Result<Report> {
         }
         // A forge release can describe several monorepo tools. The peek only
         // filters candidates; it never establishes identity or authorizes use.
-        if github.is_some() && listed_digest.is_none() {
-            let payload: serde_json::Value =
-                serde_json::from_slice(&crate::sigstore::peek_statement(&bundle)?)?;
-            let name = payload["predicate"]["project"].as_str().unwrap_or_default();
-            if payload["predicateType"] != crate::model::PREDICATE_TYPE
-                || crate::model::repository(name).is_none()
-                || crate::model::repository_subpath(name)
-                    != crate::model::repository_subpath(project.as_str())
-            {
-                continue;
-            }
+        if may_skip && !candidate_matches(&bundle, project.as_str()) {
+            continue;
         }
         let release = match &document {
             Some(document) => install_policy::release_host(document, &constraints, options)?,
+            None if host_list_document.is_some() && listed_digest.is_some() => {
+                install_policy::release_listed_host(
+                    host_list_document.as_ref().unwrap(),
+                    url,
+                    &bundle,
+                    &constraints,
+                    options,
+                )?
+            }
             None => install_policy::release(
                 project.as_str(),
                 repository_id,
@@ -518,10 +532,13 @@ async fn run_in(request: Request, scope: Scope) -> Result<Report> {
     history.release = Some(release.record.clone());
     remember_key(&mut history, &constraints);
     if request.force {
-        eprintln!("Replacing installation destination: {}", tree.display());
+        eprintln!(
+            "Replacement allowed at installation destination: {}",
+            tree.display()
+        );
         for (name, _) in &extracted.bins {
             eprintln!(
-                "Replacing command destination: {}",
+                "Replacement allowed at command destination: {}",
                 bin.join(if cfg!(windows) {
                     format!("{name}.exe")
                 } else {
@@ -560,10 +577,125 @@ async fn run_in(request: Request, scope: Scope) -> Result<Report> {
     })
 }
 
+// Unlisted forge assets are discovery candidates. Invalid siblings do not
+// establish policy and must not prevent finding the requested monorepo tool.
+fn candidate_matches(bundle: &str, project: &str) -> bool {
+    let Ok(payload) = crate::sigstore::peek_statement(bundle) else {
+        return false;
+    };
+    let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&payload) else {
+        return false;
+    };
+    let name = payload["predicate"]["project"].as_str().unwrap_or_default();
+    payload["predicateType"] == crate::model::PREDICATE_TYPE
+        && crate::model::repository(name).is_some()
+        && crate::model::repository_subpath(name) == crate::model::repository_subpath(project)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[cfg(unix)]
+    #[test]
+    fn relative_xdg_values_use_home_defaults() {
+        let home = Path::new("/home/test");
+        for value in [None, Some("".into()), Some("relative".into())] {
+            assert_eq!(
+                xdg_home(value, home, ".local/state"),
+                home.join(".local/state")
+            );
+        }
+        assert_eq!(
+            xdg_home(Some("/custom/state".into()), home, ".local/state"),
+            Path::new("/custom/state")
+        );
+    }
+
+    #[test]
+    fn malformed_and_unrelated_forge_candidates_are_skipped() {
+        let f = Fixture::new();
+        let requested = "github.com/owner/repo/tool";
+        assert!(!candidate_matches("not a bundle", requested));
+        assert!(!candidate_matches(&f.signed(&f.statement), requested));
+        let mut statement = f.statement.clone();
+        statement["predicate"]["project"] = json!(requested);
+        assert!(candidate_matches(&f.signed(&statement), requested));
+        statement["predicate"]["project"] = json!("github.com/owner/repo/other");
+        assert!(!candidate_matches(&f.signed(&statement), requested));
+    }
+
+    #[test]
+    fn named_host_list_binds_off_host_bundles_without_weakening_pins() {
+        let mut f = Fixture::new();
+        f.bundle_url = "https://cdn.example.test/packslip.sigstore.json".into();
+        f.publish(7, false);
+        let bundle = f.signed(&f.statement);
+        f.cache(&f.bundle_url, false, bundle.as_bytes());
+        let client =
+            discovery::Client::new(f.scope().state.join("downloads"), true, Default::default())
+                .unwrap();
+        let project = discovery::Project::parse("example.test").unwrap();
+        let document = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(client.fetch_host(
+                &project,
+                "https://example.test/.well-known/packslip.json",
+                16 * 1024 * 1024,
+            ))
+            .unwrap()
+            .unwrap();
+        let root = crate::sigstore::trusted_root(None).unwrap();
+        let options = crate::Options {
+            trusted_root: &root,
+            require_log: false,
+        };
+        let constraints = [f.request(true).constraints];
+        install_policy::release_listed_host(
+            &document,
+            &f.bundle_url,
+            &bundle,
+            &constraints,
+            options,
+        )
+        .unwrap();
+        assert!(
+            install_policy::release_listed_host(
+                &document,
+                "https://other.test/bundle",
+                &bundle,
+                &constraints,
+                options
+            )
+            .is_err()
+        );
+        assert!(
+            install_policy::release_listed_host(
+                &document,
+                &f.bundle_url,
+                &(bundle.clone() + " "),
+                &constraints,
+                options
+            )
+            .is_err()
+        );
+        let wrong = [install_policy::Constraints {
+            pubkey: Some(
+                crate::minisign::SecretKey::from_seed([30; 32])
+                    .public_key()
+                    .to_file(),
+            ),
+            ..Default::default()
+        }];
+        assert!(
+            install_policy::release_listed_host(&document, &f.bundle_url, &bundle, &wrong, options)
+                .is_err()
+        );
+        f.run(f.request(true)).unwrap();
+    }
 
     struct Fixture {
         root: tempfile::TempDir,
