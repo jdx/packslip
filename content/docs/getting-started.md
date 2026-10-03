@@ -17,9 +17,10 @@ network connection. A real release should be logged;
 ## Install packslip
 
 We recommend [mise](https://mise.jdx.dev/getting-started.html) to install
-packslip and manage its version. You can also download a release archive
-or build from source. Release builds cover Linux and Windows on x64 and
-arm64, and macOS on arm64. On an Intel Mac, build from source.
+packslip and manage its version. You can also run the install script,
+copy packslip from its container image, download a release, or build from
+source. Release builds cover Linux and Windows on x64 and arm64, and macOS
+on arm64. On an Intel Mac, build from source.
 
 {{< tabs "Installation method" >}}
 {{< tab "mise" >}}
@@ -40,6 +41,68 @@ available globally; omit it to manage packslip in the current project
 instead.
 
 {{< /tab >}}
+{{< tab "Script" >}}
+
+On Linux or macOS, run:
+
+```sh
+curl -fsSL https://packslip.sh | sh
+packslip version
+```
+
+On Windows, in PowerShell:
+
+```powershell
+irm https://packslip.sh/install.ps1 | iex
+```
+
+The script downloads the packslip executable for your platform and refuses
+it unless its SHA-256 matches the one written into the script when the
+release was built. It installs the executable in `~/.local/bin`, or in
+`/usr/local/bin` when run as root, and `~\.local\bin` on Windows. Set
+`PACKSLIP_BIN_DIR` to install somewhere else. The script says when that
+directory is not on PATH, and it downloads and runs nothing else.
+
+Each release publishes its own copy of the scripts, and
+`https://packslip.sh/vVERSION` always serves that release's `install.sh`.
+One copy covers every platform, so its SHA-256 pins packslip on all of
+them. In a Dockerfile, Docker checks it for you:
+
+```dockerfile
+ADD --checksum=sha256:SHA256 https://packslip.sh/vVERSION /tmp/install-packslip.sh
+RUN sh /tmp/install-packslip.sh
+```
+
+The image needs curl or wget for the script's download. The scripts are
+attested with the rest of the release, so you can check a copy you saved
+with `gh attestation verify install.sh --repo jdx/packslip`.
+
+{{< /tab >}}
+{{< tab "Container image" >}}
+
+`ghcr.io/jdx/packslip` holds packslip and a CA bundle, for linux/amd64 and
+linux/arm64. In a Dockerfile, copy the executable out of it:
+
+```dockerfile
+COPY --from=ghcr.io/jdx/packslip:VERSION@sha256:DIGEST /packslip /usr/local/bin/packslip
+```
+
+The digest pins every architecture at once, and the image you copy into
+needs no curl, tar, or hash tool. `docker buildx imagetools inspect
+ghcr.io/jdx/packslip:VERSION` shows the digest. The image is attested
+like the release files:
+
+```sh
+gh attestation verify oci://ghcr.io/jdx/packslip:VERSION --repo jdx/packslip
+```
+
+You can also run it directly, with your files mounted:
+
+```sh
+docker run --rm -v "$PWD:/work" -w /work ghcr.io/jdx/packslip:VERSION version
+```
+
+{{< /tab >}}
 {{< tab "Download" >}}
 
 Download the archive for your platform from
@@ -47,7 +110,8 @@ Download the archive for your platform from
 `linux-arm64`, and `darwin-arm64` as `.tar.xz`, or `windows-x64` and
 `windows-arm64` as `.zip`. Extract the archive, put the `packslip`
 executable from its `packslip-vVERSION-PLATFORM/` directory on PATH, then
-check the installation:
+check the installation. Each release also has the executable alone,
+`packslip-vVERSION-PLATFORM`, with `.exe` on Windows:
 
 ```sh
 packslip version
