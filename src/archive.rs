@@ -416,7 +416,17 @@ mod tests {
         );
         // In a tar, `\` is part of the file name.
         let tar = dir.path().join("t.tar");
-        std::fs::write(&tar, tar_bytes(&[("t-1.0\\tool", b"a")])).unwrap();
+        // Write the raw archive name: Builder::append_data takes a host Path
+        // and converts backslashes to slashes on Windows before writing it.
+        let mut builder = tar::Builder::new(Vec::new());
+        let mut header = tar::Header::new_gnu();
+        let name = b"t-1.0\\tool";
+        header.as_old_mut().name[..name.len()].copy_from_slice(name);
+        header.set_size(1);
+        header.set_mode(0o755);
+        header.set_cksum();
+        builder.append(&header, &b"a"[..]).unwrap();
+        std::fs::write(&tar, builder.into_inner().unwrap()).unwrap();
         assert_eq!(entries(&tar, "tar").unwrap(), ["t-1.0\\tool"]);
     }
 }
