@@ -263,12 +263,44 @@ jobs:
           & "$env:SystemRoot\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File installer/test.ps1 -Dir work -Template installer/install.ps1 -Asset $env:ASSET
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+  # The container image, built as release.yml builds it but from the latest
+  # release's archives: both platforms to an archive, then the amd64 image
+  # loaded, run, and copied into an image that has nothing else.
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Build and test the image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag=$(gh release view -R "$GITHUB_REPOSITORY" --json tagName -q .tagName)
+          version=${tag#v}
+          mkdir -p dist bin/amd64 bin/arm64
+          gh release download "$tag" -R "$GITHUB_REPOSITORY" -p "packslip-${tag}-linux-*.tar.xz" -D dist
+          for arch in x64 arm64; do
+            gh attestation verify "dist/packslip-${tag}-linux-${arch}.tar.xz" -R "$GITHUB_REPOSITORY"
+          done
+          tar -xJf "dist/packslip-${tag}-linux-x64.tar.xz" --strip-components=1 -C bin/amd64
+          tar -xJf "dist/packslip-${tag}-linux-arm64.tar.xz" --strip-components=1 -C bin/arm64
+          docker buildx create --use --driver docker-container >/dev/null
+          container/build.sh "$version" bin/amd64/packslip bin/arm64/packslip --output type=oci,dest=image.tar
+          PLATFORMS=linux/amd64 container/build.sh "$version" bin/amd64/packslip bin/arm64/packslip \
+            --load --tag packslip:test
+          test "$(docker run --rm packslip:test version)" = "packslip $version"
+          printf 'FROM debian:stable-slim\nCOPY --from=packslip:test /packslip /usr/local/bin/packslip\nRUN packslip version\n' |
+            docker buildx build --builder default -
+
   # Aggregator that required-status-checks can target. If any upstream job
   # failed, was cancelled, or was unexpectedly skipped, this step exits non-zero
   # so the PR is blocked. Lets the branch-protection rule depend on one name
   # instead of N.
   final:
     needs:
+      - image
       - installer
       - installer-windows
       - signing

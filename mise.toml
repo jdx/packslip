@@ -19,7 +19,7 @@ run = "cargo build"
 
 [tasks.lint]
 description = "Check the shell scripts the actions, workflows, and install scripts run"
-run = "shellcheck scripts/*.sh installer/*.sh"
+run = "shellcheck scripts/*.sh installer/*.sh container/*.sh"
 
 [tasks.render]
 description = "Generate the usage spec, CLI reference, schemas, and spec page"

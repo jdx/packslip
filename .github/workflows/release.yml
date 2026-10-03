@@ -351,6 +351,54 @@ jobs:
       contents: read
       id-token: write
 
+  # ghcr.io/jdx/packslip: the release's static Linux executables and a CA
+  # bundle on an otherwise empty image, for COPY --from in a Dockerfile, so
+  # that one digest pins both architectures. It is built from the files the
+  # build job made and the release attested, not compiled again, pushed once
+  # the release is public, and attested like the release files.
+  image:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: linux-*
+          path: dist
+          merge-multiple: true
+      - name: Push the image
+        id: push
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          image="ghcr.io/${GITHUB_REPOSITORY}"
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker buildx create --use --driver docker-container >/dev/null
+          container/build.sh "$version" \
+            "dist/packslip-v${version}-linux-x64" "dist/packslip-v${version}-linux-arm64" \
+            --push --metadata-file meta.json \
+            --tag "$image:$version" --tag "$image:${version%.*}" \
+            --tag "$image:${version%%.*}" --tag "$image:latest"
+          digest=$(jq -r '."containerimage.digest"' meta.json)
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          docker buildx imagetools inspect "$image@$digest"
+          # The runner pulls the amd64 image, which must be this release.
+          test "$(docker run --rm "$image@$digest" version)" = "packslip $version"
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
   # Describe an earlier release as packslip.dev. It runs from this workflow
   # file on purpose: a consumer remembers which workflow signed a project's
   # bundles, and a backfilled release must not look like a different signer.

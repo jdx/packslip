@@ -43,6 +43,7 @@ toolchain, for example `RUSTUP_TOOLCHAIN=1.95.0 mise run docs`.
 | Forge identity and signer fingerprints | `src/forge.rs`, `src/fingerprint.rs` |
 | Agent skill, published with every release | `skills/packslip/SKILL.md`; update it with the guides when CLI flags or action inputs change |
 | GitHub Actions | `action.yml`, `releases/action.yml`, and `scripts/install-packslip.sh`, which both run |
+| Container image `ghcr.io/jdx/packslip` | `container/Dockerfile`, built from a release's executables by `container/build.sh` |
 | Test fixtures | `tests/fixtures/` (see its README) |
 | Release example on the homepage and quickstart | `docs/examples/release-excerpt.json` |
 | The site's Worker | `wrangler.jsonc`, `cloudflare/worker.js` |
@@ -128,7 +129,9 @@ files with the source change that caused them.
 test needs Node.js 20 or newer. CI also runs the installer test on macOS
 and Linux ARM64 and in Alpine and busybox containers, and runs
 `installer/test.ps1` under Windows PowerShell 5.1 and PowerShell 7 on
-Windows x64 and ARM64.
+Windows x64 and ARM64. Its `image` job builds the container image with
+`container/build.sh` from the latest release's archives, which needs
+`docker buildx` to repeat locally.
 `cargo test --all-features` includes `tests/action.rs`, which runs
 `action.yml`'s create step against a mock CLI; `cargo test --test action`
 runs it alone. The `signing` job runs only on pushes to `main`, where a CI
