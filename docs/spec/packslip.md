@@ -869,6 +869,12 @@ registry. It has four fields: `os_min`, the lowest OS version in the OS's
 own terms; `glibc_min`, the lowest glibc for a `gnu` Linux build; and two
 lists, `libs` and `bin`:
 
+For `os: "linux"`, `os_min` names the Linux kernel version, excluding local
+build suffixes such as `-18-amd64` or `+`. It does not name a distribution's
+release: the OS selector identifies Linux, with no distribution identifier.
+For `darwin` it names the macOS product version, and for `windows` it names
+the Windows major, minor, and build numbers.
+
 - `libs` lists the shared libraries the executables load from the host,
   each by the name the loader resolves: a soname on Linux and FreeBSD
   (`libssl.so.3`, `libstdc++.so.6`), a DLL name on Windows

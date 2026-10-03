@@ -98,7 +98,7 @@ impl Snapshot {
         {
             host.os_version = std::fs::read_to_string("/proc/sys/kernel/osrelease")
                 .ok()
-                .map(|v| v.trim().split('-').next().unwrap_or_default().to_owned());
+                .map(|v| kernel_version(v.trim()).to_owned());
             host.glibc_version = utility(Path::new("/usr/bin/getconf"), &["GNU_LIBC_VERSION"])
                 .and_then(|v| v.trim().strip_prefix("glibc ").map(str::to_owned));
             let loader = match arch {
@@ -159,14 +159,16 @@ impl Snapshot {
                     ["/sbin/ldconfig", "/usr/sbin/ldconfig"]
                         .iter()
                         .find_map(|p| utility(Path::new(p), &["-p"]))
-                        .and_then(|s| loader_cache(&s))
+                        .and_then(|s| loader_cache(&s, &self.arch))
                 })
                 .flatten();
             #[cfg(not(target_os = "linux"))]
             let cache: Option<BTreeSet<String>> = None;
             let paths = library_paths(&self.arch);
             for library in libraries {
-                let found = paths.iter().any(|p| p.join(library).is_file())
+                let found = paths
+                    .iter()
+                    .any(|p| library_matches(&p.join(library), &self.arch))
                     || cache.as_ref().is_some_and(|names| names.contains(library));
                 let result = if found {
                     Some(true)
@@ -250,6 +252,44 @@ impl Snapshot {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn kernel_version(release: &str) -> &str {
+    release.split(['-', '+']).next().unwrap_or_default()
+}
+
+fn library_matches(path: &Path, arch: &str) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        use std::io::Read as _;
+        let mut header = [0u8; 20];
+        let Ok(mut file) = std::fs::File::open(path) else {
+            return false;
+        };
+        if file.read_exact(&mut header).is_err() {
+            return false;
+        }
+        elf_library_matches(&header, arch)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = arch;
+        path.is_file()
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn elf_library_matches(header: &[u8; 20], arch: &str) -> bool {
+    let machine = match arch {
+        "x86_64" => 62,
+        "aarch64" => 183,
+        _ => return false,
+    };
+    // Supported Linux hosts use ELF64, little endian, and ET_DYN libraries.
+    header[..6] == [0x7f, b'E', b'L', b'F', 2, 1]
+        && u16::from_le_bytes([header[16], header[17]]) == 3
+        && u16::from_le_bytes([header[18], header[19]]) == machine
+}
+
 impl Report {
     pub fn require_compatible(&self, allow_incompatible: bool) -> Result<(), Error> {
         if !allow_incompatible && !self.incompatible.is_empty() {
@@ -328,6 +368,7 @@ fn utility(path: &Path, arguments: &[&str]) -> Option<String> {
     let mut output = tempfile::tempfile().ok()?;
     let mut child = std::process::Command::new(path)
         .args(arguments)
+        .env("LC_ALL", "C")
         .stdin(std::process::Stdio::null())
         .stdout(output.try_clone().ok()?)
         .stderr(std::process::Stdio::null())
@@ -368,7 +409,7 @@ fn utility(path: &Path, arguments: &[&str]) -> Option<String> {
 }
 
 #[cfg(target_os = "linux")]
-fn loader_cache(output: &str) -> Option<BTreeSet<String>> {
+fn loader_cache(output: &str, arch: &str) -> Option<BTreeSet<String>> {
     let mut lines = output.lines();
     let header = lines.next()?;
     let (count, tail) = header.trim().split_once(' ')?;
@@ -379,8 +420,11 @@ fn loader_cache(output: &str) -> Option<BTreeSet<String>> {
     let mut names = BTreeSet::new();
     let mut entries = 0;
     for line in lines {
-        if let Some((left, _)) = line.split_once(" => ") {
-            names.insert(left.split_whitespace().next()?.to_owned());
+        if let Some((left, path)) = line.split_once(" => ") {
+            let name = left.split_whitespace().next()?;
+            if library_matches(Path::new(path.trim()), arch) {
+                names.insert(name.to_owned());
+            }
             entries += 1;
         }
     }
@@ -390,6 +434,49 @@ fn loader_cache(output: &str) -> Option<BTreeSet<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_kernel_local_suffixes_preserve_the_numeric_baseline() {
+        assert_eq!(
+            compare(kernel_version("6.1.158+"), "6.2"),
+            Some(std::cmp::Ordering::Less)
+        );
+        assert_eq!(kernel_version("6.1.0-18-amd64"), "6.1.0");
+        assert_eq!(compare(kernel_version("unknown+"), "6.2"), None);
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn loader_cache_requires_native_elf_libraries() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("libfixture.so.1");
+        let mut header = [0u8; 20];
+        header[..6].copy_from_slice(&[0x7f, b'E', b'L', b'F', 1, 1]);
+        header[16] = 3;
+        header[18] = 3; // EM_386
+        std::fs::write(&file, header).unwrap();
+        let output = format!(
+            "1 libs found in cache `/etc/ld.so.cache'\n libfixture.so.1 (libc6) => {}\n",
+            file.display()
+        );
+        assert!(loader_cache(&output, "x86_64").unwrap().is_empty());
+        header[4] = 2;
+        header[18] = 62;
+        std::fs::write(&file, header).unwrap();
+        assert!(
+            loader_cache(&output, "x86_64")
+                .unwrap()
+                .contains("libfixture.so.1")
+        );
+        assert!(loader_cache(&output, "aarch64").unwrap().is_empty());
+        header[18] = 183;
+        std::fs::write(&file, header).unwrap();
+        assert!(
+            loader_cache(&output, "aarch64")
+                .unwrap()
+                .contains("libfixture.so.1")
+        );
+        assert!(loader_cache("unrecognized locale-dependent header", "aarch64").is_none());
+    }
     #[test]
     fn numeric_baselines_commands_and_unknown_results_have_distinct_effects() {
         let host = Snapshot {
