@@ -139,6 +139,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - run: |
           sudo apt-get update
           sudo apt-get install -y devscripts debhelper rpm
@@ -153,14 +155,17 @@ jobs:
 
   distro-build:
     needs: distro-source
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         kind: [deb, rpm]
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: ci-distro-source
@@ -168,7 +173,7 @@ jobs:
       - run: scripts/check-distro-packages.sh "${{ matrix.kind }}" source packages
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: ci-distro-${{ matrix.kind }}
+          name: ci-distro-${{ matrix.kind }}-${{ matrix.runner }}
           path: packages/*
           if-no-files-found: error
 
