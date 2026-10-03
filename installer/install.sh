@@ -141,7 +141,7 @@ main() {
       # By file, not name: Fedora's /usr/local/sbin, ahead of
       # /usr/local/bin on PATH, links to it.
       found=$(command -v packslip || true)
-      if ! [ "$found" -ef "$bin_dir/packslip" ]; then
+      if [ -n "$found" ] && ! [ "$found" -ef "$bin_dir/packslip" ]; then
         say "note: packslip on PATH is $found, which comes before $bin_dir"
       fi
       ;;
