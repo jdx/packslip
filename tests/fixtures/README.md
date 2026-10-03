@@ -25,6 +25,13 @@
   `ps1_snirenkjwr7m5ozgcufameodnm`, and that `packslip verify --pin`
   accepts that fingerprint and refuses another repository's.
 
+`tests/compatibility.rs` also generates v0.3 key-signed release and list bundles
+with unknown optional fields and resources. CI verifies these and the historical
+hk fixture with both the current binary and the pinned v1.4.0 source build.
+The generated fixtures explicitly allow unlogged signatures. The required TUF
+tests use a synthetic three-root signed chain; they do not replay production
+Sigstore history. See the [support matrix](../../content/docs/compatibility.md).
+
 ## Building `static` and `needs-musl`
 
 `static` and `needs-musl` are the same three instructions, `exit(0)`.
