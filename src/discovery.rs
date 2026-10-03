@@ -120,7 +120,8 @@ impl Client {
         let inner = reqwest::Client::builder()
             .https_only(true)
             .redirect(reqwest::redirect::Policy::none())
-            .timeout(std::time::Duration::from_secs(60))
+            .connect_timeout(std::time::Duration::from_secs(30))
+            .read_timeout(std::time::Duration::from_secs(60))
             .user_agent(concat!("packslip/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|_| Error::Network("client initialization".into()))?;
@@ -202,7 +203,10 @@ impl Client {
         }
         let mut current = initial.clone();
         for redirects in 0..=10 {
-            let mut request = self.inner.get(current.clone());
+            let mut request = self
+                .inner
+                .get(current.clone())
+                .timeout(std::time::Duration::from_secs(60));
             if let Some(token) = self.auth.get(&origin(&current)) {
                 request = request.bearer_auth(token);
             }
@@ -572,10 +576,21 @@ pub fn choose_with_latest(
     }
     // Keep assetless forge tags as metadata for list tag mapping and yanks;
     // filter them from installable choices after merging the signed list.
-    let mut choices: BTreeMap<String, Release> = live
-        .iter()
-        .map(|r| (r.version.clone(), r.clone()))
-        .collect();
+    let mut choices: BTreeMap<String, Release> = BTreeMap::new();
+    for release in live {
+        match choices.entry(release.version.clone()) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(release.clone());
+            }
+            std::collections::btree_map::Entry::Occupied(mut entry) => {
+                let recommended = entry.get().recommended || release.recommended;
+                if entry.get().bundles.is_empty() && !release.bundles.is_empty() {
+                    entry.insert(release.clone());
+                }
+                entry.get_mut().recommended = recommended;
+            }
+        }
+    }
     if let Some(list) = list {
         for entry in &list.predicate.releases {
             if entry.is_yanked() {
@@ -866,6 +881,29 @@ mod tests {
                 .version,
             "2.0.0"
         );
+    }
+    #[test]
+    fn duplicate_normalized_versions_retain_an_installable_candidate() {
+        let installable = Release {
+            version: "2.0.0".into(),
+            tag: "v2.0.0".into(),
+            bundles: vec!["https://example.test/bundle".into()],
+            recommended: false,
+        };
+        let assetless = Release {
+            tag: "2.0.0".into(),
+            bundles: vec![],
+            recommended: true,
+            ..installable.clone()
+        };
+        for live in [
+            vec![installable.clone(), assetless.clone()],
+            vec![assetless, installable],
+        ] {
+            let release = choose(&live, None, Some("2.0.0")).unwrap();
+            assert_eq!(release.bundles, vec!["https://example.test/bundle"]);
+            assert!(release.recommended);
+        }
     }
     #[test]
     fn signed_list_maps_assetless_forge_tags_and_withdrawals() {
