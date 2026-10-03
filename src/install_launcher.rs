@@ -35,6 +35,109 @@ pub fn write_export(path: &Path, target: &Path) -> Result<(), Error> {
 mod tests {
     use super::*;
     use std::process::Command;
+
+    #[test]
+    fn waits_for_a_child_that_handles_console_interrupts() {
+        let root = tempfile::tempdir().unwrap();
+        let probe = root.path().join("probe.exe");
+        let driver = root.path().join("driver.exe");
+        let sources = [
+            (
+                &probe,
+                r#"
+                #[link(name="kernel32")] unsafe extern "system" {
+                    fn SetConsoleCtrlHandler(h: Option<extern "system" fn(u32)->i32>, add:i32)->i32;
+                }
+                extern "system" fn handle(e:u32)->i32 {
+                    if e <= 1 {
+                        std::fs::write(std::env::var_os("EVENT").unwrap(), e.to_string()).unwrap();
+                        1
+                    } else { 0 }
+                }
+                fn main() {
+                    assert_ne!(unsafe {SetConsoleCtrlHandler(Some(handle),1)},0);
+                    std::fs::write(std::env::var_os("READY").unwrap(), "ready").unwrap();
+                    let release=std::path::PathBuf::from(std::env::var_os("RELEASE").unwrap());
+                    let deadline=std::time::Instant::now()+std::time::Duration::from_secs(15);
+                    while !release.exists() {
+                        assert!(std::time::Instant::now()<deadline);
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    std::process::exit(37);
+                }
+            "#,
+            ),
+            (
+                &driver,
+                r#"
+                use std::os::windows::process::CommandExt;
+                #[link(name="kernel32")] unsafe extern "system" {
+                    fn FreeConsole()->i32;
+                    fn AttachConsole(pid:u32)->i32;
+                    fn GenerateConsoleCtrlEvent(event:u32,group:u32)->i32;
+                    fn SetConsoleCtrlHandler(h:Option<extern "system" fn(u32)->i32>,add:i32)->i32;
+                }
+                extern "system" fn handle(e:u32)->i32 { i32::from(e<=1) }
+                fn main() {
+                    let mut args=std::env::args_os().skip(1);
+                    let launcher=args.next().unwrap();
+                    let root=std::path::PathBuf::from(args.next().unwrap());
+                    let ready=root.join("ready"); let event=root.join("event"); let release=root.join("release");
+                    let mut child=std::process::Command::new(launcher).creation_flags(0x10)
+                        .env("READY",&ready).env("EVENT",&event).env("RELEASE",&release).spawn().unwrap();
+                    let result=std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let deadline=std::time::Instant::now()+std::time::Duration::from_secs(10);
+                        while !ready.exists() {
+                            assert!(child.try_wait().unwrap().is_none()); assert!(std::time::Instant::now()<deadline);
+                            std::thread::sleep(std::time::Duration::from_millis(10));
+                        }
+                        unsafe {FreeConsole();}
+                        assert_ne!(unsafe {AttachConsole(child.id())},0);
+                        assert_ne!(unsafe {SetConsoleCtrlHandler(Some(handle),1)},0);
+                        for signal in [0,1] {
+                            assert_ne!(unsafe {GenerateConsoleCtrlEvent(signal,0)},0);
+                            while std::fs::read_to_string(&event).ok().as_deref()!=Some(&signal.to_string()) {
+                                assert!(std::time::Instant::now()<deadline);
+                                std::thread::sleep(std::time::Duration::from_millis(10));
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(100));
+                            assert!(child.try_wait().unwrap().is_none(),"launcher exited before its child");
+                        }
+                        std::fs::write(&release,"release").unwrap();
+                        assert_eq!(child.wait().unwrap().code(),Some(37));
+                    }));
+                    let _=std::fs::write(&release,"release");
+                    if result.is_err() {let _=child.kill(); std::process::exit(1);}
+                }
+            "#,
+            ),
+        ];
+        for (output, source) in sources {
+            let input = output.with_extension("rs");
+            std::fs::write(&input, source).unwrap();
+            let result = Command::new("rustc")
+                .arg(input)
+                .arg("-o")
+                .arg(output)
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+        }
+        let launcher = root.path().join("launcher.exe");
+        write_export(&launcher, &probe).unwrap();
+        assert!(
+            Command::new(driver)
+                .arg(launcher)
+                .arg(root.path())
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
     #[test]
     fn forwards_arguments_environment_cwd_and_exit_status() {
         let root = tempfile::tempdir().unwrap();
