@@ -90,6 +90,8 @@ pub struct Session {
     pub bin: PathBuf,
     scopes: BTreeSet<PathBuf>,
     _locks: Vec<File>,
+    #[cfg(windows)]
+    _directories: Vec<File>,
 }
 
 fn conflict(message: impl Into<String>) -> Error {
@@ -129,6 +131,16 @@ fn regular(path: &Path, write: bool, create: bool) -> Result<File, Error> {
             path.display()
         )));
     }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt as _;
+        if meta.file_attributes()
+            & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT
+            != 0
+        {
+            return Err(conflict("state files must not be reparse points"));
+        }
+    }
     Ok(file)
 }
 
@@ -149,6 +161,10 @@ fn read<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>, Error>
             )));
         }
     }
+    #[cfg(windows)]
+    windows_access(&file, path, false)?;
+    #[cfg(target_os = "macos")]
+    macos_acl(path, rustix::process::geteuid().as_raw(), false)?;
     let mut bytes = Vec::new();
     file.take(STATE_LIMIT + 1).read_to_end(&mut bytes)?;
     if bytes.len() as u64 > STATE_LIMIT {
@@ -190,7 +206,16 @@ fn directory(path: &Path, private: bool) -> Result<PathBuf, Error> {
         std::env::current_dir()?.join(path)
     };
     let uid = rustix::process::geteuid().as_raw();
-    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;
+    // Traversing a protected ancestor needs search permission, not permission
+    // to list it (for example, a 0711 /home).
+    #[cfg(target_os = "linux")]
+    let access = OFlags::PATH;
+    #[cfg(target_os = "macos")]
+    let access = OFlags::from_bits_retain(libc::O_SEARCH as _);
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let access = OFlags::RDONLY;
+    let flags = access | OFlags::DIRECTORY | OFlags::CLOEXEC;
+    protected(Path::new("/"), uid, true)?;
     let mut parent =
         File::from(rustix::fs::open("/", flags, Mode::empty()).map_err(std::io::Error::from)?);
     let mut current = PathBuf::from("/");
@@ -234,6 +259,8 @@ fn directory(path: &Path, private: bool) -> Result<PathBuf, Error> {
         };
         let file = File::from(opened);
         let meta = file.metadata()?;
+        #[cfg(target_os = "macos")]
+        macos_acl(&current, uid, private && current == absolute)?;
         if (meta.uid() != uid && meta.uid() != 0)
             || (meta.mode() & 0o022 != 0 && meta.mode() & 0o1000 == 0)
         {
@@ -250,8 +277,13 @@ fn directory(path: &Path, private: bool) -> Result<PathBuf, Error> {
         if parent.metadata()?.uid() != uid {
             return Err(conflict("state directory belongs to another user"));
         }
-        rustix::fs::fchmod(&parent, Mode::RUSR | Mode::WUSR | Mode::XUSR)
-            .map_err(std::io::Error::from)?;
+        rustix::fs::chmodat(
+            &parent,
+            ".",
+            Mode::RUSR | Mode::WUSR | Mode::XUSR,
+            AtFlags::empty(),
+        )
+        .map_err(std::io::Error::from)?;
     }
     Ok(canonical)
 }
@@ -261,6 +293,8 @@ fn protected(path: &Path, uid: u32, allow_sticky: bool) -> Result<(), Error> {
     use std::os::unix::fs::MetadataExt as _;
     for ancestor in path.ancestors() {
         let meta = fs::metadata(ancestor)?;
+        #[cfg(target_os = "macos")]
+        macos_acl(ancestor, uid, false)?;
         if (meta.uid() != uid && meta.uid() != 0)
             || (meta.mode() & 0o022 != 0
                 && ((ancestor == path && !allow_sticky) || meta.mode() & 0o1000 == 0))
@@ -274,7 +308,148 @@ fn protected(path: &Path, uid: u32, allow_sticky: bool) -> Result<(), Error> {
     Ok(())
 }
 
-#[cfg(not(unix))]
+#[cfg(target_os = "macos")]
+fn macos_acl(path: &Path, uid: u32, private: bool) -> Result<(), Error> {
+    use exacl::{AclEntryKind, Perm};
+    let user = nix::unistd::User::from_uid(nix::unistd::Uid::from_raw(uid))
+        .map_err(std::io::Error::from)?
+        .ok_or_else(|| conflict("cannot resolve the installation user"))?;
+    let writing = Perm::WRITE
+        | Perm::APPEND
+        | Perm::DELETE
+        | Perm::DELETE_CHILD
+        | Perm::WRITEATTR
+        | Perm::WRITEEXTATTR
+        | Perm::WRITESECURITY
+        | Perm::CHOWN;
+    let prohibited = writing | if private { Perm::all() } else { Perm::empty() };
+    for ace in exacl::getfacl(path, None)? {
+        // Check inherited grants too: they must not make newly created state
+        // or staging files writable by another principal.
+        if ace.allow
+            && ace.perms.intersects(prohibited)
+            && !(ace.kind == AclEntryKind::User
+                && (ace.name == user.name
+                    || ace.name == "root"
+                    || ace.name == uid.to_string()
+                    || ace.name == "0"))
+        {
+            return Err(conflict(format!(
+                "{} has an unsafe extended ACL",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn windows_access(file: &File, path: &Path, ancestor: bool) -> Result<(), Error> {
+    use windows_permissions::{
+        LocalBox, Sid,
+        constants::{AceFlags, AceType, SeObjectType, SecurityInformation},
+        wrappers,
+    };
+    let user = windows_permissions::utilities::current_process_sid()?;
+    let trusted: Vec<LocalBox<Sid>> = [
+        // SYSTEM, Administrators and the Windows servicing account.
+        "S-1-5-18",
+        "S-1-5-32-544",
+        "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464",
+    ]
+    .into_iter()
+    .map(str::parse)
+    .collect::<Result<_, _>>()?;
+    let safe = |sid: &Sid| sid == &*user || trusted.iter().any(|t| sid == &**t);
+    let sd = wrappers::GetSecurityInfo(
+        file,
+        SeObjectType::SE_FILE_OBJECT,
+        SecurityInformation::Owner | SecurityInformation::Dacl,
+    )?;
+    if sd.owner().is_none_or(|owner| !safe(owner)) {
+        return Err(conflict(format!(
+            "{} belongs to another user",
+            path.display()
+        )));
+    }
+    let acl = sd
+        .dacl()
+        .ok_or_else(|| conflict("installation paths must have a DACL"))?;
+    // Generic write/all, delete, ACL/owner changes, data/EA/attribute writes,
+    // and deletion of children. Only ancestor ADD_SUBDIRECTORY is harmless:
+    // it permits creation, but cannot replace an already protected child.
+    let writing = 0x500d_0152u32 | if ancestor { 0 } else { 0x4 };
+    for i in 0..acl.len() {
+        let ace = acl
+            .get_ace(i)
+            .ok_or_else(|| conflict("invalid directory ACL"))?;
+        if ace.flags().contains(AceFlags::InheritOnly) {
+            continue;
+        }
+        match ace.ace_type() {
+            AceType::ACCESS_DENIED_ACE_TYPE
+            | AceType::ACCESS_DENIED_OBJECT_ACE_TYPE
+            | AceType::ACCESS_DENIED_CALLBACK_ACE_TYPE
+            | AceType::ACCESS_DENIED_CALLBACK_OBJECT_ACE_TYPE => continue,
+            AceType::ACCESS_ALLOWED_ACE_TYPE
+            | AceType::ACCESS_ALLOWED_OBJECT_ACE_TYPE
+            | AceType::ACCESS_ALLOWED_CALLBACK_ACE_TYPE
+            | AceType::ACCESS_ALLOWED_CALLBACK_OBJECT_ACE_TYPE => {
+                if ace.mask().bits() & writing != 0 && ace.sid().is_none_or(|sid| !safe(sid)) {
+                    return Err(conflict(format!(
+                        "{} is writable by another user",
+                        path.display()
+                    )));
+                }
+            }
+            _ => return Err(conflict("unsupported installation directory ACL")),
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn windows_directory(path: &Path, ancestor: bool, private: bool) -> Result<File, Error> {
+    use std::os::windows::fs::{MetadataExt as _, OpenOptionsExt as _};
+    use windows_sys::Win32::Storage::FileSystem::*;
+    let file = fs::OpenOptions::new()
+        .access_mode(0x0002_0080 | if private { 0x0004_0000 } else { 0 }) // READ_CONTROL, READ_ATTRIBUTES, optional WRITE_DAC
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE) // hold directory identity; deny delete/rename
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)?;
+    let meta = file.metadata()?;
+    if !meta.is_dir() || meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err(conflict(format!(
+            "{} is not an ordinary installation directory",
+            path.display()
+        )));
+    }
+    windows_access(&file, path, ancestor)?;
+    if private {
+        use windows_permissions::{
+            LocalBox, SecurityDescriptor,
+            constants::{SeObjectType, SecurityInformation},
+            wrappers,
+        };
+        let sid = windows_permissions::utilities::current_process_sid()?;
+        let sd: LocalBox<SecurityDescriptor> =
+            format!("D:P(A;OICI;FA;;;{sid})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)").parse()?;
+        let mut file = file;
+        wrappers::SetSecurityInfo(
+            &mut file,
+            SeObjectType::SE_FILE_OBJECT,
+            SecurityInformation::Dacl | SecurityInformation::ProtectedDacl,
+            None,
+            None,
+            sd.dacl(),
+            None,
+        )?;
+        return Ok(file);
+    }
+    Ok(file)
+}
+
+#[cfg(windows)]
 fn directory(path: &Path, private: bool) -> Result<PathBuf, Error> {
     // Validate each existing component before creating beneath it. In particular,
     // root must not follow an attacker's pre-created symlink in a sticky directory.
@@ -284,7 +459,9 @@ fn directory(path: &Path, private: bool) -> Result<PathBuf, Error> {
         std::env::current_dir()?.join(path)
     };
     let mut current = PathBuf::new();
-    for component in absolute.components() {
+    let mut guards = Vec::new();
+    let components: Vec<_> = absolute.components().collect();
+    for (index, component) in components.iter().enumerate() {
         if matches!(component, std::path::Component::ParentDir) {
             return Err(conflict("installation paths must not contain '..'"));
         }
@@ -296,23 +473,22 @@ fn directory(path: &Path, private: bool) -> Result<PathBuf, Error> {
         if matches!(component, std::path::Component::Prefix(_)) {
             continue;
         }
-        let metadata = match fs::symlink_metadata(&current) {
-            Ok(m) => m,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+        let ancestor = index + 1 != components.len();
+        let file = match windows_directory(&current, ancestor, private && !ancestor) {
+            Ok(file) => file,
+            Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
                 match fs::create_dir(&current) {
                     Ok(()) => {}
                     Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
                     Err(e) => return Err(e.into()),
                 }
-                fs::symlink_metadata(&current)?
+                windows_directory(&current, ancestor, private && !ancestor)?
             }
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(e),
         };
-        let _ = metadata;
+        guards.push(file);
     }
-    let path = fs::canonicalize(path)?;
-    let _ = private;
-    Ok(path)
+    Ok(fs::canonicalize(&current)?)
 }
 
 fn entry(path: &Path) -> Result<Option<Entry>, Error> {
@@ -525,13 +701,27 @@ impl Session {
                 return Err(conflict("too many shared recovery directories"));
             }
             let mut locks = Vec::new();
+            #[cfg(windows)]
+            let mut directories = Vec::new();
             for scope in &scopes {
                 directory(scope, false)?;
+                #[cfg(windows)]
+                for ancestor in scope.ancestors() {
+                    directories.push(windows_directory(ancestor, ancestor != scope, false)?);
+                }
                 let lock = regular(&scope.join(".packslip.lock"), true, true)?;
+                #[cfg(windows)]
+                windows_access(&lock, &scope.join(".packslip.lock"), false)?;
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::MetadataExt as _;
                     let meta = lock.metadata()?;
+                    #[cfg(target_os = "macos")]
+                    macos_acl(
+                        &scope.join(".packslip.lock"),
+                        rustix::process::geteuid().as_raw(),
+                        false,
+                    )?;
                     if meta.uid() != rustix::process::geteuid().as_raw() || meta.mode() & 0o022 != 0
                     {
                         return Err(conflict("destination lock has unsafe ownership"));
@@ -598,6 +788,8 @@ impl Session {
                 bin,
                 scopes,
                 _locks: locks,
+                #[cfg(windows)]
+                _directories: directories,
             });
         }
     }
@@ -913,6 +1105,108 @@ pub fn symlink_export(path: &Path, target: &Path) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn traverses_search_only_ancestors() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let root = tempfile::tempdir().unwrap();
+        let prefix = root.path().join("prefix");
+        fs::create_dir_all(prefix.join("inner")).unwrap();
+        fs::set_permissions(&prefix, fs::Permissions::from_mode(0o111)).unwrap();
+        let result = directory(&prefix.join("inner/state"), true);
+        fs::set_permissions(&prefix, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn rejects_extended_acl_writers_even_with_private_mode_bits() {
+        use exacl::{AclEntry, Perm};
+        use std::os::unix::fs::PermissionsExt as _;
+        let root = tempfile::tempdir().unwrap();
+        let unsafe_dir = root.path().join("unsafe");
+        fs::create_dir(&unsafe_dir).unwrap();
+        fs::set_permissions(&unsafe_dir, fs::Permissions::from_mode(0o700)).unwrap();
+        exacl::setfacl(
+            &[&unsafe_dir],
+            &[AclEntry::allow_group(
+                "everyone",
+                Perm::WRITE | Perm::DELETE_CHILD,
+                None,
+            )],
+            None,
+        )
+        .unwrap();
+        let result = directory(&unsafe_dir.join("new-state"), true);
+        exacl::setfacl(&[&unsafe_dir], &[], None).unwrap();
+        assert!(result.is_err());
+        assert!(!unsafe_dir.join("new-state").exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rejects_foreign_acl_writers_before_creating_children() {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        use windows_permissions::{
+            LocalBox, SecurityDescriptor,
+            constants::{SeObjectType, SecurityInformation},
+            wrappers,
+        };
+        let root = tempfile::tempdir().unwrap();
+        let unsafe_dir = root.path().join("unsafe");
+        fs::create_dir(&unsafe_dir).unwrap();
+        let sid = windows_permissions::utilities::current_process_sid().unwrap();
+        let mut handle = fs::OpenOptions::new()
+            .access_mode(0x0006_0080)
+            .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS)
+            .open(&unsafe_dir)
+            .unwrap();
+        let set = |handle: &mut File, text: &str| {
+            let sd: LocalBox<SecurityDescriptor> = text.parse().unwrap();
+            wrappers::SetSecurityInfo(
+                handle,
+                SeObjectType::SE_FILE_OBJECT,
+                SecurityInformation::Dacl | SecurityInformation::ProtectedDacl,
+                None,
+                None,
+                sd.dacl(),
+                None,
+            )
+            .unwrap();
+        };
+        set(
+            &mut handle,
+            &format!("D:P(A;OICI;FA;;;{sid})(A;OICI;FA;;;WD)"),
+        );
+        let result = directory(&unsafe_dir.join("new-state"), true);
+        set(
+            &mut handle,
+            &format!("D:P(A;OICI;FA;;;{sid})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"),
+        );
+        drop(handle);
+        assert!(result.is_err());
+        assert!(!unsafe_dir.join("new-state").exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rejects_junctions_without_creating_children_at_the_target() {
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("target");
+        fs::create_dir(&target).unwrap();
+        let link = root.path().join("junction");
+        let status = std::process::Command::new("cmd.exe")
+            .args(["/d", "/c", "mklink", "/J"])
+            .arg(&link)
+            .arg(&target)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert!(directory(&link.join("state"), true).is_err());
+        assert!(!target.join("state").exists());
+        fs::remove_dir(&link).unwrap();
+    }
 
     #[cfg(unix)]
     #[test]
