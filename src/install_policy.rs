@@ -101,7 +101,19 @@ fn scopes(statement: &crate::Statement) -> Vec<Provenance> {
         .iter()
         .filter(|a| !a.provenance.is_empty())
         .map(|a| Provenance {
-            scope: format!("{:?}", (&a.os, &a.arch, &a.libc, &a.variant)),
+            scope: format!(
+                "{:?}",
+                (
+                    &a.os,
+                    &a.arch,
+                    &a.libc,
+                    &a.variant,
+                    a.bin
+                        .iter()
+                        .map(|bin| &bin.name)
+                        .collect::<std::collections::BTreeSet<_>>()
+                )
+            ),
             links: a
                 .provenance
                 .iter()
@@ -163,6 +175,23 @@ fn changes(previous: &Record, next: &Record) -> Vec<String> {
             _ => previous.signer == next.signer,
         };
     if !signer_continues {
+        match (&previous.repository, &next.repository) {
+            (Some(before), Some(now)) if !now.continues(before) => changes.push(format!(
+                "repository identity changed from {} (ID {}) to {} (ID {})",
+                before.project, before.repository_id, now.project, now.repository_id
+            )),
+            (Some(before), None) => changes.push(format!(
+                "repository pin lost: {} (ID {})",
+                before.project, before.repository_id
+            )),
+            _ => {}
+        }
+        if previous.issuer != next.issuer {
+            changes.push(format!(
+                "OIDC issuer changed from {:?} to {:?}",
+                previous.issuer, next.issuer
+            ));
+        }
         changes.push(format!(
             "signer changed from {:?} to {:?}",
             previous.signer, next.signer
@@ -192,7 +221,19 @@ pub fn continuity(
     constraints: &[Constraints],
     accepted_ids: &[String],
 ) -> Result<(), Error> {
-    if next.project != project || previous.is_some_and(|record| record.project != project) {
+    let prior_project_matches = previous.is_none_or(|before| {
+        before.project == project
+            || before
+                .repository
+                .as_ref()
+                .zip(next.repository.as_ref())
+                .is_some_and(|(before_pin, next_pin)| {
+                    next_pin.continues(before_pin)
+                        && crate::model::repository_subpath(&before.project)
+                            == crate::model::repository_subpath(project)
+                })
+    });
+    if next.project != project || !prior_project_matches {
         return Err(Error::Constraint(
             "trust record belongs to a different project".into(),
         ));
@@ -497,7 +538,12 @@ mod tests {
         let old = record("release.yml@refs/tags/v1", true);
         let mut recreated = old.clone();
         recreated.repository = Some(ForgePin::of("github.com/jdx/tool", "456"));
-        assert!(!changes(&old, &recreated).is_empty());
+        let reasons = changes(&old, &recreated);
+        assert!(
+            reasons
+                .iter()
+                .any(|reason| reason.contains("ID 123") && reason.contains("ID 456"))
+        );
         let mut old = old;
         old.repository = None;
         let mut next = record("release.yml@refs/tags/v2", true);
@@ -505,6 +551,39 @@ mod tests {
         assert!(changes(&old, &next).is_empty());
         next.signer = record("other.yml@refs/tags/v2", true).signer;
         assert!(!changes(&old, &next).is_empty());
+    }
+    #[test]
+    fn project_aliases_follow_repository_ids_but_not_different_tools() {
+        let old = record("release.yml@refs/tags/v1", true);
+        let mut renamed = old.clone();
+        renamed.project = "github.com/new-owner/renamed".into();
+        renamed.repository = Some(ForgePin::of(&renamed.project, "123"));
+        renamed.signer =
+            "https://github.com/new-owner/renamed/.github/workflows/release.yml@refs/tags/v2"
+                .into();
+        continuity(
+            &renamed.project,
+            "release",
+            "verified bundle",
+            Some(&old),
+            &renamed,
+            &[],
+            &[],
+        )
+        .unwrap();
+        renamed.project.push_str("/different-tool");
+        assert!(
+            continuity(
+                &renamed.project,
+                "release",
+                "verified bundle",
+                Some(&old),
+                &renamed,
+                &[],
+                &[]
+            )
+            .is_err()
+        );
     }
     #[test]
     fn arbitrary_host_bundles_cannot_supply_their_own_trust_policy() {
@@ -563,6 +642,8 @@ mod tests {
         assert!(retains_provenance(&before, &scopes(&statement)));
         statement.predicate.artifacts[1].format = Some("zip".into());
         assert!(retains_provenance(&before, &scopes(&statement)));
+        statement.predicate.artifacts[1].bin = vec![crate::Bin::new("replacement")];
+        assert!(!retains_provenance(&before, &scopes(&statement)));
     }
     #[test]
     fn proposal_is_bound_to_policy_and_previous_record() {
