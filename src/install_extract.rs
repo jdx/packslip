@@ -398,66 +398,101 @@ fn materialized_links(
         .iter()
         .try_fold(0u64, |sum, e| sum.checked_add(e.size))
         .ok_or(Error::Limit)?;
+    let fold = |path: &Path| -> Result<PathBuf, Error> {
+        Ok(PathBuf::from(
+            path.to_str()
+                .ok_or_else(|| Error::Unsafe("non-UTF8 link path".into()))?
+                .to_lowercase(),
+        ))
+    };
     let mut targets = BTreeMap::new();
+    let mut files = BTreeMap::new();
     for entry in entries {
         let out = mapped(&entry.path, strip);
+        let key = fold(&out)?;
         let target = match &entry.kind {
             Kind::Symlink(target) => link_path(out.parent().unwrap_or(Path::new("")), target)?,
             Kind::Hardlink(target) => mapped(&path(target)?, strip),
+            Kind::File => {
+                files.insert(key, out);
+                continue;
+            }
             _ => continue,
         };
-        targets.insert(out, target);
+        targets.insert(
+            key,
+            (out, fold(&target)?, matches!(entry.kind, Kind::Symlink(_))),
+        );
     }
-    let mut resolved: BTreeMap<PathBuf, PathBuf> = BTreeMap::new();
-    for out in targets.keys() {
-        let mut current = out.clone();
-        let mut chain = Vec::new();
-        let mut visited = std::collections::BTreeSet::new();
-        let final_path = loop {
-            if let Some(final_path) = resolved.get(&current) {
-                break final_path.clone();
-            }
-            if !visited.insert(current.clone()) {
-                return Err(Error::Unsafe("cyclic archive link".into()));
-            }
-            if let Some(target) = targets.get(&current) {
-                chain.push(current);
-                current = target.clone();
-            } else {
-                let metadata = std::fs::symlink_metadata(root.join(&current))?;
-                if !metadata.file_type().is_file() {
-                    return Err(Error::Unsafe(
-                        "Windows archive link is not a regular file".into(),
-                    ));
+    // Resolve all links to the bytes to copy; then resolve hard-link inode
+    // anchors separately, stopping at materialized symlinks. This preserves
+    // h -> a when a is a copied symlink rather than linking h to a's source.
+    fn resolve(
+        targets: &BTreeMap<PathBuf, (PathBuf, PathBuf, bool)>,
+        files: &BTreeMap<PathBuf, PathBuf>,
+        stop_at_copy: bool,
+    ) -> Result<BTreeMap<PathBuf, PathBuf>, Error> {
+        let mut resolved: BTreeMap<PathBuf, PathBuf> = BTreeMap::new();
+        for key in targets.keys() {
+            let mut current = key.clone();
+            let mut chain = Vec::new();
+            let mut visited = std::collections::BTreeSet::new();
+            let final_path = loop {
+                if let Some(final_path) = resolved.get(&current) {
+                    break final_path.clone();
                 }
-                break current;
+                if !visited.insert(current.clone()) {
+                    return Err(Error::Unsafe("cyclic archive link".into()));
+                }
+                if let Some((out, target, is_copy)) = targets.get(&current) {
+                    if stop_at_copy && *is_copy {
+                        break out.clone();
+                    }
+                    chain.push(current);
+                    current = target.clone();
+                } else {
+                    break files
+                        .get(&current)
+                        .ok_or_else(|| {
+                            Error::Unsafe("Windows archive link is not a regular file".into())
+                        })?
+                        .clone();
+                }
+            };
+            for item in chain {
+                resolved.insert(item, final_path.clone());
             }
-        };
-        for item in chain {
-            resolved.insert(item, final_path.clone());
         }
+        Ok(resolved)
     }
-    for entry in entries {
-        let out = mapped(&entry.path, strip);
-        let Some(target) = resolved.get(&out) else {
+    let copied = resolve(&targets, &files, false)?;
+    let anchors = resolve(&targets, &files, true)?;
+    for (out, _, is_copy) in targets.values() {
+        if !is_copy {
             continue;
-        };
+        }
+        let target = root.join(&copied[&fold(out)?]);
+        physical_size = physical_size
+            .checked_add(std::fs::metadata(&target)?.len())
+            .ok_or(Error::Limit)?;
+        if physical_size > limits.bytes {
+            return Err(Error::Limit);
+        }
         let destination = root.join(out);
         if let Some(parent) = destination.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let target = root.join(target);
-        if matches!(entry.kind, Kind::Symlink(_)) {
-            physical_size = physical_size
-                .checked_add(std::fs::metadata(&target)?.len())
-                .ok_or(Error::Limit)?;
-            if physical_size > limits.bytes {
-                return Err(Error::Limit);
-            }
-            std::fs::copy(target, destination)?;
-        } else {
-            std::fs::hard_link(target, destination)?;
+        std::fs::copy(target, destination)?;
+    }
+    for (key, (out, _, is_copy)) in &targets {
+        if *is_copy {
+            continue;
         }
+        let destination = root.join(out);
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::hard_link(root.join(&anchors[key]), destination)?;
     }
     Ok(())
 }
@@ -550,7 +585,10 @@ pub fn extract(
                     return Err(Error::Limit);
                 }
                 let mut target = String::new();
-                file.by_ref().take(16385).read_to_string(&mut target)?;
+                // One sentinel byte detects contents exceeding the declared size.
+                file.by_ref()
+                    .take(size.checked_add(1).ok_or(Error::Limit)?)
+                    .read_to_string(&mut target)?;
                 if target.len() as u64 != size {
                     return Err(Error::Unsafe("ZIP link size differs from directory".into()));
                 }
@@ -581,7 +619,10 @@ pub fn extract(
                         .by_index(index)
                         .map_err(|e| Error::Unsafe(e.to_string()))?;
                     let mut out = output(tree.path(), &relative)?;
-                    let n = std::io::copy(&mut file.take(entry.size.saturating_add(1)), &mut out)?;
+                    let n = std::io::copy(
+                        &mut file.take(entry.size.checked_add(1).ok_or(Error::Limit)?),
+                        &mut out,
+                    )?;
                     if n != entry.size {
                         return Err(Error::Unsafe("ZIP size differs from directory".into()));
                     }
@@ -938,6 +979,42 @@ mod tests {
             materialized_links(root.path(), &overflowing, None, Limits::default()),
             Err(Error::Limit)
         ));
+    }
+    #[test]
+    fn windows_casefolded_link_chains_preserve_materialized_hardlink_targets() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("file"), b"file").unwrap();
+        let entries = vec![
+            Entry {
+                path: "a".into(),
+                kind: Kind::Symlink("B".into()),
+                size: 0,
+                executable: false,
+            },
+            Entry {
+                path: "b".into(),
+                kind: Kind::Symlink("FILE".into()),
+                size: 0,
+                executable: false,
+            },
+            Entry {
+                path: "h".into(),
+                kind: Kind::Hardlink("A".into()),
+                size: 0,
+                executable: false,
+            },
+            Entry {
+                path: "file".into(),
+                kind: Kind::File,
+                size: 4,
+                executable: false,
+            },
+        ];
+        materialized_links(root.path(), &entries, None, Limits::default()).unwrap();
+        std::fs::write(root.path().join("h"), b"changed").unwrap();
+        assert_eq!(std::fs::read(root.path().join("a")).unwrap(), b"changed");
+        assert_eq!(std::fs::read(root.path().join("file")).unwrap(), b"file");
+        assert_eq!(std::fs::read(root.path().join("b")).unwrap(), b"file");
     }
     #[test]
     fn non_utf8_validation_returns_an_error() {
