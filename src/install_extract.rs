@@ -142,7 +142,11 @@ fn validate(entries: &[Entry], limits: Limits, strip: Option<&Path>) -> Result<(
         }
         if seen
             .insert(
-                PathBuf::from(map.to_str().unwrap().to_lowercase()),
+                PathBuf::from(
+                    map.to_str()
+                        .ok_or_else(|| Error::Unsafe("non-UTF8 mapped path".into()))?
+                        .to_lowercase(),
+                ),
                 &entry.kind,
             )
             .is_some()
@@ -324,10 +328,9 @@ fn links(
     strip: Option<&Path>,
     limits: Limits,
 ) -> Result<(), Error> {
-    #[cfg(windows)]
-    let mut physical_size: u64 = entries.iter().map(|e| e.size).sum();
-    #[cfg(not(windows))]
-    let _ = limits;
+    if cfg!(windows) {
+        return materialized_links(root, entries, strip, limits);
+    }
     let mut hard = Vec::new();
     for entry in entries {
         let out = mapped(&entry.path, strip);
@@ -342,25 +345,6 @@ fn links(
                 }
                 #[cfg(unix)]
                 std::os::unix::fs::symlink(target, destination)?;
-                // Materialize safe file links on Windows without requiring
-                // Developer Mode. Directory links cannot be materialized here.
-                #[cfg(windows)]
-                {
-                    let resolved =
-                        root.join(link_path(out.parent().unwrap_or(Path::new("")), target)?);
-                    if !resolved.is_file() {
-                        return Err(Error::Unsafe(
-                            "Windows archive link is not a regular file".into(),
-                        ));
-                    }
-                    physical_size = physical_size
-                        .checked_add(std::fs::metadata(&resolved)?.len())
-                        .ok_or(Error::Limit)?;
-                    if physical_size > limits.bytes {
-                        return Err(Error::Limit);
-                    }
-                    std::fs::copy(resolved, destination)?;
-                }
             }
             Kind::Hardlink(target) => {
                 hard.push((root.join(out), root.join(mapped(&path(target)?, strip))))
@@ -396,6 +380,83 @@ fn links(
             return Err(Error::Unsafe(
                 "resolved link escapes extraction root".into(),
             ));
+        }
+    }
+    Ok(())
+}
+
+// Resolve the link graph to staged regular files before copying any link.
+// Memoization makes long, reverse-ordered chains linear rather than repeatedly
+// scanning the archive. No native Windows symlink privilege is required.
+fn materialized_links(
+    root: &Path,
+    entries: &[Entry],
+    strip: Option<&Path>,
+    limits: Limits,
+) -> Result<(), Error> {
+    let mut physical_size = entries
+        .iter()
+        .try_fold(0u64, |sum, e| sum.checked_add(e.size))
+        .ok_or(Error::Limit)?;
+    let mut targets = BTreeMap::new();
+    for entry in entries {
+        let out = mapped(&entry.path, strip);
+        let target = match &entry.kind {
+            Kind::Symlink(target) => link_path(out.parent().unwrap_or(Path::new("")), target)?,
+            Kind::Hardlink(target) => mapped(&path(target)?, strip),
+            _ => continue,
+        };
+        targets.insert(out, target);
+    }
+    let mut resolved: BTreeMap<PathBuf, PathBuf> = BTreeMap::new();
+    for out in targets.keys() {
+        let mut current = out.clone();
+        let mut chain = Vec::new();
+        let mut visited = std::collections::BTreeSet::new();
+        let final_path = loop {
+            if let Some(final_path) = resolved.get(&current) {
+                break final_path.clone();
+            }
+            if !visited.insert(current.clone()) {
+                return Err(Error::Unsafe("cyclic archive link".into()));
+            }
+            if let Some(target) = targets.get(&current) {
+                chain.push(current);
+                current = target.clone();
+            } else {
+                let metadata = std::fs::symlink_metadata(root.join(&current))?;
+                if !metadata.file_type().is_file() {
+                    return Err(Error::Unsafe(
+                        "Windows archive link is not a regular file".into(),
+                    ));
+                }
+                break current;
+            }
+        };
+        for item in chain {
+            resolved.insert(item, final_path.clone());
+        }
+    }
+    for entry in entries {
+        let out = mapped(&entry.path, strip);
+        let Some(target) = resolved.get(&out) else {
+            continue;
+        };
+        let destination = root.join(out);
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let target = root.join(target);
+        if matches!(entry.kind, Kind::Symlink(_)) {
+            physical_size = physical_size
+                .checked_add(std::fs::metadata(&target)?.len())
+                .ok_or(Error::Limit)?;
+            if physical_size > limits.bytes {
+                return Err(Error::Limit);
+            }
+            std::fs::copy(target, destination)?;
+        } else {
+            std::fs::hard_link(target, destination)?;
         }
     }
     Ok(())
@@ -469,6 +530,7 @@ pub fn extract(
             return Err(Error::Limit);
         }
         let mut entries = Vec::new();
+        let mut total = 0u64;
         for index in 0..zip.len() {
             let mut file = zip
                 .by_index(index)
@@ -476,6 +538,11 @@ pub fn extract(
             let file_path = path(file.name())?;
             let file_mode = file.unix_mode().unwrap_or(0o100644);
             let file_type = file_mode & 0o170000;
+            let size = if file.is_dir() { 0 } else { file.size() };
+            total = total.checked_add(size).ok_or(Error::Limit)?;
+            if total > limits.bytes {
+                return Err(Error::Limit);
+            }
             let kind = if file.is_dir() {
                 Kind::Dir
             } else if file_type == 0o120000 {
@@ -484,13 +551,15 @@ pub fn extract(
                 }
                 let mut target = String::new();
                 file.by_ref().take(16385).read_to_string(&mut target)?;
+                if target.len() as u64 != size {
+                    return Err(Error::Unsafe("ZIP link size differs from directory".into()));
+                }
                 Kind::Symlink(target)
             } else if file_type == 0 || file_type == 0o100000 {
                 Kind::File
             } else {
                 return Err(Error::Unsafe("special ZIP entry".into()));
             };
-            let size = if kind == Kind::File { file.size() } else { 0 };
             entries.push(Entry {
                 path: file_path,
                 kind,
@@ -765,6 +834,127 @@ mod tests {
             )
             .is_err()
         );
+    }
+    #[test]
+    fn zip_link_targets_count_toward_aggregate_bytes_before_retention() {
+        let parent = tempfile::tempdir().unwrap();
+        let input = parent.path().join("links.zip");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&input).unwrap());
+        zip.start_file("pkg/tool", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"x").unwrap();
+        zip.add_symlink("pkg/a", "tool", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.add_symlink("pkg/b", "tool", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.finish().unwrap();
+        assert!(matches!(
+            extract(
+                &input,
+                &artifact("links.zip", "zip", vec![crate::Bin::new("pkg/tool")]),
+                parent.path(),
+                Limits {
+                    bytes: 5,
+                    entries: 100
+                }
+            ),
+            Err(Error::Limit)
+        ));
+    }
+    #[test]
+    fn windows_file_link_graph_is_independent_of_archive_order_and_bounded() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("file"), b"file").unwrap();
+        let entries = vec![
+            Entry {
+                path: "a".into(),
+                kind: Kind::Symlink("b".into()),
+                size: 0,
+                executable: false,
+            },
+            Entry {
+                path: "b".into(),
+                kind: Kind::Symlink("c".into()),
+                size: 0,
+                executable: false,
+            },
+            Entry {
+                path: "c".into(),
+                kind: Kind::Hardlink("file".into()),
+                size: 0,
+                executable: false,
+            },
+            Entry {
+                path: "file".into(),
+                kind: Kind::File,
+                size: 4,
+                executable: false,
+            },
+        ];
+        materialized_links(
+            root.path(),
+            &entries,
+            None,
+            Limits {
+                bytes: 12,
+                entries: 100,
+            },
+        )
+        .unwrap();
+        assert_eq!(std::fs::read(root.path().join("a")).unwrap(), b"file");
+        assert_eq!(std::fs::read(root.path().join("b")).unwrap(), b"file");
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("file"), b"file").unwrap();
+        assert!(matches!(
+            materialized_links(
+                root.path(),
+                &entries,
+                None,
+                Limits {
+                    bytes: 11,
+                    entries: 100
+                }
+            ),
+            Err(Error::Limit)
+        ));
+        let cyclic = vec![
+            entries[0].clone(),
+            Entry {
+                path: "b".into(),
+                kind: Kind::Symlink("a".into()),
+                size: 0,
+                executable: false,
+            },
+        ];
+        assert!(materialized_links(root.path(), &cyclic, None, Limits::default()).is_err());
+        let overflowing = vec![
+            Entry {
+                size: u64::MAX,
+                ..entries[3].clone()
+            },
+            entries[3].clone(),
+        ];
+        assert!(matches!(
+            materialized_links(root.path(), &overflowing, None, Limits::default()),
+            Err(Error::Limit)
+        ));
+    }
+    #[test]
+    fn non_utf8_validation_returns_an_error() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            let entries = vec![Entry {
+                path: std::ffi::OsString::from_vec(vec![0xff]).into(),
+                kind: Kind::File,
+                size: 0,
+                executable: false,
+            }];
+            assert!(matches!(
+                validate(&entries, Limits::default(), None),
+                Err(Error::Unsafe(_))
+            ));
+        }
     }
     #[test]
     fn xz_streams_are_bounded_and_do_not_buffer_the_payload() {
