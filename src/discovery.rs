@@ -125,8 +125,8 @@ impl Client {
         let mut auth = BTreeMap::new();
         if let Some(token) = std::env::var("GH_TOKEN")
             .ok()
-            .or_else(|| std::env::var("GITHUB_TOKEN").ok())
             .filter(|t| !t.is_empty())
+            .or_else(|| std::env::var("GITHUB_TOKEN").ok().filter(|t| !t.is_empty()))
         {
             for host in ["https://github.com", "https://api.github.com"] {
                 auth.insert(host.into(), token.clone());
@@ -326,14 +326,11 @@ pub struct Release {
     pub tag: String,
     pub bundles: Vec<String>,
     pub recommended: bool,
-    #[serde(default)]
-    pub prerelease: bool,
 }
 #[derive(Deserialize)]
 struct GithubRelease {
     tag_name: String,
     draft: bool,
-    prerelease: bool,
     #[serde(default)]
     assets: Vec<GithubAsset>,
 }
@@ -388,7 +385,6 @@ pub async fn github(client: &Client, project: &Project) -> Result<(Vec<Release>,
         let done = page_releases.len() < 100;
         for release in page_releases.into_iter().filter(|r| !r.draft) {
             if let Some(version) = crate::tag_version(&release.tag_name, project.as_str()) {
-                // GitHub prerelease status is an eligibility hint too.
                 let bundles = release
                     .assets
                     .into_iter()
@@ -403,7 +399,6 @@ pub async fn github(client: &Client, project: &Project) -> Result<(Vec<Release>,
                         .as_ref()
                         .is_some_and(|l| l.tag_name == release.tag_name),
                     tag: release.tag_name,
-                    prerelease: release.prerelease,
                     bundles,
                 });
             }
@@ -488,8 +483,6 @@ pub fn choose(
                             && live
                                 .iter()
                                 .any(|r| r.version == entry.version && r.recommended)),
-                    prerelease: semver::Version::parse(&entry.version)
-                        .is_ok_and(|v| !v.pre.is_empty()),
                 },
             );
         }
@@ -499,17 +492,21 @@ pub fn choose(
             }
         }
     }
-    if let Some(version) = requested {
-        return choices
+    if let Some(request) = requested.filter(|r| *r != "latest") {
+        let mut matches: Vec<_> = choices
             .into_values()
-            .find(|r| r.version == version || r.tag == version)
-            .ok_or(Error::NoRelease);
+            .filter(|r| matches_request(r, request))
+            .collect();
+        matches.sort_by(|a, b| {
+            semver::Version::parse(&b.version)
+                .unwrap()
+                .cmp(&semver::Version::parse(&a.version).unwrap())
+        });
+        return matches.into_iter().next().ok_or(Error::NoRelease);
     }
     let mut choices: Vec<_> = choices
         .into_values()
-        .filter(|r| {
-            !r.prerelease && semver::Version::parse(&r.version).is_ok_and(|v| v.pre.is_empty())
-        })
+        .filter(|r| semver::Version::parse(&r.version).is_ok_and(|v| v.pre.is_empty()))
         .collect();
     choices.sort_by(|a, b| {
         semver::Version::parse(&b.version)
@@ -522,6 +519,29 @@ pub fn choose(
         .cloned()
         .or_else(|| choices.into_iter().next())
         .ok_or(Error::NoRelease)
+}
+
+fn matches_request(release: &Release, request: &str) -> bool {
+    let requested = request.strip_prefix('v').unwrap_or(request);
+    if release.tag == request
+        || release.tag.strip_prefix('v') == Some(requested)
+        || release.version == requested
+    {
+        return true;
+    }
+    let Ok(version) = semver::Version::parse(&release.version) else {
+        return false;
+    };
+    if !version.pre.is_empty() && !requested.contains('-') {
+        return false;
+    }
+    if requested.as_bytes().first().is_some_and(u8::is_ascii_digit)
+        && !requested.contains([' ', ',', '^', '~', '*', '<', '>', '='])
+    {
+        return release.version.starts_with(requested)
+            && release.version.as_bytes().get(requested.len()) == Some(&b'.');
+    }
+    semver::VersionReq::parse(requested).is_ok_and(|range| range.matches(&version))
 }
 
 #[cfg(test)]
@@ -584,7 +604,6 @@ mod tests {
             tag: "v2.0.0".into(),
             bundles: vec![],
             recommended: true,
-            prerelease: false,
         }];
         assert!(matches!(
             choose(&releases, Some(&list), Some("v2.0.0")),
@@ -646,14 +665,12 @@ mod tests {
                 tag: "v1.0.0".into(),
                 bundles: vec![],
                 recommended: true,
-                prerelease: false,
             },
             Release {
                 version: "2.0.0".into(),
                 tag: "v2.0.0".into(),
                 bundles: vec![],
                 recommended: false,
-                prerelease: false,
             },
         ];
         assert_eq!(choose(&releases, None, None).unwrap().version, "1.0.0");
@@ -662,5 +679,33 @@ mod tests {
             "2.0.0"
         );
         assert!(list_freshness(None, Some(5), jiff::Timestamp::now()).is_err());
+    }
+    #[test]
+    fn requests_match_component_prefixes_and_prerelease_prefixes() {
+        let releases: Vec<_> = ["3.12.1", "3.12.9", "3.13.0", "3.12.10-beta.1"]
+            .into_iter()
+            .map(|version| Release {
+                version: version.into(),
+                tag: format!("v{version}"),
+                bundles: vec![],
+                recommended: false,
+            })
+            .collect();
+        assert_eq!(
+            choose(&releases, None, Some("3.12")).unwrap().version,
+            "3.12.9"
+        );
+        assert_eq!(
+            choose(&releases, None, Some("3.12.10-beta"))
+                .unwrap()
+                .version,
+            "3.12.10-beta.1"
+        );
+        assert_eq!(
+            choose(&releases, None, Some(">=3.12, <3.13"))
+                .unwrap()
+                .version,
+            "3.12.9"
+        );
     }
 }
