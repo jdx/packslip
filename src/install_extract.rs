@@ -376,7 +376,7 @@ fn links(
     limits: Limits,
 ) -> Result<(), Error> {
     let _ = limits;
-    let mut hard = Vec::new();
+    let mut hard = BTreeMap::new();
     for entry in entries {
         let out = mapped(&entry.path, strip);
         if out.as_os_str().is_empty() {
@@ -392,7 +392,7 @@ fn links(
                 std::os::unix::fs::symlink(target, destination)?;
             }
             Kind::Hardlink(target) => {
-                hard.push((root.join(out), root.join(mapped(&path(target)?, strip))))
+                hard.insert(out, mapped(&path(target)?, strip));
             }
             _ => {}
         }
@@ -403,23 +403,39 @@ fn links(
     {
         resolved_link(root, &mapped(&entry.path, strip))?;
     }
-    while !hard.is_empty() {
-        let previous = hard.len();
-        hard.retain(|(out, target)| {
-            if target.is_file() {
-                if let Some(parent) = out.parent()
-                    && std::fs::create_dir_all(parent).is_err()
-                {
-                    return true;
-                }
-                std::fs::hard_link(target, out).is_err()
-            } else {
-                true
+    // Resolve each dependency once. Retrying every uncreated hard link each
+    // round makes a reverse-ordered chain quadratic in filesystem operations.
+    let mut resolved: BTreeMap<PathBuf, PathBuf> = BTreeMap::new();
+    for out in hard.keys() {
+        let mut current = out.clone();
+        let mut chain = Vec::new();
+        let mut visited = std::collections::BTreeSet::new();
+        let anchor = loop {
+            if let Some(anchor) = resolved.get(&current) {
+                break anchor.clone();
             }
-        });
-        if hard.len() == previous {
-            return Err(Error::Unsafe("unresolved or cyclic hard link".into()));
+            if !visited.insert(current.clone()) {
+                return Err(Error::Unsafe("cyclic archive hard link".into()));
+            }
+            if let Some(target) = hard.get(&current) {
+                chain.push(current);
+                current = resolved_link(root, target)?;
+            } else if root.join(&current).is_file() {
+                break current;
+            } else {
+                return Err(Error::Unsafe("unresolved archive hard link".into()));
+            }
+        };
+        for item in chain {
+            resolved.insert(item, anchor.clone());
         }
+    }
+    for (out, anchor) in resolved {
+        let destination = root.join(out);
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::hard_link(root.join(anchor), destination)?;
     }
     for entry in entries
         .iter()
@@ -1073,6 +1089,52 @@ mod tests {
         assert_eq!(std::fs::read(root.path().join("a")).unwrap(), b"changed");
         assert_eq!(std::fs::read(root.path().join("file")).unwrap(), b"file");
         assert_eq!(std::fs::read(root.path().join("b")).unwrap(), b"file");
+    }
+    #[test]
+    #[cfg(unix)]
+    fn unix_hardlink_chains_resolve_once_and_reject_cycles() {
+        use std::os::unix::fs::MetadataExt;
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("file"), b"runtime").unwrap();
+        let entries: Vec<_> = (0..4096)
+            .map(|i| Entry {
+                path: format!("h{i:04}").into(),
+                kind: Kind::Hardlink(if i == 4095 {
+                    "file".into()
+                } else {
+                    format!("h{:04}", i + 1)
+                }),
+                size: 0,
+                executable: false,
+            })
+            .collect();
+        links(root.path(), &entries, None, Limits::default()).unwrap();
+        let inode = std::fs::metadata(root.path().join("file")).unwrap().ino();
+        for entry in &entries {
+            assert_eq!(
+                std::fs::metadata(root.path().join(&entry.path))
+                    .unwrap()
+                    .ino(),
+                inode
+            );
+        }
+        let root = tempfile::tempdir().unwrap();
+        let cyclic = vec![
+            Entry {
+                path: "a".into(),
+                kind: Kind::Hardlink("b".into()),
+                size: 0,
+                executable: false,
+            },
+            Entry {
+                path: "b".into(),
+                kind: Kind::Hardlink("a".into()),
+                size: 0,
+                executable: false,
+            },
+        ];
+        assert!(links(root.path(), &cyclic, None, Limits::default()).is_err());
+        assert!(!root.path().join("a").exists());
     }
     #[test]
     #[cfg(unix)]
