@@ -278,8 +278,59 @@ fn library_matches(path: &Path, arch: &str) -> bool {
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = arch;
-        path.is_file()
+        use std::io::Read as _;
+        const LIMIT: u64 = 64 * 1024 * 1024;
+        if !std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.len() <= LIMIT) {
+            return false;
+        }
+        let Ok(file) = std::fs::File::open(path) else {
+            return false;
+        };
+        let mut bytes = Vec::new();
+        if file.take(LIMIT + 1).read_to_end(&mut bytes).is_err() || bytes.len() as u64 > LIMIT {
+            return false;
+        }
+        #[cfg(windows)]
+        return pe_library_matches(&bytes, arch);
+        #[cfg(target_os = "macos")]
+        return macho_library_matches(&bytes, arch);
+        #[cfg(not(any(windows, target_os = "macos")))]
+        false
+    }
+}
+
+#[cfg(any(windows, test))]
+fn pe_library_matches(bytes: &[u8], arch: &str) -> bool {
+    use goblin::pe::header::{COFF_MACHINE_ARM64, COFF_MACHINE_X86_64, Header};
+    let machine = match arch {
+        "x86_64" => COFF_MACHINE_X86_64,
+        "aarch64" => COFF_MACHINE_ARM64,
+        _ => return false,
+    };
+    Header::parse(bytes).is_ok_and(|header| {
+        header.coff_header.machine == machine && header.coff_header.characteristics & 0x2000 != 0
+    })
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macho_library_matches(bytes: &[u8], arch: &str) -> bool {
+    use goblin::mach::{Mach, SingleArch, constants::cputype, header::MH_DYLIB};
+    let cpu = match arch {
+        "x86_64" => cputype::CPU_TYPE_X86_64,
+        "aarch64" => cputype::CPU_TYPE_ARM64,
+        _ => return false,
+    };
+    let matches =
+        |m: &goblin::mach::MachO<'_>| m.header.cputype == cpu && m.header.filetype == MH_DYLIB;
+    match Mach::parse(bytes) {
+        Ok(Mach::Binary(m)) => matches(&m),
+        Ok(Mach::Fat(fat)) => {
+            fat.arches().is_ok()
+                && fat
+                    .into_iter()
+                    .any(|slice| matches!(slice, Ok(SingleArch::MachO(m)) if matches(&m)))
+        }
+        _ => false,
     }
 }
 
@@ -454,6 +505,42 @@ fn loader_cache(output: &str, arch: &str) -> Option<BTreeSet<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_library_headers_reject_other_architectures_and_executables() {
+        let mut pe = vec![0; 88];
+        pe[..2].copy_from_slice(b"MZ");
+        pe[60..64].copy_from_slice(&64u32.to_le_bytes());
+        pe[64..68].copy_from_slice(b"PE\0\0");
+        pe[68..70].copy_from_slice(&0x8664u16.to_le_bytes());
+        pe[86..88].copy_from_slice(&0x2000u16.to_le_bytes());
+        assert!(pe_library_matches(&pe, "x86_64"));
+        assert!(!pe_library_matches(&pe, "aarch64"));
+        pe[68..70].copy_from_slice(&0xaa64u16.to_le_bytes());
+        assert!(pe_library_matches(&pe, "aarch64"));
+        pe[86..88].fill(0);
+        assert!(!pe_library_matches(&pe, "aarch64"));
+        let mut macho = vec![0; 32];
+        macho[..4].copy_from_slice(&0xfeedfacfu32.to_le_bytes());
+        macho[4..8].copy_from_slice(&0x01000007u32.to_le_bytes());
+        macho[12..16].copy_from_slice(&6u32.to_le_bytes());
+        assert!(macho_library_matches(&macho, "x86_64"));
+        assert!(!macho_library_matches(&macho, "aarch64"));
+        macho[4..8].copy_from_slice(&0x0100000cu32.to_le_bytes());
+        assert!(macho_library_matches(&macho, "aarch64"));
+        let mut fat = vec![0; 28];
+        fat[..4].copy_from_slice(&0xcafebabeu32.to_be_bytes());
+        fat[4..8].copy_from_slice(&1u32.to_be_bytes());
+        fat[8..12].copy_from_slice(&0x0100000cu32.to_be_bytes());
+        fat[16..20].copy_from_slice(&28u32.to_be_bytes());
+        fat[20..24].copy_from_slice(&32u32.to_be_bytes());
+        fat.extend_from_slice(&macho);
+        assert!(macho_library_matches(&fat, "aarch64"));
+        assert!(!macho_library_matches(&fat, "x86_64"));
+        macho[12..16].copy_from_slice(&2u32.to_le_bytes());
+        assert!(!macho_library_matches(&macho, "aarch64"));
+        assert!(!macho_library_matches(b"not a library", "aarch64"));
+        assert!(!pe_library_matches(b"not a library", "x86_64"));
+    }
     #[test]
     fn registry_build_must_be_numeric() {
         assert_eq!(windows_version(10, 0, "26100"), Some("10.0.26100".into()));
