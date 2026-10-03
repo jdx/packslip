@@ -322,6 +322,52 @@ fn mode(path: &Path, executable: bool) -> Result<(), Error> {
     let _ = (path, executable);
     Ok(())
 }
+// Resolve existing symlinks without requiring the final target to exist.
+// Preserve .. until after expanding links; normalizing first could hide an
+// escape through a directory alias. Missing, still-confined targets are valid.
+#[cfg(unix)]
+fn resolved_link(root: &Path, relative: &Path) -> Result<PathBuf, Error> {
+    use std::path::Component;
+    let mut pending: std::collections::VecDeque<_> = relative
+        .components()
+        .map(|c| c.as_os_str().to_owned())
+        .collect();
+    let mut resolved = PathBuf::new();
+    let mut expansions = 0;
+    while let Some(component) = pending.pop_front() {
+        match Path::new(&component).components().next() {
+            Some(Component::CurDir) => continue,
+            Some(Component::ParentDir) => {
+                if !resolved.pop() {
+                    return Err(Error::Unsafe(
+                        "resolved link escapes extraction root".into(),
+                    ));
+                }
+                continue;
+            }
+            Some(Component::Normal(_)) => resolved.push(&component),
+            _ => return Err(Error::Unsafe("absolute link target".into())),
+        }
+        match std::fs::symlink_metadata(root.join(&resolved)) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                expansions += 1;
+                if expansions > 128 {
+                    return Err(Error::Unsafe("cyclic or excessively deep link".into()));
+                }
+                let target = std::fs::read_link(root.join(&resolved))?;
+                resolved.pop();
+                for component in target.components().rev() {
+                    pending.push_front(component.as_os_str().to_owned());
+                }
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(resolved)
+}
+
 #[cfg(unix)]
 fn links(
     root: &Path,
@@ -351,6 +397,12 @@ fn links(
             _ => {}
         }
     }
+    for entry in entries
+        .iter()
+        .filter(|entry| matches!(entry.kind, Kind::Symlink(_)))
+    {
+        resolved_link(root, &mapped(&entry.path, strip))?;
+    }
     while !hard.is_empty() {
         let previous = hard.len();
         hard.retain(|(out, target)| {
@@ -369,17 +421,11 @@ fn links(
             return Err(Error::Unsafe("unresolved or cyclic hard link".into()));
         }
     }
-    let canonical = root.canonicalize()?;
     for entry in entries
         .iter()
-        .filter(|e| matches!(e.kind, Kind::Symlink(_) | Kind::Hardlink(_)))
+        .filter(|entry| matches!(entry.kind, Kind::Symlink(_) | Kind::Hardlink(_)))
     {
-        let linked = root.join(mapped(&entry.path, strip)).canonicalize()?;
-        if !linked.starts_with(&canonical) {
-            return Err(Error::Unsafe(
-                "resolved link escapes extraction root".into(),
-            ));
-        }
+        resolved_link(root, &mapped(&entry.path, strip))?;
     }
     Ok(())
 }
@@ -1025,6 +1071,61 @@ mod tests {
         assert_eq!(std::fs::read(root.path().join("a")).unwrap(), b"changed");
         assert_eq!(std::fs::read(root.path().join("file")).unwrap(), b"file");
         assert_eq!(std::fs::read(root.path().join("b")).unwrap(), b"file");
+    }
+    #[test]
+    #[cfg(unix)]
+    fn dangling_links_are_preserved_but_directory_alias_escapes_are_rejected() {
+        let root = tempfile::tempdir().unwrap();
+        let dangling = vec![Entry {
+            path: "optional".into(),
+            kind: Kind::Symlink("missing/runtime".into()),
+            size: 0,
+            executable: false,
+        }];
+        validate(&dangling, Limits::default(), None).unwrap();
+        links(root.path(), &dangling, None, Limits::default()).unwrap();
+        assert_eq!(
+            std::fs::read_link(root.path().join("optional")).unwrap(),
+            PathBuf::from("missing/runtime")
+        );
+        let escaped = vec![
+            Entry {
+                path: "deep/path/alias".into(),
+                kind: Kind::Symlink("../../top".into()),
+                size: 0,
+                executable: false,
+            },
+            Entry {
+                path: "deep/path/escape".into(),
+                kind: Kind::Symlink("alias/../../outside".into()),
+                size: 0,
+                executable: false,
+            },
+        ];
+        std::fs::create_dir(root.path().join("top")).unwrap();
+        validate(&escaped, Limits::default(), None).unwrap();
+        assert!(matches!(
+            links(root.path(), &escaped, None, Limits::default()),
+            Err(Error::Unsafe(_))
+        ));
+        let cyclic = vec![
+            Entry {
+                path: "a".into(),
+                kind: Kind::Symlink("b".into()),
+                size: 0,
+                executable: false,
+            },
+            Entry {
+                path: "b".into(),
+                kind: Kind::Symlink("a".into()),
+                size: 0,
+                executable: false,
+            },
+        ];
+        assert!(matches!(
+            links(root.path(), &cyclic, None, Limits::default()),
+            Err(Error::Unsafe(_))
+        ));
     }
     #[test]
     fn non_utf8_validation_returns_an_error() {
