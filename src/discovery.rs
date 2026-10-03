@@ -563,6 +563,8 @@ pub fn list_freshness(
 }
 /// Merge list entries over GitHub tags; signed entries always decide withdrawal,
 /// tag, URL, and vendor recommendation. An explicit version never revives a yank.
+/// Numeric one/two-component selectors retain prefix semantics even if a forge
+/// also has a tag with that spelling. Other exact tag aliases retain their URLs.
 pub fn choose(
     live: &[Release],
     list: Option<&crate::ReleaseListStatement>,
@@ -718,15 +720,19 @@ fn numeric_request(request: &str) -> Option<String> {
     {
         return None;
     }
-    let core = parts
+    let mut numbers = parts
         .into_iter()
         .map(|part| {
             let value = part.trim_start_matches('0');
             if value.is_empty() { "0" } else { value }
         })
-        .collect::<Vec<_>>()
-        .join(".");
-    Some(format!("{core}{tail}"))
+        .collect::<Vec<_>>();
+    // A prerelease/build suffix applies to the fully spelled version, as
+    // normalize_version specifies; it is not a major/minor-only prefix.
+    if !tail.is_empty() && numbers.len() == 2 {
+        numbers.push("0");
+    }
+    Some(format!("{}{tail}", numbers.join(".")))
 }
 
 fn matches_request(release: &Release, request: &str) -> bool {
@@ -1008,6 +1014,26 @@ mod tests {
                 .bundles,
             vec![list.predicate.releases[0].packslip.clone()]
         );
+    }
+    #[test]
+    fn padded_prerelease_and_build_tags_match_with_or_without_v() {
+        for (tag, version) in [
+            ("v3.12-beta", "3.12.0-beta"),
+            ("v25.07+build.1", "25.7.0+build.1"),
+        ] {
+            let releases = vec![Release {
+                version: version.into(),
+                tag: tag.into(),
+                bundles: vec!["https://example.test/bundle".into()],
+                recommended: false,
+            }];
+            for request in [tag, tag.strip_prefix('v').unwrap(), version] {
+                assert_eq!(
+                    choose(&releases, None, Some(request)).unwrap().version,
+                    version
+                );
+            }
+        }
     }
     #[test]
     fn numeric_tags_do_not_override_prefixes_and_calver_normalization() {
