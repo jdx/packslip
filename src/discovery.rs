@@ -4,7 +4,7 @@ use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use sha2::Digest as _;
 use std::collections::BTreeMap;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]
@@ -378,17 +378,28 @@ impl Client {
                     url: display_url(&current),
                 });
             }
-            tmp.as_file().sync_all()?;
-            // Publish another name for the completed bytes while retaining the
-            // owned temporary file. Later cache replacements only unlink that
-            // name. A copy supports filesystems without hard-link support.
-            snapshot(tmp.path(), &self.cache)?
-                .persist(&path)
-                .map_err(|e| e.error)?;
-            return Ok(tmp);
+            return Ok(publish_download(tmp, &path)?);
         }
         Err(Error::Redirects)
     }
+}
+
+// Publish another name while retaining the owned file, positioned for reading.
+fn publish_download(
+    mut file: tempfile::NamedTempFile,
+    cache: &std::path::Path,
+) -> Result<tempfile::NamedTempFile, std::io::Error> {
+    file.as_file().sync_all()?;
+    snapshot(
+        file.path(),
+        cache
+            .parent()
+            .ok_or_else(|| std::io::Error::other("cache has no parent"))?,
+    )?
+    .persist(cache)
+    .map_err(|error| error.error)?;
+    file.as_file_mut().rewind()?;
+    Ok(file)
 }
 
 // A private name pins the selected cache inode across atomic cache replacement.
@@ -952,10 +963,10 @@ mod tests {
         let first_path = first.path().to_owned();
         let mut next = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
         next.write_all(b"later").unwrap();
-        snapshot(next.path(), dir.path())
-            .unwrap()
-            .persist(&cache)
-            .unwrap();
+        let mut next = publish_download(next, &cache).unwrap();
+        let mut handle_bytes = Vec::new();
+        next.read_to_end(&mut handle_bytes).unwrap();
+        assert_eq!(handle_bytes, b"later");
         let second = rt.block_on(client.download(url.as_str(), 5)).unwrap();
         assert_eq!(std::fs::read(first.path()).unwrap(), b"first");
         assert_eq!(std::fs::read(second.path()).unwrap(), b"later");
