@@ -1,0 +1,28 @@
+amends "package://github.com/jdx/hk/releases/download/v2.0.1/hk@2.0.1#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v2.0.1/hk@2.0.1#/Builtins.pkl"
+
+local linters = new Mapping<String, Step> {
+    ["cargo-fmt"] = Builtins.cargo_fmt
+    // CI runs clippy with -D warnings over all features and targets.
+    ["cargo-clippy"] = (Builtins.cargo_clippy) {
+        check = "cargo clippy -q --all-features --all-targets -- -D warnings"
+    }
+    ["shellcheck"] = Builtins.shellcheck
+}
+
+fail_fast = false
+
+hooks {
+    ["pre-commit"] {
+        fix = true
+        stash = "git"
+        steps = linters
+    }
+    ["fix"] {
+        fix = true
+        steps = linters
+    }
+    ["check"] {
+        steps = linters
+    }
+}
