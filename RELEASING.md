@@ -37,6 +37,9 @@ documentation generation, see [CONTRIBUTING.md](CONTRIBUTING.md).
      attaches the bundle to the GitHub release;
    - publishes the GitHub release and moves the action's major tag (`v1`
      for 1.x releases), creating the tag if it does not exist yet;
+   - pushes the container image `ghcr.io/jdx/packslip` for linux/amd64 and
+     linux/arm64, built from the release's own executables, and attests it
+     (see [Container image](#container-image));
    - calls `packslip-releases.yml` to rebuild the signed release list at
      `https://packslip.dev/.well-known/packslip.json`. That workflow also
      re-signs the list every Monday, before its 30-day validity runs out,
@@ -86,6 +89,14 @@ Last, confirm that packslip.sh serves the new release's install script.
 curl -fsSI https://packslip.sh | grep -i '^content-location'
 ```
 
+And that the container image runs the new release and carries its
+attestation:
+
+```sh
+docker run --rm ghcr.io/jdx/packslip:$v version
+gh attestation verify oci://ghcr.io/jdx/packslip:$v --repo jdx/packslip
+```
+
 ## packslip.sh
 
 `https://packslip.sh` serves the install scripts each release publishes,
@@ -126,6 +137,29 @@ domain. Like packslip.dev's, the attachment outlives deploys, so the
 deploy token needs no zone access. The Worker redirects plain HTTP to
 HTTPS itself as well, so a script is never served over HTTP even if that
 setting is turned off.
+
+## Container image
+
+`ghcr.io/jdx/packslip` holds a release's static Linux executable at
+`/packslip`, with a CA bundle at `/etc/ssl/certs/ca-certificates.crt`, on
+an otherwise empty image for linux/amd64 and linux/arm64. The release job's
+`image` job builds it with `container/build.sh` from the executables the
+build job made, not from source, so it runs the same bytes as the release's
+own downloads. It pushes the tags `X.Y.Z`, `X.Y`, `X`, and `latest`, and
+attests the image's digest the way the release files are attested.
+
+One digest pins both architectures, and Docker checks it, so the image a
+Dockerfile copies into needs no curl, tar, or hash tool:
+
+```dockerfile
+COPY --from=ghcr.io/jdx/packslip:X.Y.Z@sha256:<digest> /packslip /usr/local/bin/packslip
+```
+
+CI's `image` job builds the image the same way from the latest release's
+archives, runs it, and copies it into a Debian slim image, so a change to
+`container/` is tested before a release depends on it. The first release
+that pushes the image creates the package; if GitHub created it private,
+make it public once in its package settings.
 
 ## Action versions and tags
 
