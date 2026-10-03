@@ -50,6 +50,7 @@ install-policy = ["discovery", "dep:toml"]
 install-extract = ["archive", "dep:tempfile", "dep:lzma-rust2"]
 install-fs = ["install-policy", "install-extract", "dep:windows-permissions", "dep:exacl", "dep:nix", "dep:libc"]
 install-launcher = ["install-fs"]
+install-host = ["discovery", "dep:known-folders", "dep:winreg"]
 # `packslip create`: build a statement from a set of built artifacts.
 create = ["archive", "linkage", "sign"]
 # Read a release TOML manifest for `packslip create --manifest`.
@@ -109,6 +110,8 @@ usage_rs = { package = "usage-rs", version = "6", features = ["completions"], op
 rustix = { version = "1", features = ["fs", "process"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
+known-folders = { version = "1.4", optional = true }
+winreg = { version = "0.56", optional = true }
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"], optional = true }
 windows-permissions = { version = "0.2.4", optional = true }
 
