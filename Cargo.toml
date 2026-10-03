@@ -47,6 +47,7 @@ verify-cli = ["dep:color-eyre", "dep:eyre", "dep:usage_rs"]
 trust-root = ["dep:sigstore-tuf", "dep:reqwest", "dep:tempfile", "sigstore-trust-root/tuf"]
 discovery = ["trust-root", "dep:rustix", "dep:windows-sys"]
 install-policy = ["discovery", "dep:toml"]
+install-extract = ["archive", "dep:tempfile", "dep:lzma-rust2"]
 # `packslip create`: build a statement from a set of built artifacts.
 create = ["archive", "linkage", "sign"]
 # Read a release TOML manifest for `packslip create --manifest`.
@@ -76,6 +77,7 @@ getrandom = { version = "0.4", optional = true }
 goblin = { version = "0.10", optional = true }
 hex = "0.4"
 jiff = "0.2"
+lzma-rust2 = { version = "0.20", default-features = false, features = ["std", "xz"], optional = true }
 lzma-rs = { version = "0.3", optional = true }
 schemars = { version = "1", optional = true }
 semver = "1"

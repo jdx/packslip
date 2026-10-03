@@ -1,0 +1,799 @@
+//! Whole-artifact extraction into a destination-local, private staging tree.
+//! No archive entry is trusted to choose an absolute path or permission mode.
+use std::collections::BTreeMap;
+use std::io::{Read, Seek, Write};
+use std::path::{Path, PathBuf};
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("archive I/O: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("unsafe archive: {0}")]
+    Unsafe(String),
+    #[error("archive exceeds local extraction limits")]
+    Limit,
+    #[error("cannot extract artifact format {0:?}")]
+    Format(String),
+}
+#[derive(Debug, Clone, Copy)]
+pub struct Limits {
+    pub bytes: u64,
+    pub entries: u64,
+}
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            bytes: 10 * 1024 * 1024 * 1024,
+            entries: 100_000,
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Kind {
+    File,
+    Dir,
+    Symlink(String),
+    Hardlink(String),
+}
+#[derive(Debug, Clone)]
+struct Entry {
+    path: PathBuf,
+    kind: Kind,
+    size: u64,
+    executable: bool,
+}
+
+/// A stage and the exactly mapped declared commands. Holding the TempDir
+/// removes an uncommitted stage on ordinary errors; the transaction keeps it.
+pub struct Extracted {
+    pub tree: tempfile::TempDir,
+    pub bins: Vec<(String, PathBuf)>,
+}
+
+fn path(input: &str) -> Result<PathBuf, Error> {
+    if input.len() > 4096
+        || input.split('/').count() > 128
+        || input.starts_with('/')
+        || input.contains(['\\', ':', '\0'])
+    {
+        return Err(Error::Unsafe(format!("invalid path {input:?}")));
+    }
+    let mut result = PathBuf::new();
+    for component in input.split('/').filter(|c| !c.is_empty() && *c != ".") {
+        if component == ".." || component.ends_with([' ', '.']) {
+            return Err(Error::Unsafe(format!("invalid path {input:?}")));
+        }
+        let base = component.split('.').next().unwrap().to_ascii_uppercase();
+        if ["CON", "PRN", "AUX", "NUL"].contains(&base.as_str())
+            || (base.len() == 4
+                && (base.starts_with("COM") || base.starts_with("LPT"))
+                && base.as_bytes()[3].is_ascii_digit())
+        {
+            return Err(Error::Unsafe(format!("reserved path {input:?}")));
+        }
+        if component.to_ascii_lowercase().starts_with(".packslip") {
+            return Err(Error::Unsafe(
+                "archive uses a reserved ownership path".into(),
+            ));
+        }
+        result.push(component);
+    }
+    if result.as_os_str().is_empty() {
+        return Err(Error::Unsafe("empty archive path".into()));
+    }
+    Ok(result)
+}
+fn link_path(parent: &Path, target: &str) -> Result<PathBuf, Error> {
+    if target.starts_with('/') || target.contains(['\\', ':', '\0']) {
+        return Err(Error::Unsafe(
+            "absolute or platform-specific link target".into(),
+        ));
+    }
+    let mut normalized = parent.to_path_buf();
+    for part in target.split('/').filter(|p| !p.is_empty() && *p != ".") {
+        if part == ".." {
+            if !normalized.pop() {
+                return Err(Error::Unsafe("link escapes extraction root".into()));
+            }
+        } else {
+            normalized.push(path(part)?);
+        }
+    }
+    if normalized.as_os_str().is_empty() {
+        return Err(Error::Unsafe("link targets extraction root".into()));
+    }
+    Ok(normalized)
+}
+fn prefix(entries: &[Entry]) -> Option<PathBuf> {
+    let first = entries.first()?.path.components().next()?;
+    let base = PathBuf::from(first.as_os_str());
+    let mut child = false;
+    for entry in entries {
+        if !entry.path.starts_with(&base) {
+            return None;
+        }
+        if entry.path == base && entry.kind != Kind::Dir {
+            return None;
+        }
+        child |= entry.path != base;
+    }
+    child.then_some(base)
+}
+fn mapped(input: &Path, strip: Option<&Path>) -> PathBuf {
+    strip
+        .and_then(|p| input.strip_prefix(p).ok())
+        .unwrap_or(input)
+        .to_path_buf()
+}
+fn validate(entries: &[Entry], limits: Limits, strip: Option<&Path>) -> Result<(), Error> {
+    if entries.len() as u64 > limits.entries {
+        return Err(Error::Limit);
+    }
+    let mut seen = BTreeMap::new();
+    let mut total = 0u64;
+    for entry in entries {
+        total = total.checked_add(entry.size).ok_or(Error::Limit)?;
+        if total > limits.bytes {
+            return Err(Error::Limit);
+        }
+        let map = mapped(&entry.path, strip);
+        if map.as_os_str().is_empty() {
+            continue;
+        }
+        if seen
+            .insert(
+                PathBuf::from(map.to_str().unwrap().to_lowercase()),
+                &entry.kind,
+            )
+            .is_some()
+        {
+            return Err(Error::Unsafe(format!(
+                "duplicate mapped path {}",
+                map.display()
+            )));
+        }
+        match &entry.kind {
+            Kind::Symlink(target) => {
+                link_path(entry.path.parent().unwrap_or(Path::new("")), target)?;
+                link_path(map.parent().unwrap_or(Path::new("")), target)?;
+            }
+            Kind::Hardlink(target) => {
+                let target = path(target)?;
+                let target = mapped(&target, strip);
+                if target.as_os_str().is_empty() {
+                    return Err(Error::Unsafe("hard link targets extraction root".into()));
+                }
+            }
+            _ => {}
+        }
+    }
+    for name in seen.keys() {
+        for ancestor in name.ancestors().skip(1) {
+            if let Some(kind) = seen.get(ancestor)
+                && **kind != Kind::Dir
+            {
+                return Err(Error::Unsafe(
+                    "archive entry has a non-directory ancestor".into(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+struct Bounded<'a, W: Write> {
+    inner: &'a mut W,
+    remaining: u64,
+}
+impl<W: Write> Write for Bounded<'_, W> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if bytes.len() as u64 > self.remaining {
+            return Err(std::io::Error::other("decompressed archive exceeds limit"));
+        }
+        let n = self.inner.write(bytes)?;
+        self.remaining -= n as u64;
+        Ok(n)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+fn decoded(
+    input: &Path,
+    format: &str,
+    parent: &Path,
+    limit: u64,
+) -> Result<tempfile::NamedTempFile, Error> {
+    let mut spool = tempfile::NamedTempFile::new_in(parent)?;
+    let mut writer = Bounded {
+        inner: &mut spool,
+        remaining: limit,
+    };
+    if crate::archive::compression_of(format) == Some("xz") {
+        let mut reader = std::io::BufReader::new(std::fs::File::open(input)?);
+        use std::io::BufRead as _;
+        let mut stream = lzma_rust2::XzStream::new_mem_limit(true, 128 * 1024);
+        let mut out = [0u8; 64 * 1024];
+        loop {
+            let input = reader.fill_buf()?;
+            let eof = input.is_empty();
+            let result = stream.process(
+                input,
+                &mut out,
+                if eof {
+                    lzma_rust2::Action::Finish
+                } else {
+                    lzma_rust2::Action::Run
+                },
+            )?;
+            reader.consume(result.bytes_consumed);
+            writer.write_all(&out[..result.bytes_produced])?;
+            if result.status == lzma_rust2::Status::StreamEnd {
+                break;
+            }
+            if result.bytes_consumed == 0 && result.bytes_produced == 0 {
+                return Err(Error::Unsafe("truncated or stalled xz stream".into()));
+            }
+        }
+    } else {
+        let mut reader =
+            crate::archive::decoder(input, format).map_err(|e| Error::Unsafe(e.to_string()))?;
+        std::io::copy(&mut reader, &mut writer)?;
+    }
+    spool.as_file_mut().rewind()?;
+    Ok(spool)
+}
+fn tar_entries(file: &mut std::fs::File, limits: Limits) -> Result<Vec<Entry>, Error> {
+    file.rewind()?;
+    let mut archive = tar::Archive::new(file);
+    let mut result = Vec::new();
+    let mut size = 0u64;
+    let mut count = 0u64;
+    for entry in archive.entries()? {
+        count += 1;
+        if count > limits.entries {
+            return Err(Error::Limit);
+        }
+        let entry = entry?;
+        let p = entry.path()?;
+        let p = p
+            .to_str()
+            .ok_or_else(|| Error::Unsafe("non-UTF8 archive path".into()))?;
+        // Root directory placeholders are structural, not files.
+        if (p == "." || p == "./") && entry.header().entry_type().is_dir() {
+            continue;
+        }
+        let p = path(p)?;
+        let kind = entry.header().entry_type();
+        let link = || {
+            entry
+                .link_name()?
+                .and_then(|p| p.to_str().map(str::to_owned))
+                .ok_or_else(|| std::io::Error::other("invalid archive link"))
+        };
+        let kind = if kind.is_file() {
+            Kind::File
+        } else if kind.is_dir() {
+            Kind::Dir
+        } else if kind.is_symlink() {
+            Kind::Symlink(link()?)
+        } else if kind.is_hard_link() {
+            Kind::Hardlink(link()?)
+        } else {
+            return Err(Error::Unsafe("special archive entry".into()));
+        };
+        let bytes = if kind == Kind::File { entry.size() } else { 0 };
+        size = size.checked_add(bytes).ok_or(Error::Limit)?;
+        if size > limits.bytes || result.len() as u64 >= limits.entries {
+            return Err(Error::Limit);
+        }
+        result.push(Entry {
+            path: p,
+            kind,
+            size: bytes,
+            executable: entry.header().mode()? & 0o111 != 0,
+        });
+    }
+    Ok(result)
+}
+fn output(root: &Path, relative: &Path) -> Result<std::fs::File, Error> {
+    let out = root.join(relative);
+    if let Some(parent) = out.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    Ok(std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(out)?)
+}
+fn mode(path: &Path, executable: bool) -> Result<(), Error> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            path,
+            std::fs::Permissions::from_mode(if executable { 0o755 } else { 0o644 }),
+        )?;
+    }
+    #[cfg(not(unix))]
+    let _ = (path, executable);
+    Ok(())
+}
+fn links(
+    root: &Path,
+    entries: &[Entry],
+    strip: Option<&Path>,
+    limits: Limits,
+) -> Result<(), Error> {
+    #[cfg(windows)]
+    let mut physical_size: u64 = entries.iter().map(|e| e.size).sum();
+    #[cfg(not(windows))]
+    let _ = limits;
+    let mut hard = Vec::new();
+    for entry in entries {
+        let out = mapped(&entry.path, strip);
+        if out.as_os_str().is_empty() {
+            continue;
+        }
+        match &entry.kind {
+            Kind::Symlink(target) => {
+                let destination = root.join(&out);
+                if let Some(parent) = destination.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                #[cfg(unix)]
+                std::os::unix::fs::symlink(target, destination)?;
+                // Materialize safe file links on Windows without requiring
+                // Developer Mode. Directory links cannot be materialized here.
+                #[cfg(windows)]
+                {
+                    let resolved =
+                        root.join(link_path(out.parent().unwrap_or(Path::new("")), target)?);
+                    if !resolved.is_file() {
+                        return Err(Error::Unsafe(
+                            "Windows archive link is not a regular file".into(),
+                        ));
+                    }
+                    physical_size = physical_size
+                        .checked_add(std::fs::metadata(&resolved)?.len())
+                        .ok_or(Error::Limit)?;
+                    if physical_size > limits.bytes {
+                        return Err(Error::Limit);
+                    }
+                    std::fs::copy(resolved, destination)?;
+                }
+            }
+            Kind::Hardlink(target) => {
+                hard.push((root.join(out), root.join(mapped(&path(target)?, strip))))
+            }
+            _ => {}
+        }
+    }
+    while !hard.is_empty() {
+        let previous = hard.len();
+        hard.retain(|(out, target)| {
+            if target.is_file() {
+                if let Some(parent) = out.parent()
+                    && std::fs::create_dir_all(parent).is_err()
+                {
+                    return true;
+                }
+                std::fs::hard_link(target, out).is_err()
+            } else {
+                true
+            }
+        });
+        if hard.len() == previous {
+            return Err(Error::Unsafe("unresolved or cyclic hard link".into()));
+        }
+    }
+    let canonical = root.canonicalize()?;
+    for entry in entries
+        .iter()
+        .filter(|e| matches!(e.kind, Kind::Symlink(_) | Kind::Hardlink(_)))
+    {
+        let linked = root.join(mapped(&entry.path, strip)).canonicalize()?;
+        if !linked.starts_with(&canonical) {
+            return Err(Error::Unsafe(
+                "resolved link escapes extraction root".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Unpack every ordinary archive file beside the final destination, strip one
+/// common enclosing directory, then validate only the declared command paths.
+/// Never run a command or install a resource while extracting.
+pub fn extract(
+    input: &Path,
+    artifact: &crate::Artifact,
+    parent: &Path,
+    limits: Limits,
+) -> Result<Extracted, Error> {
+    if limits.bytes == 0 || limits.entries == 0 {
+        return Err(Error::Limit);
+    }
+    std::fs::create_dir_all(parent)?;
+    let tree = tempfile::Builder::new()
+        .prefix(".packslip-stage-")
+        .tempdir_in(parent)?;
+    let format = artifact
+        .format
+        .as_deref()
+        .ok_or_else(|| Error::Format("absent".into()))?;
+    let (entries, strip) = if format.starts_with("tar") || format == "tgz" {
+        let spool_limit = limits
+            .bytes
+            .checked_add(limits.entries.saturating_mul(2048))
+            .and_then(|n| n.checked_add(1024 * 1024))
+            .ok_or(Error::Limit)?;
+        let mut spool = decoded(input, format, parent, spool_limit)?;
+        let entries = tar_entries(spool.as_file_mut(), limits)?;
+        let strip = prefix(&entries);
+        validate(&entries, limits, strip.as_deref())?;
+        spool.as_file_mut().rewind()?;
+        let mut archive = tar::Archive::new(spool.as_file_mut());
+        for entry in archive.entries()? {
+            let mut entry = entry?;
+            let raw = entry.path()?.into_owned();
+            let raw = raw
+                .to_str()
+                .ok_or_else(|| Error::Unsafe("non-UTF8 archive path".into()))?;
+            if (raw == "." || raw == "./") && entry.header().entry_type().is_dir() {
+                continue;
+            }
+            let relative = mapped(&path(raw)?, strip.as_deref());
+            if relative.as_os_str().is_empty() {
+                continue;
+            }
+            if entry.header().entry_type().is_dir() {
+                std::fs::create_dir_all(tree.path().join(&relative))?;
+            } else if entry.header().entry_type().is_file() {
+                let mut file = output(tree.path(), &relative)?;
+                let n = std::io::copy(&mut entry, &mut file)?;
+                if n != entry.size() {
+                    return Err(Error::Unsafe("truncated archive file".into()));
+                }
+                file.sync_all()?;
+                mode(
+                    &tree.path().join(relative),
+                    entry.header().mode()? & 0o111 != 0,
+                )?;
+            }
+        }
+        (entries, strip)
+    } else if format == "zip" {
+        let mut zip = zip::ZipArchive::new(std::fs::File::open(input)?)
+            .map_err(|e| Error::Unsafe(e.to_string()))?;
+        if zip.len() as u64 > limits.entries {
+            return Err(Error::Limit);
+        }
+        let mut entries = Vec::new();
+        for index in 0..zip.len() {
+            let mut file = zip
+                .by_index(index)
+                .map_err(|e| Error::Unsafe(e.to_string()))?;
+            let file_path = path(file.name())?;
+            let file_mode = file.unix_mode().unwrap_or(0o100644);
+            let file_type = file_mode & 0o170000;
+            let kind = if file.is_dir() {
+                Kind::Dir
+            } else if file_type == 0o120000 {
+                if file.size() > 16384 {
+                    return Err(Error::Limit);
+                }
+                let mut target = String::new();
+                file.by_ref().take(16385).read_to_string(&mut target)?;
+                Kind::Symlink(target)
+            } else if file_type == 0 || file_type == 0o100000 {
+                Kind::File
+            } else {
+                return Err(Error::Unsafe("special ZIP entry".into()));
+            };
+            let size = if kind == Kind::File { file.size() } else { 0 };
+            entries.push(Entry {
+                path: file_path,
+                kind,
+                size,
+                executable: file_mode & 0o111 != 0,
+            });
+        }
+        let strip = prefix(&entries);
+        validate(&entries, limits, strip.as_deref())?;
+        for (index, entry) in entries.iter().enumerate() {
+            let relative = mapped(&entry.path, strip.as_deref());
+            if relative.as_os_str().is_empty() {
+                continue;
+            }
+            match entry.kind {
+                Kind::Dir => std::fs::create_dir_all(tree.path().join(relative))?,
+                Kind::File => {
+                    let file = zip
+                        .by_index(index)
+                        .map_err(|e| Error::Unsafe(e.to_string()))?;
+                    let mut out = output(tree.path(), &relative)?;
+                    let n = std::io::copy(&mut file.take(entry.size.saturating_add(1)), &mut out)?;
+                    if n != entry.size {
+                        return Err(Error::Unsafe("ZIP size differs from directory".into()));
+                    }
+                    out.sync_all()?;
+                    mode(&tree.path().join(relative), entry.executable)?;
+                }
+                _ => {}
+            }
+        }
+        (entries, strip)
+    } else if ["raw", "gz", "xz", "zst", "bz2"].contains(&format) {
+        let name = artifact
+            .name
+            .strip_suffix(&format!(
+                ".{}",
+                crate::archive::compression_of(format).unwrap_or("")
+            ))
+            .unwrap_or(&artifact.name);
+        let name = path(name)?;
+        let mut decoded = decoded(input, format, parent, limits.bytes)?;
+        let mut out = output(tree.path(), &name)?;
+        std::io::copy(decoded.as_file_mut(), &mut out)?;
+        out.sync_all()?;
+        mode(&tree.path().join(name), true)?;
+        (vec![], None)
+    } else {
+        return Err(Error::Format(format.into()));
+    };
+    links(tree.path(), &entries, strip.as_deref(), limits)?;
+    let mut bins = Vec::new();
+    let canonical = tree.path().canonicalize()?;
+    for bin in &artifact.bin {
+        let raw = path(&bin.path)?;
+        let mapped = mapped(&raw, strip.as_deref());
+        let target = tree.path().join(&mapped).canonicalize()?;
+        if !target.starts_with(&canonical) || !target.is_file() {
+            return Err(Error::Unsafe(
+                "declared command is not a file within the stage".into(),
+            ));
+        }
+        path(&bin.name)?;
+        if bin.name.contains('/') {
+            return Err(Error::Unsafe("command name contains a path".into()));
+        }
+        mode(&target, true)?;
+        bins.push((bin.name.clone(), mapped));
+    }
+    if bins.is_empty() {
+        return Err(Error::Unsafe("artifact declares no commands".into()));
+    }
+    Ok(Extracted { tree, bins })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn artifact(name: &str, format: &str, bins: Vec<crate::Bin>) -> crate::Artifact {
+        serde_json::from_value(serde_json::json!({"name":name,"url":"https://example.invalid/tool","size":1,"format":format,"bin":bins})).unwrap()
+    }
+    fn tar_file(parent: &Path, entries: &[(&str, &[u8])]) -> PathBuf {
+        let path = parent.join("archive.tar");
+        let mut archive = tar::Builder::new(std::fs::File::create(&path).unwrap());
+        for (name, bytes) in entries {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(bytes.len() as u64);
+            header.set_mode(0o4755);
+            header.set_cksum();
+            archive.append_data(&mut header, name, *bytes).unwrap();
+        }
+        archive.finish().unwrap();
+        path
+    }
+    #[test]
+    fn full_tree_strips_one_directory_and_keeps_runtime_off_path() {
+        let parent = tempfile::tempdir().unwrap();
+        let input = tar_file(
+            parent.path(),
+            &[("pkg/bin/tool", b"tool"), ("pkg/lib/runtime", b"runtime")],
+        );
+        let extracted = extract(
+            &input,
+            &artifact("archive.tar", "tar", vec![crate::Bin::new("pkg/bin/tool")]),
+            parent.path(),
+            Limits::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            extracted.bins,
+            vec![("tool".into(), PathBuf::from("bin/tool"))]
+        );
+        assert_eq!(
+            std::fs::read(extracted.tree.path().join("lib/runtime")).unwrap(),
+            b"runtime"
+        );
+        assert!(!extracted.tree.path().join("pkg").exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(extracted.tree.path().join("bin/tool"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o7777,
+                0o755
+            );
+        }
+    }
+    #[test]
+    fn paths_limits_special_entries_and_duplicates_fail() {
+        for name in [
+            "../escape",
+            "/escape",
+            "C:/escape",
+            "x\\escape",
+            "dir/NUL",
+            "dir/tool.",
+            ".packslip-owner.json",
+        ] {
+            assert!(path(name).is_err(), "{name}");
+        }
+        let parent = tempfile::tempdir().unwrap();
+        let input = tar_file(parent.path(), &[("tool", b"too large")]);
+        assert!(
+            extract(
+                &input,
+                &artifact("archive.tar", "tar", vec![crate::Bin::new("tool")]),
+                parent.path(),
+                Limits {
+                    bytes: 2,
+                    entries: 100
+                }
+            )
+            .is_err()
+        );
+        let input = tar_file(parent.path(), &[("tool", b"a"), ("Tool", b"b")]);
+        assert!(
+            extract(
+                &input,
+                &artifact("archive.tar", "tar", vec![crate::Bin::new("tool")]),
+                parent.path(),
+                Limits::default()
+            )
+            .is_err()
+        );
+        assert!(
+            extract(
+                &input,
+                &artifact("archive.tar", "tar", vec![crate::Bin::new("tool")]),
+                parent.path(),
+                Limits {
+                    bytes: 100,
+                    entries: 1
+                }
+            )
+            .is_err()
+        );
+        let mut archive = tar::Builder::new(std::fs::File::create(&input).unwrap());
+        let mut header = tar::Header::new_gnu();
+        header.set_size(0);
+        header.set_entry_type(tar::EntryType::Fifo);
+        header.set_mode(0o644);
+        header.set_cksum();
+        archive
+            .append_data(&mut header, "fifo", std::io::empty())
+            .unwrap();
+        archive.finish().unwrap();
+        assert!(
+            extract(
+                &input,
+                &artifact("archive.tar", "tar", vec![crate::Bin::new("fifo")]),
+                parent.path(),
+                Limits::default()
+            )
+            .is_err()
+        );
+    }
+    #[test]
+    fn links_are_checked_before_and_after_stripping() {
+        let entries = vec![Entry {
+            path: PathBuf::from("pkg/link"),
+            kind: Kind::Symlink("../escape".into()),
+            size: 0,
+            executable: false,
+        }];
+        assert!(validate(&entries, Limits::default(), Some(Path::new("pkg"))).is_err());
+        let entries = vec![
+            Entry {
+                path: PathBuf::from("pkg/link"),
+                kind: Kind::Symlink("target".into()),
+                size: 0,
+                executable: false,
+            },
+            Entry {
+                path: PathBuf::from("pkg/link/child"),
+                kind: Kind::File,
+                size: 1,
+                executable: true,
+            },
+        ];
+        assert!(validate(&entries, Limits::default(), Some(Path::new("pkg"))).is_err());
+    }
+    #[test]
+    fn zip_and_compressed_bare_executables_are_supported() {
+        let parent = tempfile::tempdir().unwrap();
+        let input = parent.path().join("tool.zip");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&input).unwrap());
+        zip.start_file("pkg/tool.exe", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"tool").unwrap();
+        zip.start_file("pkg/runtime.dll", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"runtime").unwrap();
+        zip.finish().unwrap();
+        let extracted = extract(
+            &input,
+            &artifact("tool.zip", "zip", vec![crate::Bin::new("pkg/tool.exe")]),
+            parent.path(),
+            Limits::default(),
+        )
+        .unwrap();
+        assert!(extracted.tree.path().join("runtime.dll").is_file());
+        let input = parent.path().join("tool.gz");
+        let mut gzip = flate2::write::GzEncoder::new(
+            std::fs::File::create(&input).unwrap(),
+            flate2::Compression::default(),
+        );
+        gzip.write_all(b"tool").unwrap();
+        gzip.finish().unwrap();
+        let extracted = extract(
+            &input,
+            &artifact("tool.gz", "gz", vec![crate::Bin::new("tool")]),
+            parent.path(),
+            Limits::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read(extracted.tree.path().join("tool")).unwrap(),
+            b"tool"
+        );
+        assert!(
+            extract(
+                &input,
+                &artifact("tool.gz", "gz", vec![crate::Bin::new("tool")]),
+                parent.path(),
+                Limits {
+                    bytes: 2,
+                    entries: 100
+                }
+            )
+            .is_err()
+        );
+    }
+    #[test]
+    fn xz_streams_are_bounded_and_do_not_buffer_the_payload() {
+        let parent = tempfile::tempdir().unwrap();
+        let input = parent.path().join("tool.xz");
+        let mut compressed = std::fs::File::create(&input).unwrap();
+        lzma_rs::xz_compress(&mut std::io::Cursor::new(b"tool"), &mut compressed).unwrap();
+        let extracted = extract(
+            &input,
+            &artifact("tool.xz", "xz", vec![crate::Bin::new("tool")]),
+            parent.path(),
+            Limits::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read(extracted.tree.path().join("tool")).unwrap(),
+            b"tool"
+        );
+        assert!(
+            extract(
+                &input,
+                &artifact("tool.xz", "xz", vec![crate::Bin::new("tool")]),
+                parent.path(),
+                Limits {
+                    bytes: 2,
+                    entries: 100
+                }
+            )
+            .is_err()
+        );
+    }
+}
