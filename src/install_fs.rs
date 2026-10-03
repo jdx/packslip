@@ -383,7 +383,9 @@ fn windows_access(file: &File, path: &Path, ancestor: bool) -> Result<(), Error>
         let ace = acl
             .get_ace(i)
             .ok_or_else(|| conflict("invalid directory ACL"))?;
-        if ace.flags().contains(AceFlags::InheritOnly) {
+        // Existing ancestors may have broad templates (notably C:\), but a
+        // staging parent must not grant foreign writes to its future children.
+        if ancestor && ace.flags().contains(AceFlags::InheritOnly) {
             continue;
         }
         match ace.ace_type() {
@@ -477,6 +479,9 @@ fn directory(path: &Path, private: bool) -> Result<PathBuf, Error> {
         let file = match windows_directory(&current, ancestor, private && !ancestor) {
             Ok(file) => file,
             Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                if let Some(parent) = guards.last() {
+                    windows_access(parent, current.parent().unwrap(), false)?;
+                }
                 match fs::create_dir(&current) {
                     Ok(()) => {}
                     Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
@@ -593,8 +598,15 @@ fn validate(journal: &Journal) -> Result<(), Error> {
         {
             return Err(conflict("invalid recovery journal paths"));
         }
-        if fs::symlink_metadata(&op.slot).is_ok_and(|m| m.file_type().is_symlink() || !m.is_dir()) {
-            return Err(conflict("recovery staging directory was replaced"));
+        match fs::symlink_metadata(&op.slot) {
+            Ok(m) => {
+                if m.file_type().is_symlink() || !m.is_dir() {
+                    return Err(conflict("recovery staging directory was replaced"));
+                }
+                directory(&op.slot, false)?;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
         }
     }
     Ok(())
@@ -872,6 +884,17 @@ impl Session {
         F: Fn(&Path, &Path) -> Result<(), Error>,
         H: FnMut(usize) -> Result<(), Error>,
     {
+        let staging_parent = extracted
+            .tree
+            .path()
+            .parent()
+            .ok_or_else(|| conflict("extraction stage has no parent"))?;
+        if fs::canonicalize(staging_parent)? != self.tree.parent().unwrap() {
+            return Err(conflict(
+                "extraction stage is outside the locked installation parent",
+            ));
+        }
+        directory(extracted.tree.path(), false)?;
         let previous = self.receipt(project)?;
         if entry(&self.tree)?.is_some() && !force {
             let owned = matches!(entry(&self.tree)?, Some(Entry::Directory { .. }))
@@ -1175,18 +1198,16 @@ mod tests {
             )
             .unwrap();
         };
-        set(
-            &mut handle,
-            &format!("D:P(A;OICI;FA;;;{sid})(A;OICI;FA;;;WD)"),
-        );
-        let result = directory(&unsafe_dir.join("new-state"), true);
+        for grant in ["(A;OICI;FA;;;WD)", "(A;OICIIO;FA;;;WD)"] {
+            set(&mut handle, &format!("D:P(A;OICI;FA;;;{sid}){grant}"));
+            assert!(directory(&unsafe_dir.join("new-state"), true).is_err());
+            assert!(!unsafe_dir.join("new-state").exists());
+        }
         set(
             &mut handle,
             &format!("D:P(A;OICI;FA;;;{sid})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"),
         );
         drop(handle);
-        assert!(result.is_err());
-        assert!(!unsafe_dir.join("new-state").exists());
     }
 
     #[cfg(windows)]
@@ -1195,7 +1216,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let target = root.path().join("target");
         fs::create_dir(&target).unwrap();
-        let link = root.path().join("junction");
+        let link = root.path().join(".packslip-txn-junction");
         let status = std::process::Command::new("cmd.exe")
             .args(["/d", "/c", "mklink", "/J"])
             .arg(&link)
@@ -1205,6 +1226,19 @@ mod tests {
         assert!(status.success());
         assert!(directory(&link.join("state"), true).is_err());
         assert!(!target.join("state").exists());
+        let journal = Journal {
+            schema: 1,
+            committed: false,
+            active: false,
+            scopes: BTreeSet::from([root.path().to_owned()]),
+            operations: vec![Operation {
+                destination: root.path().join("command"),
+                slot: link.clone(),
+                before: None,
+                after: None,
+            }],
+        };
+        assert!(validate(&journal).is_err());
         fs::remove_dir(&link).unwrap();
     }
 
@@ -1245,6 +1279,29 @@ mod tests {
             fs::write(path, target.to_string_lossy().as_bytes())?;
             Ok(())
         }
+    }
+
+    #[test]
+    fn refuses_extraction_stages_outside_the_locked_parent() {
+        let root = tempfile::tempdir().unwrap();
+        let session = Session::open(
+            &root.path().join("state"),
+            &root.path().join("tree/tool"),
+            &root.path().join("bin"),
+        )
+        .unwrap();
+        let result = session.commit(
+            staged(root.path(), &["tool"]),
+            "example.test/tool",
+            "1",
+            true,
+            History::default(),
+            export,
+        );
+        assert!(result.is_err());
+        assert!(!session.tree.exists());
+        assert!(!session.bin.join(export_name("tool").unwrap()).exists());
+        assert!(session.receipt("example.test/tool").unwrap().is_none());
     }
 
     #[test]
