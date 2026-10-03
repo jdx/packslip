@@ -288,20 +288,27 @@ impl Client {
         Err(Error::Redirects)
     }
     /// Stream a potentially large artifact to the command cache, enforcing the
-    /// signed size while reading. The caller checks its digest before extraction.
-    pub async fn download(&self, input: &str, expected_size: u64) -> Result<PathBuf, Error> {
+    /// signed size while reading. The returned file owns a private snapshot;
+    /// replacing the URL-keyed cache cannot change its bytes. Keep it alive
+    /// through digest verification and extraction, using its path or file handle.
+    pub async fn download(
+        &self,
+        input: &str,
+        expected_size: u64,
+    ) -> Result<tempfile::NamedTempFile, Error> {
         let initial = parse_url(input)?;
         let path = self.cache_path(&initial);
         if self.offline {
-            let metadata =
-                std::fs::metadata(&path).map_err(|_| Error::Offline(display_url(&initial)))?;
-            if metadata.len() != expected_size {
+            let snapshot =
+                snapshot(&path, &self.cache).map_err(|_| Error::Offline(display_url(&initial)))?;
+            let metadata = snapshot.as_file().metadata()?;
+            if !metadata.is_file() || metadata.len() != expected_size {
                 return Err(Error::Limit {
                     limit: expected_size,
                     url: display_url(&initial),
                 });
             }
-            return Ok(path);
+            return Ok(snapshot);
         }
         let deadline = std::time::Instant::now()
             .checked_add(self.download_timeout)
@@ -367,11 +374,52 @@ impl Client {
                 });
             }
             tmp.as_file().sync_all()?;
-            tmp.persist(&path).map_err(|e| e.error)?;
-            return Ok(path);
+            // Publish another name for the completed bytes while retaining the
+            // owned temporary file. Later cache replacements only unlink that
+            // name. A copy supports filesystems without hard-link support.
+            snapshot(tmp.path(), &self.cache)?
+                .persist(&path)
+                .map_err(|e| e.error)?;
+            return Ok(tmp);
         }
         Err(Error::Redirects)
     }
+}
+
+// A private name pins the selected cache inode across atomic cache replacement.
+// Copy only on filesystems that cannot make hard links. Recheck signed size on
+// this snapshot, rather than on a pathname that another command can replace.
+fn snapshot(
+    input: &std::path::Path,
+    parent: &std::path::Path,
+) -> Result<tempfile::NamedTempFile, std::io::Error> {
+    if !std::fs::symlink_metadata(input)?.is_file() {
+        return Err(std::io::Error::other(
+            "artifact cache is not a regular file",
+        ));
+    }
+    let slot = tempfile::NamedTempFile::new_in(parent)?.into_temp_path();
+    std::fs::remove_file(&slot)?;
+    if let Err(link_error) = std::fs::hard_link(input, &slot) {
+        // Linking is an optimization, not an access/trust requirement. A read
+        // plus a private copy is equally valid, including when link permission
+        // differs from read permission. Retain both errors if neither works.
+        std::fs::copy(input, &slot).map_err(|copy_error| {
+            std::io::Error::new(
+                copy_error.kind(),
+                format!(
+                    "cache snapshot: hard link failed ({link_error}); copy failed ({copy_error})"
+                ),
+            )
+        })?;
+    }
+    if !std::fs::symlink_metadata(&slot)?.is_file() {
+        return Err(std::io::Error::other(
+            "artifact snapshot is not a regular file",
+        ));
+    }
+    let file = std::fs::File::open(&slot)?;
+    Ok(tempfile::NamedTempFile::from_parts(file, slot))
 }
 
 /// Bytes obtained through the named host's authenticated HTTPS origin (or its
@@ -884,6 +932,33 @@ mod tests {
         assert!(!error.contains("VALUE"));
     }
 
+    #[test]
+    fn owned_downloads_survive_concurrent_cache_replacement() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = Client::new(dir.path().into(), true, HttpConfig::default()).unwrap();
+        let url = parse_url("https://example.invalid/artifact").unwrap();
+        let cache = client.cache_path(&url);
+        std::fs::write(&cache, b"first").unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let first = rt.block_on(client.download(url.as_str(), 5)).unwrap();
+        let first_path = first.path().to_owned();
+        let mut next = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
+        next.write_all(b"later").unwrap();
+        snapshot(next.path(), dir.path())
+            .unwrap()
+            .persist(&cache)
+            .unwrap();
+        let second = rt.block_on(client.download(url.as_str(), 5)).unwrap();
+        assert_eq!(std::fs::read(first.path()).unwrap(), b"first");
+        assert_eq!(std::fs::read(second.path()).unwrap(), b"later");
+        assert!(rt.block_on(client.download(url.as_str(), 4)).is_err());
+        drop(first);
+        assert!(!first_path.exists());
+        assert_eq!(std::fs::read(cache).unwrap(), b"later");
+    }
     #[test]
     fn recommendation_precedes_highest_semver() {
         let releases = vec![
