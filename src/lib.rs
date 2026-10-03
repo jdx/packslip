@@ -30,6 +30,8 @@ pub mod fingerprint;
 pub mod forge;
 #[cfg(feature = "install-extract")]
 pub mod install_extract;
+#[cfg(feature = "install-fs")]
+pub mod install_fs;
 #[cfg(feature = "install-policy")]
 pub mod install_policy;
 #[cfg(feature = "linkage")]
