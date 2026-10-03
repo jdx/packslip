@@ -63,6 +63,16 @@ impl Project {
         } else {
             input.to_owned()
         };
+        // DNS host spelling is case-insensitive and URL parsing normalizes it.
+        // Preserve path case while canonicalizing the project authority.
+        let (host, suffix) = name
+            .split_once('/')
+            .map_or((name.as_str(), ""), |(host, suffix)| (host, suffix));
+        let name = if suffix.is_empty() {
+            host.to_ascii_lowercase()
+        } else {
+            format!("{}/{suffix}", host.to_ascii_lowercase())
+        };
         let parts: Vec<_> = name.split('/').collect();
         if parts[0] == "github.com" && parts.len() < 3 {
             return Err(Error::Project(input.into()));
@@ -1176,7 +1186,7 @@ mod tests {
     fn host_transport_authority_cannot_be_claimed_by_another_origin() {
         let dir = tempfile::tempdir().unwrap();
         let client = Client::new(dir.path().into(), true, HttpConfig::default()).unwrap();
-        let project = Project::parse("example.test").unwrap();
+        let project = Project::parse("Example.Test").unwrap();
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -1201,6 +1211,14 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(document.project(), "example.test");
+        assert_eq!(
+            Project::parse("Example.Test/Owner/Tool").unwrap().as_str(),
+            "example.test/Owner/Tool"
+        );
+        assert_eq!(
+            Project::parse("GitHub.Com/Jdx/Tool").unwrap().as_str(),
+            "github.com/Jdx/Tool"
+        );
         assert_eq!(document.bytes(), b"document");
     }
     #[test]
