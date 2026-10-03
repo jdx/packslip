@@ -78,6 +78,7 @@ pub fn admin_constraints(dirs: &[&Path], project: &str) -> Result<Vec<Constraint
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Record {
     pub project: String,
+    pub role: Role,
     pub scheme: Scheme,
     pub signer: String,
     pub issuer: Option<String>,
@@ -86,6 +87,14 @@ pub struct Record {
     pub attested_by: Attestor,
     pub provenance: Vec<Provenance>,
 }
+/// Release and release-list continuity have independent remembered records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Role {
+    Release,
+    List,
+}
+
 /// Preserve each artifact's linked-provenance count within its stable build
 /// scope. Formats carrying the same build remain interchangeable. URLs change with build
 /// digests and versions; deduplicating scopes would hide partial reductions.
@@ -221,6 +230,16 @@ pub fn continuity(
     constraints: &[Constraints],
     accepted_ids: &[String],
 ) -> Result<(), Error> {
+    let expected_role = match role {
+        "release" => Role::Release,
+        "list" => Role::List,
+        _ => return Err(Error::Constraint("unknown trust record role".into())),
+    };
+    if next.role != expected_role || previous.is_some_and(|record| record.role != expected_role) {
+        return Err(Error::Constraint(
+            "trust record belongs to a different document role".into(),
+        ));
+    }
     let prior_project_matches = previous.is_none_or(|before| {
         before.project == project
             || before
@@ -410,6 +429,7 @@ fn release_under(
         serde_json::from_slice(&crate::sigstore::peek_statement(bundle)?)?;
     let record = Record {
         project: project.into(),
+        role: Role::Release,
         scheme: verified.scheme,
         signer: verified.key_id.clone(),
         issuer: verified.issuer.clone(),
@@ -489,6 +509,7 @@ fn list_under(
     }
     let record = Record {
         project: project.into(),
+        role: Role::List,
         scheme: verified.scheme,
         signer: verified.key_id.clone(),
         issuer: verified.issuer.clone(),
@@ -507,6 +528,7 @@ mod tests {
     fn record(workflow: &str, pin_workflow: bool) -> Record {
         Record {
             project: "github.com/jdx/tool".into(),
+            role: Role::Release,
             scheme: Scheme::SigstoreOidc,
             signer: format!("https://github.com/jdx/tool/.github/workflows/{workflow}"),
             issuer: Some(crate::sigstore::GITHUB_ISSUER.into()),
@@ -518,6 +540,47 @@ mod tests {
                 links: 1,
             }],
         }
+    }
+    #[test]
+    fn list_and_release_records_have_independent_continuity() {
+        let release = record("release.yml@refs/tags/v1", true);
+        let mut list = release.clone();
+        list.role = Role::List;
+        list.provenance.clear();
+        continuity(
+            &list.project,
+            "list",
+            "list bundle",
+            Some(&list),
+            &list,
+            &[],
+            &[],
+        )
+        .unwrap();
+        assert!(matches!(
+            continuity(
+                &list.project,
+                "list",
+                "list bundle",
+                Some(&release),
+                &list,
+                &[],
+                &[]
+            ),
+            Err(Error::Constraint(_))
+        ));
+        assert!(matches!(
+            continuity(
+                &release.project,
+                "list",
+                "list bundle",
+                None,
+                &release,
+                &[],
+                &[]
+            ),
+            Err(Error::Constraint(_))
+        ));
     }
     #[test]
     fn refs_continue_but_workflows_require_approval() {
