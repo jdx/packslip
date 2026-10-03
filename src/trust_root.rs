@@ -73,7 +73,6 @@ fn cache_read(path: &Path) -> Result<Option<Snapshot>, Error> {
 // checked at the real command time when the cache is used, not at this step.
 fn validate_cache(cache: &Snapshot, bootstrap: &[u8]) -> Result<BTreeMap<String, u64>, Error> {
     let mut trusted = TrustedMetadataSet::from_root(bootstrap)?;
-    let first = trusted.root().version;
     loop {
         let next = trusted.root().version + 1;
         match cache.load(&format!("root_history/{next}.root.json")) {
@@ -96,11 +95,10 @@ fn validate_cache(cache: &Snapshot, bootstrap: &[u8]) -> Result<BTreeMap<String,
             .map_err(|_| {
                 sigstore_tuf::Error::Malformed("invalid cached root history name".into())
             })?;
-        if version > latest || version < first {
-            return Err(sigstore_tuf::Error::Malformed(
-                "cached root chain has a gap or predates bootstrap".into(),
-            )
-            .into());
+        if version > latest {
+            return Err(
+                sigstore_tuf::Error::Malformed("cached root chain has a gap".into()).into(),
+            );
         }
     }
     if let Some(root) = cache.load("root.json")
@@ -296,7 +294,7 @@ impl HttpRepository {
         if e.is_connect() || e.is_timeout() || e.is_body() {
             self.network_failed.store(true, Ordering::SeqCst);
         }
-        sigstore_tuf::Error::Transport("TUF HTTPS request failed".into())
+        sigstore_tuf::Error::Transport(format!("TUF HTTPS request failed: {}", e.without_url()))
     }
     fn fetch<'a>(&'a self, path: String, limit: u64) -> FetchFuture<'a> {
         Box::pin(async move {
@@ -522,5 +520,22 @@ mod tests {
         value["signed"]["version"] = json!(3);
         *bytes = serde_json::to_vec(&value).unwrap();
         assert!(run(repo, &root, &path, false, "2026-10-03T00:00:00Z").is_err());
+    }
+    #[test]
+    fn new_packaged_bootstrap_accepts_earlier_cached_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cache.json");
+        let (repo, root) = fixture(2, "2099-01-01T00:00:00Z");
+        run(repo.clone(), &root, &path, false, "2026-10-03T00:00:00Z").unwrap();
+        let next_bootstrap = repo.metadata["3.root.json"].clone();
+        run(
+            repo.clone(),
+            &next_bootstrap,
+            &path,
+            false,
+            "2026-10-03T00:00:00Z",
+        )
+        .unwrap();
+        run(repo, &next_bootstrap, &path, true, "2026-10-03T00:00:00Z").unwrap();
     }
 }
