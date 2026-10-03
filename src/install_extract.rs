@@ -64,7 +64,7 @@ fn path(input: &str) -> Result<PathBuf, Error> {
             return Err(Error::Unsafe(format!("invalid path {input:?}")));
         }
         let base = component.split('.').next().unwrap().to_ascii_uppercase();
-        if ["CON", "PRN", "AUX", "NUL"].contains(&base.as_str())
+        if ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"].contains(&base.as_str())
             || (base.len() == 4
                 && (base.starts_with("COM") || base.starts_with("LPT"))
                 && base.as_bytes()[3].is_ascii_digit())
@@ -795,6 +795,8 @@ mod tests {
             "C:/escape",
             "x\\escape",
             "dir/NUL",
+            "dir/conin$",
+            "dir/CONOUT$.txt",
             "dir/tool.",
             ".packslip-owner.json",
         ] {
