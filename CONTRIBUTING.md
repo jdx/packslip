@@ -112,6 +112,11 @@ mise exec -- usage lint packslip.usage.kdl
 git status --short   # Lists generated files to commit.
 ```
 
+[hk](https://hk.jdx.dev) runs the format and lint steps (`cargo fmt`,
+`cargo clippy -D warnings`, `shellcheck`) from `hk.pkl`, and as a pre-commit
+hook after `hk install`: `hk check --all` reports problems and `hk fix --all`
+fixes them.
+
 CI sets `RUSTFLAGS=-D warnings`, so any compiler warning fails CI. CI also
 fails if `mise run render` changes a committed file, so commit regenerated
 files with the source change that caused them.

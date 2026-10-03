@@ -1,0 +1,34 @@
+amends "package://github.com/jdx/hk/releases/download/v2.4.0/hk@2.4.0#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v2.4.0/hk@2.4.0#/Builtins.pkl"
+
+local linters = new Mapping<String, Step> {
+    ["cargo-fmt"] = Builtins.cargo_fmt
+    // CI runs clippy with -D warnings over all features and targets.
+    ["cargo-clippy"] = (Builtins.cargo_clippy) {
+        check = "cargo clippy -q --all-features --all-targets -- -D warnings"
+        fix = "cargo clippy -q --all-features --all-targets --fix --allow-dirty --allow-staged -- -D warnings"
+    }
+    // CI also checks the verify-only build that library consumers use.
+    ["cargo-clippy-no-default-features"] = (Builtins.cargo_clippy) {
+        check = "cargo clippy -q --no-default-features --all-targets -- -D warnings"
+        fix = "cargo clippy -q --no-default-features --all-targets --fix --allow-dirty --allow-staged -- -D warnings"
+    }
+    ["shellcheck"] = Builtins.shellcheck
+}
+
+fail_fast = false
+
+hooks {
+    ["pre-commit"] {
+        fix = true
+        stash = "git"
+        steps = linters
+    }
+    ["fix"] {
+        fix = true
+        steps = linters
+    }
+    ["check"] {
+        steps = linters
+    }
+}
