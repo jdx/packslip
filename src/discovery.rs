@@ -663,7 +663,11 @@ pub fn choose_with_latest(
             if !exact.bundles.is_empty() {
                 return Ok(exact.clone());
             }
-            return choices.get(&exact.version).cloned().ok_or(Error::NoRelease);
+            // A numeric version may select any installable tag for that
+            // version; a named tag without its own bundle cannot substitute.
+            if semver::Version::parse(request.strip_prefix('v').unwrap_or(request)).is_err() {
+                return Err(Error::NoRelease);
+            }
         }
         let mut matches: Vec<_> = choices
             .into_values()
@@ -969,6 +973,28 @@ mod tests {
                 .bundles,
             vec![list.predicate.releases[0].packslip.clone()]
         );
+    }
+    #[test]
+    fn assetless_named_tags_cannot_substitute_another_tags_bundle() {
+        let live = vec![
+            Release {
+                version: "2.0.0".into(),
+                tag: "v2.0.0".into(),
+                bundles: vec!["https://example.test/bundle".into()],
+                recommended: false,
+            },
+            Release {
+                version: "2.0.0".into(),
+                tag: "tool-v2.0.0".into(),
+                bundles: vec![],
+                recommended: false,
+            },
+        ];
+        assert!(matches!(
+            choose(&live, None, Some("tool-v2.0.0")),
+            Err(Error::NoRelease)
+        ));
+        assert!(choose(&live, None, Some("2.0.0")).is_ok());
     }
     #[test]
     fn signed_list_maps_assetless_forge_tags_and_withdrawals() {
