@@ -702,7 +702,13 @@ impl Session {
         }
         let tree = parent.join(name);
         let bin = directory(bin, false)?;
-        if tree == state || bin.starts_with(&tree) || state.starts_with(&tree) {
+        if tree.starts_with(&state)
+            || tree.starts_with(&bin)
+            || bin.starts_with(&tree)
+            || state.starts_with(&tree)
+            || bin.starts_with(&state)
+            || state.starts_with(&bin)
+        {
             return Err(conflict(
                 "installation, command, and state directories must not overlap",
             ));
@@ -985,10 +991,16 @@ impl Session {
         }
         if let Some(previous) = previous {
             for (path, owned) in previous.exports {
-                if path.parent().is_some_and(|p| self.scopes.contains(p))
-                    && !exports.contains_key(&path)
-                    && entry(&path)?.as_ref() == Some(&owned)
-                {
+                if exports.contains_key(&path) {
+                    continue;
+                }
+                if !path.parent().is_some_and(|p| self.scopes.contains(p)) {
+                    return Err(conflict(format!(
+                        "{} is a previous export outside the locked directories; reopen with Session::open_for",
+                        path.display()
+                    )));
+                }
+                if entry(&path)?.as_ref() == Some(&owned) {
                     prepare(path, None)?;
                 }
             }
@@ -1064,10 +1076,26 @@ impl Session {
             // proposed in-memory phase or a guess about how far atomic got.
             let persisted: Journal =
                 read(&path)?.ok_or_else(|| conflict("transaction journal disappeared"))?;
+            if persisted.committed {
+                // The commit point was published. Reporting a failed install
+                // would invite a retry even though the new receipt is live.
+                // Cleanup remains idempotent and will be retried at next open.
+                eprintln!(
+                    "Warning: installation committed, but final durability or cleanup failed: {e}"
+                );
+                if let Err(cleanup) = recover(&path, &persisted) {
+                    eprintln!("Warning: committed installation cleanup will be retried: {cleanup}");
+                }
+                return Ok(receipt);
+            }
             recover(&path, &persisted)?;
             return Err(e);
         }
-        recover(&path, &journal)?;
+        if let Err(cleanup) = recover(&path, &journal) {
+            eprintln!(
+                "Warning: installation committed; cleanup will be retried at next open: {cleanup}"
+            );
+        }
         Ok(receipt)
     }
 }
@@ -1284,6 +1312,127 @@ mod tests {
             fs::write(path, target.to_string_lossy().as_bytes())?;
             Ok(())
         }
+    }
+
+    #[test]
+    fn all_state_tree_and_command_overlaps_fail_before_journaling() {
+        for (state, tree, bin) in [
+            ("state", "state/tool", "bin"),
+            ("tree/state", "tree", "bin"),
+            ("same", "same", "bin"),
+            ("state", "bin/tool", "bin"),
+            ("state", "tree", "tree/bin"),
+            ("state", "same", "same"),
+            ("state", "tree", "state/bin"),
+            ("bin/state", "tree", "bin"),
+            ("same", "tree", "same"),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let state = root.path().join(state);
+            let error = Session::open(&state, &root.path().join(tree), &root.path().join(bin))
+                .err()
+                .expect("overlapping scopes must fail");
+            assert!(error.to_string().contains("must not overlap"), "{error}");
+            assert!(!state.join("journal.json").exists());
+        }
+    }
+
+    #[test]
+    fn post_commit_error_reports_the_live_receipt_as_success() {
+        let root = tempfile::tempdir().unwrap();
+        let state = root.path().join("state");
+        let tree = root.path().join("tree/tool");
+        let bin = root.path().join("bin");
+        let session = Session::open(&state, &tree, &bin).unwrap();
+        let receipt = session
+            .commit_inner(
+                staged(session.tree.parent().unwrap(), &["tool"]),
+                "example.test/tool",
+                "1",
+                false,
+                History::default(),
+                export,
+                |step| {
+                    if step == 9 {
+                        return Err(std::io::Error::other(
+                            "commit published, directory flush failed",
+                        )
+                        .into());
+                    }
+                    Ok(())
+                },
+            )
+            .unwrap();
+        assert_eq!(receipt.version, "1");
+        assert!(session.tree.join("tool").exists());
+        assert_eq!(
+            session
+                .receipt("example.test/tool")
+                .unwrap()
+                .unwrap()
+                .version,
+            "1"
+        );
+        drop(session);
+        let reopened = Session::open(&state, &tree, &bin).unwrap();
+        assert_eq!(
+            reopened
+                .receipt("example.test/tool")
+                .unwrap()
+                .unwrap()
+                .version,
+            "1"
+        );
+        assert!(!state.join("journal.json").exists());
+    }
+
+    #[test]
+    fn relocating_without_previous_export_locks_preserves_receipt_and_commands() {
+        let root = tempfile::tempdir().unwrap();
+        let state = root.path().join("state");
+        let tree = root.path().join("tree/tool");
+        let bin = root.path().join("old-bin");
+        {
+            let session = Session::open(&state, &tree, &bin).unwrap();
+            session
+                .commit(
+                    staged(session.tree.parent().unwrap(), &["old"]),
+                    "example.test/tool",
+                    "1",
+                    false,
+                    History::default(),
+                    export,
+                )
+                .unwrap();
+        }
+        let session = Session::open(&state, &tree, &root.path().join("new-bin")).unwrap();
+        let error = session
+            .commit(
+                staged(session.tree.parent().unwrap(), &["new"]),
+                "example.test/tool",
+                "2",
+                false,
+                History::default(),
+                export,
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("reopen with Session::open_for"));
+        let receipt = session.receipt("example.test/tool").unwrap().unwrap();
+        assert_eq!(receipt.version, "1");
+        assert!(
+            receipt.exports.contains_key(
+                &fs::canonicalize(&bin)
+                    .unwrap()
+                    .join(export_name("old").unwrap())
+            )
+        );
+        assert!(
+            entry(&bin.join(export_name("old").unwrap()))
+                .unwrap()
+                .is_some()
+        );
+        assert!(!session.tree.join("new").exists());
+        assert!(!state.join("journal.json").exists());
     }
 
     #[test]
