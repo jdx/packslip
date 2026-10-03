@@ -322,15 +322,14 @@ fn mode(path: &Path, executable: bool) -> Result<(), Error> {
     let _ = (path, executable);
     Ok(())
 }
+#[cfg(unix)]
 fn links(
     root: &Path,
     entries: &[Entry],
     strip: Option<&Path>,
     limits: Limits,
 ) -> Result<(), Error> {
-    if cfg!(windows) {
-        return materialized_links(root, entries, strip, limits);
-    }
+    let _ = limits;
     let mut hard = Vec::new();
     for entry in entries {
         let out = mapped(&entry.path, strip);
@@ -385,9 +384,20 @@ fn links(
     Ok(())
 }
 
+#[cfg(not(unix))]
+fn links(
+    root: &Path,
+    entries: &[Entry],
+    strip: Option<&Path>,
+    limits: Limits,
+) -> Result<(), Error> {
+    materialized_links(root, entries, strip, limits)
+}
+
 // Resolve the link graph to staged regular files before copying any link.
 // Memoization makes long, reverse-ordered chains linear rather than repeatedly
 // scanning the archive. No native Windows symlink privilege is required.
+#[cfg(any(not(unix), test))]
 fn materialized_links(
     root: &Path,
     entries: &[Entry],
