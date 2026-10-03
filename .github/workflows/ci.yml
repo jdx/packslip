@@ -33,6 +33,8 @@ jobs:
       # features; keep that build compiling and its tests passing.
       - run: cargo clippy --no-default-features --all-targets -- -D warnings
       - run: cargo test --no-default-features
+      - run: cargo clippy --no-default-features --features trust-root --all-targets -- -D warnings
+      - run: cargo test --no-default-features --features trust-root
       - run: cargo clippy --no-default-features --features verify-cli --all-targets -- -D warnings
       - run: cargo test --no-default-features --features verify-cli
       - run: cargo clippy --no-default-features --features verify-cli,sign --all-targets -- -D warnings

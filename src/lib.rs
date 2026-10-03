@@ -33,6 +33,8 @@ pub mod manifest;
 pub mod minisign;
 pub mod model;
 pub mod sigstore;
+#[cfg(feature = "trust-root")]
+pub mod trust_root;
 pub mod verify;
 
 pub use fingerprint::Fingerprint;
