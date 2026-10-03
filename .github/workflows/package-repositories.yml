@@ -1,0 +1,156 @@
+name: package-repositories
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+    secrets:
+      PACKSLIP_GPG_KEY:
+        required: true
+      CLOUDFLARE_ACCESS_KEY_ID:
+        required: true
+      CLOUDFLARE_SECRET_ACCESS_KEY:
+        required: true
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published stable release tag
+        type: string
+        required: true
+  schedule:
+    - cron: '15 8 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-repositories
+  cancel-in-progress: false
+
+jobs:
+  release-commit:
+    if: github.event_name != 'schedule' || vars.PACKAGE_REPOSITORIES_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.release.outputs.sha }}
+      tag: ${{ steps.release.outputs.tag }}
+      epoch: ${{ steps.release.outputs.epoch }}
+    steps:
+      - name: Resolve published source
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ -z "$RELEASE_TAG" ]; then
+            RELEASE_TAG=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          fi
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+          test "$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease --jq '[.isDraft,.isPrerelease]|any')" = false
+          type=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq .object.type)
+          sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq .object.sha)
+          if [ "$type" = tag ]; then
+            sha=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$sha" --jq .object.sha)
+          fi
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          epoch=$(date -u -d "$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$sha" --jq .committer.date)" +%s)
+          printf 'sha=%s\ntag=%s\nepoch=%s\n' "$sha" "$RELEASE_TAG" "$epoch" >> "$GITHUB_OUTPUT"
+
+  installer:
+    needs: release-commit
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            arch: x64
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.release-commit.outputs.sha }}
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: repository-installer-${{ matrix.target }}
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Build the complete installer
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+          RELEASE_TAG: ${{ needs.release-commit.outputs.tag }}
+          SOURCE_DATE_EPOCH: ${{ needs.release-commit.outputs.epoch }}
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
+          test "$RELEASE_TAG" = "v$version"
+          scripts/build-repository-installer.sh "$BUILD_TARGET" installer
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: repository-installer-${{ matrix.arch }}
+          path: installer/*
+          if-no-files-found: error
+
+  packages:
+    needs: [release-commit, installer]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.release-commit.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: repository-installer-*
+          path: installers
+      - run: sudo apt-get update && sudo apt-get install -y rpm
+      - name: Package both architectures
+        env:
+          SOURCE_DATE_EPOCH: ${{ needs.release-commit.outputs.epoch }}
+        run: |
+          for arch in x64 arm64; do
+            scripts/package-binary.sh "installers/repository-installer-$arch" "$arch" packages
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: repository-packages
+          path: packages/*
+          if-no-files-found: error
+
+  publish:
+    needs: [release-commit, packages]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: package-repositories
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.release-commit.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: repository-packages
+          path: packages
+      - run: sudo apt-get update && sudo apt-get install -y apt-utils dpkg-dev rpm createrepo-c
+      - uses: crazy-max/ghaction-import-gpg@2dc316deee8e90f13e1a351ab510b4d5bc0c82cd # v7
+        with:
+          gpg_private_key: ${{ secrets.PACKSLIP_GPG_KEY }}
+      - name: Sign repository packages and metadata
+        env:
+          PACKSLIP_GPG_FINGERPRINT: ${{ vars.PACKSLIP_GPG_FINGERPRINT }}
+        run: |
+          scripts/package-repositories.sh packages repository
+          scripts/verify-package-repositories.sh repository "$PACKSLIP_GPG_FINGERPRINT"
+      - name: Publish payloads before signed indices
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_SECRET_ACCESS_KEY }}
+        run: scripts/publish-package-repositories.sh repository

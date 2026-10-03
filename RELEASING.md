@@ -350,6 +350,22 @@ behind the "cannot be verified" dialog.
 | Secret `CLOUDFLARE_TOKEN` | An API token with account `Workers Scripts:Edit` and read on the `jdx-releases` bucket, and no zone access at all. `site.yml` deploys packslip.dev and packslip.sh with it. The custom domains are attached to the Workers by hand rather than by wrangler, so deploys never need `DNS:Edit`. |
 | Secrets `MISE_LOCK_APP_ID`, `MISE_LOCK_APP_PRIVATE_KEY` | A GitHub App that `mise-lock.yml` uses to push a regenerated `mise.lock`, and the files `mise run render` changes with it, to Renovate branches. |
 
+The installer package repositories use a dedicated `PACKSLIP_GPG_KEY` secret
+and full `PACKSLIP_GPG_FINGERPRINT` variable. COPR additionally needs
+`COPR_API_LOGIN` and `COPR_API_TOKEN`. Restrict the `ppa-publishing`,
+`copr-publishing`, and `package-repositories` environments to `main` and
+release tags. Configure and verify both native architectures before enabling
+`DISTRO_SOURCE_ENABLED=true` (PPA/COPR) or
+`PACKAGE_REPOSITORIES_ENABLED=true` (signed APT/RPM). The first eligible
+release must contain the complete installer and packaging recipes.
+
+`release.yml` calls these publishing workflows explicitly after creating the
+release: a release created with GitHub's built-in token does not start another
+release-triggered workflow. A weekly repository refresh renews APT's
+fourteen-day metadata validity. See the
+[distribution guide](https://packslip.dev/docs/distributions/) for the package
+checks, source upload procedure, key fingerprint, and rotation requirements.
+
 Communiqué's context and tone are configured in `communique.toml`.
 Its version is declared in `mise.toml` and resolved in `mise.lock`;
 update the lock deliberately with `mise lock`.

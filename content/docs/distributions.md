@@ -13,7 +13,7 @@ their authenticated releases. See [installation scopes](/docs/bootstrap/) and
 the [support evidence](/docs/compatibility/).
 
 The repository contains packaging recipes and publishing workflows for an
-Ubuntu PPA and Fedora COPR. These are interim upstream repositories, separate
+Ubuntu PPA, Fedora COPR, and signed APT/RPM repositories. These are interim upstream repositories, separate
 from admission to a distribution's official archive. Their configuration must
 be completed and their first published packages checked before recommending
 them to users. The recipes do not claim Debian main or Fedora package-policy
@@ -100,3 +100,65 @@ The PPA/COPR signature authenticates Packslip's package distribution. It does
 not approve the publishers installed by `packslip install`: their release
 signatures, remembered identities, freshness, and administrator constraints
 are still checked independently.
+
+## Signed APT and RPM repositories
+
+The direct repositories package native static Linux installers for x64 and
+ARM64. They use the distribution's package manager and CA certificates, with
+no dependency on another language package manager. Their first publication
+requires a stable release that contains the installer and these recipes;
+the commands below are for use after that publication has been verified.
+
+The dedicated Packslip package key has fingerprint
+`2A355C7DF63A62A5851534C583B336958530A3D2` and expires on October 2, 2028.
+Its [public key](/gpg-key.pub) authenticates both APT metadata and RPM packages
+and metadata. It is separate from the keys that upstream publishers use for
+their releases.
+
+For APT, download the key and check its fingerprint before installing it:
+
+```sh
+curl --fail --silent --show-error --output packslip-key.asc https://packslip.dev/gpg-key.pub
+test "$(gpg --show-keys --with-colons packslip-key.asc | awk -F: '$1 == "fpr" {print $10; exit}')" = 2A355C7DF63A62A5851534C583B336958530A3D2
+gpg --dearmor --output packslip-key.gpg packslip-key.asc
+sudo install -m 644 packslip-key.gpg /usr/share/keyrings/packslip.gpg
+printf '%s\n' 'deb [signed-by=/usr/share/keyrings/packslip.gpg] https://packslip.dev/apt stable main' | sudo tee /etc/apt/sources.list.d/packslip.list
+sudo apt-get update
+sudo apt-get install packslip
+packslip install --help
+```
+
+For RPM systems, use the same downloaded key and fingerprint check, then:
+
+```sh
+sudo rpm --import packslip-key.asc
+curl --fail --silent --show-error --output packslip.repo https://packslip.dev/rpm/packslip.repo
+sudo install -m 644 packslip.repo /etc/yum.repos.d/packslip.repo
+sudo dnf install packslip
+packslip install --help
+```
+
+The repository file enables both package and metadata signature checks.
+Repository CI uses an ephemeral key, tests APT and DNF installation on both
+native Linux architectures, and rejects altered metadata, a wrong key, and
+a modified RPM. Publication signs with the dedicated production key; PR
+validation never receives that private key.
+
+Enable `PACKAGE_REPOSITORIES_ENABLED=true` only after the first eligible
+release and deployment of the repository-serving Worker. The release workflow
+then publishes packages, and a weekly refresh keeps APT's fourteen-day signed
+metadata expiry current. `DISTRO_SOURCE_ENABLED=true` separately enables PPA
+and COPR source uploads. Publication jobs use the `package-repositories`,
+`ppa-publishing`, and `copr-publishing` environments.
+
+APT indices and package payloads have content-addressed names; publication
+retains older objects so clients using an earlier authenticated index can
+finish their downloads. The signed APT `InRelease` object is published last.
+RPM's metadata and detached signature are separate requests: a concurrent
+refresh can briefly fail signature verification and should be retried.
+Keep signature checks enabled.
+
+Before key expiry, publish the replacement key and fingerprint through the
+documentation, update the publishing secret, and give repository users time
+to install the new key. Retain the old public key through the transition;
+clients must explicitly trust a replacement key.

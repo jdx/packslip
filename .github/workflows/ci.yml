@@ -200,6 +200,87 @@ jobs:
           path: packages/*
           if-no-files-found: error
 
+  repository-installer:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            arch: x64
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            arch: arm64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: repository-installer-${{ matrix.target }}
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: scripts/build-repository-installer.sh "${{ matrix.target }}" installer
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ci-repository-installer-${{ matrix.arch }}
+          path: installer/*
+          if-no-files-found: error
+
+  repository-packages:
+    needs: repository-installer
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: ci-repository-installer-*
+          path: installers
+      - run: sudo apt-get update && sudo apt-get install -y rpm
+      - run: |
+          for arch in x64 arm64; do
+            scripts/package-binary.sh "installers/ci-repository-installer-$arch" "$arch" packages
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ci-repository-packages
+          path: packages/*
+          if-no-files-found: error
+
+  repository-install:
+    needs: repository-packages
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ci-repository-packages
+          path: packages
+      - run: scripts/check-package-repositories.sh packages repository
+
+  repository-worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - run: node --experimental-default-type=module --test cloudflare/worker.test.mjs
+
   # Both schemes end to end against the public log. Only on main, where the
   # id-token permission is available.
   signing:
@@ -432,12 +513,15 @@ jobs:
       - signing
       - test
       - zizmor
-
       - extraction
       - compatibility
       - distro-source
       - distro-build
       - msrv
+      - repository-installer
+      - repository-packages
+      - repository-install
+      - repository-worker
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions: {}
