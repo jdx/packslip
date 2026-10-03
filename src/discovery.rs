@@ -385,7 +385,8 @@ impl Client {
     }
 }
 
-// Publish another name while retaining the owned file, positioned for reading.
+/// Publish a separate cached snapshot while retaining the owned file, rewound
+/// for reading. Atomic replacement leaves existing callers' snapshots intact.
 fn publish_download(
     mut file: tempfile::NamedTempFile,
     cache: &std::path::Path,
@@ -404,7 +405,8 @@ fn publish_download(
     Ok(file)
 }
 
-// Check the opened object rather than trusting a check-then-open pathname.
+/// Open a regular cache file without following a Unix symlink or Windows
+/// reparse point, then validate the opened object instead of its pathname.
 fn cache_file(input: &std::path::Path) -> Result<std::fs::File, std::io::Error> {
     #[cfg(unix)]
     let file = {
@@ -434,9 +436,9 @@ fn cache_file(input: &std::path::Path) -> Result<std::fs::File, std::io::Error> 
     Ok(file)
 }
 
-// Copy through open file handles into an exclusively created snapshot. Keeping
-// the destination open avoids an unlink/link hole and never follows a replaced
-// destination pathname. The caller checks size on the completed snapshot.
+/// Copy at most `limit` bytes through open handles into an exclusively created
+/// snapshot. Keeping the destination open avoids a pathname replacement race.
+/// The caller checks signed size on the completed, synchronized, rewound file.
 fn snapshot(
     input: &std::path::Path,
     parent: &std::path::Path,
