@@ -198,6 +198,15 @@ fn atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), Error> {
 
 #[cfg(unix)]
 fn directory(path: &Path, private: bool) -> Result<PathBuf, Error> {
+    directory_inner(path, private, |_| {})
+}
+
+#[cfg(unix)]
+fn directory_inner(
+    path: &Path,
+    private: bool,
+    mut before_follow: impl FnMut(&Path),
+) -> Result<PathBuf, Error> {
     use rustix::fs::{AtFlags, FileType, Mode, OFlags};
     use std::os::unix::fs::MetadataExt as _;
     let absolute = if path.is_absolute() {
@@ -252,8 +261,13 @@ fn directory(path: &Path, private: bool) -> Result<PathBuf, Error> {
                 {
                     return Err(std::io::Error::from(original).into());
                 }
-                protected(&fs::canonicalize(&current)?, uid, true)?;
-                rustix::fs::openat(&parent, name, flags, Mode::empty())
+                let target = fs::canonicalize(&current)?;
+                protected(&target, uid, true)?;
+                before_follow(&target);
+                // Reopen the validated target, not the original alias. Its
+                // protected parent chain excludes replacement by foreign users.
+                current = target;
+                rustix::fs::open(&current, flags | OFlags::NOFOLLOW, Mode::empty())
                     .map_err(std::io::Error::from)?
             }
         };
@@ -273,6 +287,8 @@ fn directory(path: &Path, private: bool) -> Result<PathBuf, Error> {
     }
     let canonical = fs::canonicalize(&current)?;
     protected(&canonical, uid, false)?;
+    #[cfg(target_os = "macos")]
+    macos_acl(&canonical, uid, private)?;
     if private {
         if parent.metadata()?.uid() != uid {
             return Err(conflict("state directory belongs to another user"));
@@ -1289,6 +1305,35 @@ mod tests {
         assert!(directory(&link.join("must-not-be-created"), false).is_err());
         assert!(!unsafe_target.join("must-not-be-created").exists());
         fs::set_permissions(unsafe_target, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolved_symlink_target_is_opened_after_the_alias_changes() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let root = tempfile::tempdir().unwrap();
+        let safe = root.path().join("safe");
+        let unsafe_parent = root.path().join("foreign-writable");
+        let redirected = unsafe_parent.join("protected-leaf");
+        fs::create_dir(&safe).unwrap();
+        fs::create_dir_all(&redirected).unwrap();
+        fs::set_permissions(&unsafe_parent, fs::Permissions::from_mode(0o777)).unwrap();
+        let link = root.path().join("link");
+        std::os::unix::fs::symlink(&safe, &link).unwrap();
+        let canonical_safe = fs::canonicalize(&safe).unwrap();
+        let mut changed = false;
+        let created = directory_inner(&link.join("state"), true, |target| {
+            if target == canonical_safe {
+                fs::remove_file(&link).unwrap();
+                std::os::unix::fs::symlink(&redirected, &link).unwrap();
+                changed = true;
+            }
+        })
+        .unwrap();
+        assert!(changed);
+        assert_eq!(created, canonical_safe.join("state"));
+        assert!(!redirected.join("state").exists());
+        fs::set_permissions(unsafe_parent, fs::Permissions::from_mode(0o700)).unwrap();
     }
 
     fn staged(root: &Path, commands: &[&str]) -> Extracted {
