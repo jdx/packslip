@@ -594,7 +594,12 @@ fn variants_urls_evidence_and_monorepo_names() {
     assert_eq!(code, 0, "{err}");
     assert!(!err.contains("warning"), "{err}");
     assert!(
-        out.contains("wrote dist/packslip.oxlint.sigstore.json (3 artifact(s)"),
+        out.contains(&format!(
+            "wrote {} (3 artifact(s)",
+            std::path::Path::new("dist")
+                .join("packslip.oxlint.sigstore.json")
+                .display()
+        )),
         "{out}"
     );
     for bad in ["nojson", "=1", "mise=not json", "mise={}", "mise=1"] {
