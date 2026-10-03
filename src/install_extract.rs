@@ -84,7 +84,11 @@ fn path(input: &str) -> Result<PathBuf, Error> {
     Ok(result)
 }
 fn link_path(parent: &Path, target: &str) -> Result<PathBuf, Error> {
-    if target.starts_with('/') || target.contains(['\\', ':', '\0']) {
+    if target.len() > 4096
+        || target.split('/').count() > 128
+        || target.starts_with('/')
+        || target.contains(['\\', ':', '\0'])
+    {
         return Err(Error::Unsafe(
             "absolute or platform-specific link target".into(),
         ));
@@ -248,6 +252,27 @@ fn decoded(
 }
 fn tar_entries(file: &mut std::fs::File, limits: Limits) -> Result<Vec<Entry>, Error> {
     file.rewind()?;
+    {
+        // The tar reader normally allocates GNU/PAX extension bodies before
+        // yielding the entry. Inspect raw headers first to cap those allocations.
+        let mut archive = tar::Archive::new(&mut *file);
+        for (index, entry) in archive.entries()?.raw(true).enumerate() {
+            if index as u64 >= limits.entries {
+                return Err(Error::Limit);
+            }
+            let entry = entry?;
+            let kind = entry.header().entry_type();
+            if (kind.is_gnu_longname()
+                || kind.is_gnu_longlink()
+                || kind.is_pax_local_extensions()
+                || kind.is_pax_global_extensions())
+                && entry.size() > 16 * 1024
+            {
+                return Err(Error::Limit);
+            }
+        }
+    }
+    file.rewind()?;
     let mut archive = tar::Archive::new(file);
     let mut result = Vec::new();
     let mut size = 0u64;
@@ -285,7 +310,11 @@ fn tar_entries(file: &mut std::fs::File, limits: Limits) -> Result<Vec<Entry>, E
         } else {
             return Err(Error::Unsafe("special archive entry".into()));
         };
-        let bytes = if kind == Kind::File { entry.size() } else { 0 };
+        let bytes = match &kind {
+            Kind::File => entry.size(),
+            Kind::Symlink(target) | Kind::Hardlink(target) => target.len() as u64,
+            _ => 0,
+        };
         size = size.checked_add(bytes).ok_or(Error::Limit)?;
         if size > limits.bytes || result.len() as u64 >= limits.entries {
             return Err(Error::Limit);
@@ -872,6 +901,72 @@ mod tests {
                 Limits::default()
             )
             .is_err()
+        );
+    }
+    #[test]
+    fn tar_extension_allocations_and_link_targets_are_bounded() {
+        let parent = tempfile::tempdir().unwrap();
+        for kind in [
+            tar::EntryType::GNULongLink,
+            tar::EntryType::GNULongName,
+            tar::EntryType::XHeader,
+        ] {
+            let input = parent.path().join("extension.tar");
+            let mut builder = tar::Builder::new(std::fs::File::create(&input).unwrap());
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(kind);
+            header.set_size(16 * 1024 + 1);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder
+                .append_data(
+                    &mut header,
+                    "metadata",
+                    vec![b'a'; 16 * 1024 + 1].as_slice(),
+                )
+                .unwrap();
+            builder.finish().unwrap();
+            let mut file = std::fs::File::open(&input).unwrap();
+            assert!(matches!(
+                tar_entries(&mut file, Limits::default()),
+                Err(Error::Limit)
+            ));
+        }
+        for target in ["a/".repeat(129), "a".repeat(4097)] {
+            assert!(link_path(Path::new(""), &target).is_err());
+        }
+        let input = parent.path().join("link.tar");
+        let mut builder = tar::Builder::new(std::fs::File::create(&input).unwrap());
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::Symlink);
+        header.set_size(0);
+        header.set_mode(0o777);
+        builder
+            .append_link(&mut header, "optional", "runtime")
+            .unwrap();
+        builder.finish().unwrap();
+        let mut file = std::fs::File::open(&input).unwrap();
+        assert!(matches!(
+            tar_entries(
+                &mut file,
+                Limits {
+                    bytes: 6,
+                    entries: 100
+                }
+            ),
+            Err(Error::Limit)
+        ));
+        assert_eq!(
+            tar_entries(
+                &mut file,
+                Limits {
+                    bytes: 7,
+                    entries: 100
+                }
+            )
+            .unwrap()[0]
+                .size,
+            7
         );
     }
     #[test]
