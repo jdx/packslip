@@ -1368,6 +1368,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "lzma-rust2"
+version = "0.20.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e2a88783b84d2d67ef2791778a9e76bfb68b8017aaf6c9d7d5f2626a478b16c"
+dependencies = [
+ "sha2 0.11.0",
+]
+
+[[package]]
 name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1462,6 +1471,7 @@ dependencies = [
  "hex",
  "jiff",
  "lzma-rs",
+ "lzma-rust2",
  "reqwest",
  "ruzstd",
  "schemars",
