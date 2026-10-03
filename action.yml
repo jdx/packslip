@@ -347,7 +347,10 @@ runs:
         while IFS= read -r line; do
           [ -n "$line" ] && args+=(--extension "$line")
         done <<< "$IN_EXTENSIONS"
-        mapfile -t files < "${RUNNER_TEMP}/packslip-files"
+        files=()
+        while IFS= read -r file || [ -n "$file" ]; do
+          files+=("$file")
+        done < "${RUNNER_TEMP}/packslip-files"
         if [ "$IN_ATTEST" = true ] || [ "$IN_ATTEST" = link ]; then
           # GitHub serves each artifact's provenance at the attestations API
           # by subject digest, whoever attested it, so the link is the same
@@ -362,15 +365,17 @@ runs:
           args+=(--format "$spec")
         done
         # Artifacts sharing a platform carry the variant given for them.
-        declare -A variants=()
-        for spec in $IN_VARIANTS; do
-          variants["${spec%%=*}"]="${spec#*=}"
-        done
         specs=()
         for f in "${files[@]}"; do
           name="${f##*/}"
-          if [ -n "${variants[$name]:-}" ]; then
-            specs+=("$f@${variants[$name]}")
+          variant=''
+          for spec in $IN_VARIANTS; do
+            if [ "${spec%%=*}" = "$name" ]; then
+              variant="${spec#*=}"
+            fi
+          done
+          if [ -n "$variant" ]; then
+            specs+=("$f@$variant")
           else
             specs+=("$f")
           fi

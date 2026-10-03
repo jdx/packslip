@@ -222,7 +222,10 @@ runs:
           --out "$IN_OUT"
         )
         [ -n "$IN_LATEST" ] && args+=(--latest "$IN_LATEST")
-        mapfile -t releases < "${RUNNER_TEMP}/packslip-releases"
+        releases=()
+        while IFS= read -r release || [ -n "$release" ]; do
+          releases+=("$release")
+        done < "${RUNNER_TEMP}/packslip-releases"
         for release in "${releases[@]}"; do
           args+=(--release "$release")
         done
@@ -250,5 +253,8 @@ runs:
         LIST: ${{ steps.build.outputs.list }}
       run: |
         set -euo pipefail
-        mapfile -t pin < "${RUNNER_TEMP}/packslip-pin"
+        pin=()
+        while IFS= read -r line || [ -n "$line" ]; do
+          pin+=("$line")
+        done < "${RUNNER_TEMP}/packslip-pin"
         packslip verify "$LIST" "${pin[@]}"
