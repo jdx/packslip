@@ -194,6 +194,13 @@ fn directory(path: &Path, private: bool) -> Result<PathBuf, Error> {
             return Err(conflict("installation paths must not contain '..'"));
         }
         current.push(component.as_os_str());
+        // A drive/UNC prefix by itself is not an absolute filesystem object.
+        // In particular, verbatim "\\\\?\\C:" cannot be queried until its root
+        // separator has been appended by the next component.
+        #[cfg(windows)]
+        if matches!(component, std::path::Component::Prefix(_)) {
+            continue;
+        }
         let metadata = match fs::symlink_metadata(&current) {
             Ok(m) => m,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
