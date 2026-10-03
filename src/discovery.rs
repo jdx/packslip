@@ -299,13 +299,14 @@ impl Client {
         let initial = parse_url(input)?;
         let path = self.cache_path(&initial);
         if self.offline {
-            let snapshot = snapshot(&path, &self.cache).map_err(|error| {
-                if error.kind() == std::io::ErrorKind::NotFound {
-                    Error::Offline(display_url(&initial))
-                } else {
-                    Error::Io(error)
-                }
-            })?;
+            let snapshot =
+                snapshot(&path, &self.cache, expected_size.saturating_add(1)).map_err(|error| {
+                    if error.kind() == std::io::ErrorKind::NotFound {
+                        Error::Offline(display_url(&initial))
+                    } else {
+                        Error::Io(error)
+                    }
+                })?;
             let metadata = snapshot.as_file().metadata()?;
             if !metadata.is_file() || metadata.len() != expected_size {
                 return Err(Error::Limit {
@@ -395,6 +396,7 @@ fn publish_download(
         cache
             .parent()
             .ok_or_else(|| std::io::Error::other("cache has no parent"))?,
+        file.as_file().metadata()?.len().saturating_add(1),
     )?
     .persist(cache)
     .map_err(|error| error.error)?;
@@ -402,40 +404,30 @@ fn publish_download(
     Ok(file)
 }
 
-// A private name pins the selected cache inode across atomic cache replacement.
-// Copy only on filesystems that cannot make hard links. Recheck signed size on
-// this snapshot, rather than on a pathname that another command can replace.
+// Copy through open file handles into an exclusively created snapshot. Keeping
+// the destination open avoids an unlink/link hole and never follows a replaced
+// destination pathname. The caller checks size on the completed snapshot.
 fn snapshot(
     input: &std::path::Path,
     parent: &std::path::Path,
+    limit: u64,
 ) -> Result<tempfile::NamedTempFile, std::io::Error> {
     if !std::fs::symlink_metadata(input)?.is_file() {
         return Err(std::io::Error::other(
             "artifact cache is not a regular file",
         ));
     }
-    let slot = tempfile::NamedTempFile::new_in(parent)?.into_temp_path();
-    std::fs::remove_file(&slot)?;
-    if let Err(link_error) = std::fs::hard_link(input, &slot) {
-        // Linking is an optimization, not an access/trust requirement. A read
-        // plus a private copy is equally valid, including when link permission
-        // differs from read permission. Retain both errors if neither works.
-        std::fs::copy(input, &slot).map_err(|copy_error| {
-            std::io::Error::new(
-                copy_error.kind(),
-                format!(
-                    "cache snapshot: hard link failed ({link_error}); copy failed ({copy_error})"
-                ),
-            )
-        })?;
-    }
-    if !std::fs::symlink_metadata(&slot)?.is_file() {
+    let source = std::fs::File::open(input)?;
+    if !source.metadata()?.is_file() {
         return Err(std::io::Error::other(
-            "artifact snapshot is not a regular file",
+            "artifact cache is not a regular file",
         ));
     }
-    let file = std::fs::File::open(&slot)?;
-    Ok(tempfile::NamedTempFile::from_parts(file, slot))
+    let mut file = tempfile::NamedTempFile::new_in(parent)?;
+    std::io::copy(&mut source.take(limit), file.as_file_mut())?;
+    file.as_file().sync_all()?;
+    file.as_file_mut().rewind()?;
+    Ok(file)
 }
 
 /// Bytes obtained through the named host's authenticated HTTPS origin (or its
@@ -961,6 +953,8 @@ mod tests {
             .unwrap();
         let first = rt.block_on(client.download(url.as_str(), 5)).unwrap();
         let first_path = first.path().to_owned();
+        std::fs::write(&cache, b"alter").unwrap();
+        assert_eq!(std::fs::read(first.path()).unwrap(), b"first");
         let mut next = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
         next.write_all(b"later").unwrap();
         let mut next = publish_download(next, &cache).unwrap();
