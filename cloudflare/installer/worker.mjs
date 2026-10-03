@@ -39,7 +39,7 @@ https://packslip.dev/docs/getting-started/
 `;
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     if (request.method !== "GET" && request.method !== "HEAD") {
       return new Response(null, { status: 405, headers: { allow: "GET, HEAD" } });
     }
@@ -54,18 +54,24 @@ export default {
     if (!route) {
       return text(404, USAGE);
     }
-    const tag = route.tag ?? (await latestTag(env));
-    if (!tag) {
-      return text(503, "packslip.sh: packslip.dev's release list names no release to install\n");
-    }
-    const object = await env.RELEASES.get(`${env.TOOL}/${tag}/${route.file}`);
-    if (!object) {
-      return text(
-        404,
-        `packslip.sh: packslip ${tag} published no ${route.file}; see https://packslip.dev/docs/getting-started/#install-packslip\n`,
-      );
+
+    // Each data center keeps a script it served for as long as its
+    // cache-control allows: a release's own copy for good, the latest for
+    // five minutes. A hit reads nothing from R2, so installs in a row cost
+    // only this Worker's own invocations. Failures are not kept.
+    const cache = caches.default;
+    const key = new Request(url.toString());
+    let response = await cache.match(key);
+    if (!response) {
+      response = await serve(route, env);
+      if (response.status !== 200) {
+        return response;
+      }
+      ctx.waitUntil(cache.put(key, response.clone()));
     }
 
+    // The release a script came from, which content-location names.
+    const tag = response.headers.get("content-location").split("/")[1];
     env.DOWNLOADS.writeDataPoint({
       indexes: [env.TOOL],
       blobs: [
@@ -78,17 +84,33 @@ export default {
       ],
       doubles: [1],
     });
-    const headers = new Headers({
-      "content-type": "text/plain; charset=utf-8",
-      "x-content-type-options": "nosniff",
-      "cache-control": route.tag ? IMMUTABLE : LATEST,
-      etag: object.httpEtag,
-      // Where this release's copy lives for good, for anyone pinning it.
-      "content-location": route.file === "install.sh" ? `/${tag}` : `/${tag}/${route.file}`,
-    });
-    return new Response(request.method === "HEAD" ? null : object.body, { headers });
+    return request.method === "HEAD" ? new Response(null, response) : response;
   },
 };
+
+// The script a route names, read from R2.
+async function serve(route, env) {
+  const tag = route.tag ?? (await latestTag(env));
+  if (!tag) {
+    return text(503, "packslip.sh: packslip.dev's release list names no release to install\n");
+  }
+  const object = await env.RELEASES.get(`${env.TOOL}/${tag}/${route.file}`);
+  if (!object) {
+    return text(
+      404,
+      `packslip.sh: packslip ${tag} published no ${route.file}; see https://packslip.dev/docs/getting-started/#install-packslip\n`,
+    );
+  }
+  const headers = new Headers({
+    "content-type": "text/plain; charset=utf-8",
+    "x-content-type-options": "nosniff",
+    "cache-control": route.tag ? IMMUTABLE : LATEST,
+    etag: object.httpEtag,
+    // Where this release's copy lives for good, for anyone pinning it.
+    "content-location": route.file === "install.sh" ? `/${tag}` : `/${tag}/${route.file}`,
+  });
+  return new Response(object.body, { headers });
+}
 
 function parse(path) {
   if (path === "/" || path === "/install.sh") return { file: "install.sh" };

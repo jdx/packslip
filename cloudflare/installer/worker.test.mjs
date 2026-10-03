@@ -23,15 +23,35 @@ function list(predicate) {
 
 const release = (version, extra = {}) => ({ version, tag: `v${version}`, ...extra });
 
-// An environment whose bucket holds `files`, recording analytics points.
+// The Workers cache, kept in memory: what a data center keeps by URL.
+function memoryCache() {
+  const stored = new Map();
+  return {
+    stored,
+    async match(request) {
+      const hit = stored.get(request.url);
+      return hit ? hit.clone() : undefined;
+    },
+    async put(request, response) {
+      stored.set(request.url, response.clone());
+    },
+  };
+}
+
+// An environment whose bucket holds `files`, recording analytics points and
+// R2 reads, with an empty cache of its own.
 function env(files) {
   const points = [];
+  const reads = [];
+  globalThis.caches = { default: memoryCache() };
   return {
     TOOL: "packslip",
     points,
+    reads,
     DOWNLOADS: { writeDataPoint: (point) => points.push(point) },
     RELEASES: {
       async get(key) {
+        reads.push(key);
         if (!(key in files)) return null;
         const body = files[key];
         return {
@@ -63,8 +83,19 @@ const releases = [
   release("2.0.0-rc.1"),
 ];
 
+// Fetch through the Worker and wait for what it left running, as the cache
+// write, so the next request sees it.
 async function get(path, environment, init = {}) {
-  return worker.fetch(new Request(`https://packslip.sh${path}`, init), environment);
+  return fetchUrl(`https://packslip.sh${path}`, environment, init);
+}
+
+async function fetchUrl(url, environment, init = {}) {
+  const pending = [];
+  const response = await worker.fetch(new Request(url, init), environment, {
+    waitUntil: (promise) => pending.push(promise),
+  });
+  await Promise.all(pending);
+  return response;
 }
 
 test("/ serves the highest release that is neither yanked nor a prerelease", async () => {
@@ -168,10 +199,48 @@ test("HEAD has the headers and no body", async () => {
 });
 
 test("plain HTTP is redirected to HTTPS, never answered with a script", async () => {
-  const response = await worker.fetch(new Request("http://packslip.sh/install.ps1"), bucket({ releases }));
+  const response = await fetchUrl("http://packslip.sh/install.ps1", bucket({ releases }));
   assert.equal(response.status, 301);
   assert.equal(response.headers.get("location"), "https://packslip.sh/install.ps1");
   assert.doesNotMatch(await response.text(), /1\.5\.0/);
+});
+
+test("a repeated request is served from the cache without reading R2", async () => {
+  const environment = bucket({ releases });
+  const first = await get("/", environment);
+  assert.equal(await first.text(), scripts["packslip/v1.5.0/install.sh"]);
+  const reads = environment.reads.length;
+  assert.equal(reads, 2, "the list and the script");
+  const second = await get("/", environment);
+  assert.equal(await second.text(), scripts["packslip/v1.5.0/install.sh"]);
+  assert.equal(second.headers.get("content-location"), "/v1.5.0");
+  const head = await get("/", environment, { method: "HEAD" });
+  assert.equal(head.status, 200);
+  assert.equal(await head.text(), "");
+  assert.equal(environment.reads.length, reads, "no R2 read after the first");
+});
+
+test("a cache hit is still counted, under the release it came from", async () => {
+  const environment = bucket({ releases });
+  await get("/install.ps1", environment);
+  await get("/install.ps1", environment);
+  assert.equal(environment.points.length, 2);
+  assert.deepEqual(
+    environment.points.map((p) => p.blobs.slice(1, 3)),
+    [
+      ["v1.5.0", "install.ps1"],
+      ["v1.5.0", "install.ps1"],
+    ],
+  );
+});
+
+test("failures are not cached", async () => {
+  const environment = bucket({ releases });
+  for (const path of ["/v1.3.0", "/v1.3.0", "/nope"]) {
+    await get(path, environment);
+  }
+  assert.equal(globalThis.caches.default.stored.size, 0);
+  assert.equal(environment.reads.length, 2, "each missing script is looked up again");
 });
 
 test("other methods are refused", async () => {

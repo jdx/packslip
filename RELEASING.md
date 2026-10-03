@@ -102,7 +102,10 @@ from the release files in R2. The Worker is `packslip-sh`, configured in
 
 The latest release is the one the signed release list recommends with
 `latest`, or else its highest release that is neither withdrawn nor a
-prerelease, so a withdrawal reaches packslip.sh with the next list. A
+prerelease, so a withdrawal reaches packslip.sh with the next list. Each
+Cloudflare data center caches a script it served, a release's own copy for
+good and the latest for five minutes, so repeated installs read nothing
+from R2; every request still runs the Worker once. A
 release from before the install scripts existed has none, and its paths
 answer 404. Every client gets the same bytes from a URL: the Worker reads
 the user agent only to count downloads, so a script a browser shows is
