@@ -120,7 +120,10 @@ files with the source change that caused them.
 runs it alone. The `signing` job runs only on pushes to `main`, where a CI
 identity is available. It signs both keylessly and with a key, records
 both signatures in the public Rekor log, and runs the releases action.
-zizmor audits the workflows on every pull request.
+zizmor audits the workflows on every pull request, as a job in `ci.yml`.
+The `final` job in `ci.yml` gates on `test`, `signing`, and `zizmor`; make it
+the required status check. The pull request title check stays in its own
+workflow, `conventional-commits.yml`, because it runs on `pull_request_target`.
 
 For documentation changes, also inspect the affected pages in a browser.
 `mise run docs:check` fails when a local link, anchor, or asset is
