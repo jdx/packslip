@@ -117,11 +117,12 @@ RUN sh /tmp/install-packslip.sh
 ```
 
 The domain was set up once, by hand: the `packslip.sh` zone is in the
-same Cloudflare account as `jdx-releases`, with Always Use HTTPS on, so
-plain HTTP is redirected and never answered with a script, and
+same Cloudflare account as `jdx-releases`, with Always Use HTTPS on, and
 `packslip.sh` is attached to the `packslip-sh` Worker as a custom
 domain. Like packslip.dev's, the attachment outlives deploys, so the
-deploy token needs no zone access.
+deploy token needs no zone access. The Worker redirects plain HTTP to
+HTTPS itself as well, so a script is never served over HTTP even if that
+setting is turned off.
 
 ## Action versions and tags
 

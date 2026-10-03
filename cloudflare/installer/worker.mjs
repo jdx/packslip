@@ -43,7 +43,14 @@ export default {
     if (request.method !== "GET" && request.method !== "HEAD") {
       return new Response(null, { status: 405, headers: { allow: "GET, HEAD" } });
     }
-    const route = parse(new URL(request.url).pathname);
+    const url = new URL(request.url);
+    // Never a script over plain HTTP, even if the zone's Always Use HTTPS
+    // is ever turned off: send the client to the same path over HTTPS.
+    if (url.protocol !== "https:") {
+      url.protocol = "https:";
+      return Response.redirect(url.toString(), 301);
+    }
+    const route = parse(url.pathname);
     if (!route) {
       return text(404, USAGE);
     }

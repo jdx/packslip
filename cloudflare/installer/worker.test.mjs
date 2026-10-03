@@ -167,6 +167,13 @@ test("HEAD has the headers and no body", async () => {
   assert.equal(await response.text(), "");
 });
 
+test("plain HTTP is redirected to HTTPS, never answered with a script", async () => {
+  const response = await worker.fetch(new Request("http://packslip.sh/install.ps1"), bucket({ releases }));
+  assert.equal(response.status, 301);
+  assert.equal(response.headers.get("location"), "https://packslip.sh/install.ps1");
+  assert.doesNotMatch(await response.text(), /1\.5\.0/);
+});
+
 test("other methods are refused", async () => {
   const response = await get("/", bucket({ releases }), { method: "POST", body: "x" });
   assert.equal(response.status, 405);
