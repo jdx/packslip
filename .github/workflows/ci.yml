@@ -33,6 +33,8 @@ jobs:
       # features; keep that build compiling and its tests passing.
       - run: cargo clippy --no-default-features --all-targets -- -D warnings
       - run: cargo test --no-default-features
+      - run: cargo clippy --no-default-features --features verify-cli --all-targets -- -D warnings
+      - run: cargo test --no-default-features --features verify-cli
       - run: mise run lint
       - run: hk check --all
       - run: mise run render

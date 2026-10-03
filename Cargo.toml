@@ -20,7 +20,12 @@ all-features = true
 [[bin]]
 name = "packslip"
 path = "src/main.rs"
-required-features = ["cli"]
+required-features = ["verify-cli"]
+
+[[test]]
+name = "verifier_cli"
+path = "tests/verifier_cli.rs"
+required-features = ["verify-cli"]
 
 [[test]]
 name = "cli"
@@ -34,8 +39,10 @@ required-features = ["cli"]
 # existing dependents are unaffected.
 [features]
 default = ["cli"]
-# The `packslip` binary: argument parsing and error reporting.
-cli = ["create", "manifest", "schema", "dep:color-eyre", "dep:eyre", "dep:usage_rs"]
+# The complete CLI keeps its existing publishing and schema commands.
+cli = ["verify-cli", "create", "manifest", "schema"]
+# A verifier binary suitable for distro packaging, without publishing/signing.
+verify-cli = ["dep:color-eyre", "dep:eyre", "dep:usage_rs"]
 # `packslip create`: build a statement from a set of built artifacts.
 create = ["archive", "linkage", "sign"]
 # Read a release TOML manifest for `packslip create --manifest`.
