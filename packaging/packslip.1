@@ -1,0 +1,53 @@
+.TH PACKSLIP 1 "October 2026" "packslip" "User Commands"
+.SH NAME
+packslip \- install and verify authenticated upstream releases
+.SH SYNOPSIS
+.B packslip install
+.I PROJECT
+.RI [ OPTIONS ]
+.br
+.B packslip verify
+.I BUNDLE
+.RI [ OPTIONS ]
+.SH DESCRIPTION
+Packslip installs a complete authenticated upstream release tree and exports
+only the commands declared by its signed metadata. It does not run downloaded
+code, install dependencies, edit shell setup, or activate environments.
+This distribution build includes installation and verification commands.
+Run a command with
+.B --help
+for its complete option reference.
+.SH INSTALLATION
+.B packslip install owner/repo
+uses GitHub discovery. A host-named project uses its signed release list.
+.B --version
+selects a version, prefix, or tag.
+.B --system
+selects shared installation; Unix root uses it by default.
+.B --user
+selects the current user and requires non-root execution on Unix.
+.B --install-dir
+and
+.B --bin-dir
+override destinations without moving trust state.
+.SH TRUST AND RECOVERY
+.B --pin
+requires a separately obtained repository fingerprint.
+.B --pubkey
+requires a public key for key-signed releases.
+Administrator pins, caller constraints, and remembered continuity all apply.
+.B --force
+replaces conflicting command entries and unmarked directories. It never
+bypasses trust, freshness, protected paths, or archive safety.
+Packslip stages changes and recovers interrupted replacements before the next
+install. Once committed, cleanup failures are reported as warnings and retried.
+.B --offline
+requires cached authenticated metadata and artifacts.
+.SH FILES
+.I /etc/packslip/pins.d/*.toml
+contains administrator trust constraints.
+User state is under XDG_STATE_HOME/packslip, defaulting to ~/.local/state/packslip.
+Root state is /var/lib/packslip and ignores HOME and user configuration.
+.SH SEE ALSO
+https://packslip.dev/docs/bootstrap/
+https://packslip.dev/docs/compatibility/

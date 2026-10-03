@@ -1,0 +1,18 @@
+Source: packslip
+Section: utils
+Priority: optional
+Maintainer: Jeff Dickey <jdx@jdx.dev>
+Build-Depends: debhelper-compat (= 13), rustc (>= 1.95), cargo, build-essential, cmake, pkg-config
+Standards-Version: 4.7.2
+Homepage: https://packslip.dev
+Vcs-Git: https://github.com/jdx/packslip.git
+Vcs-Browser: https://github.com/jdx/packslip
+Rules-Requires-Root: no
+
+Package: packslip
+Architecture: amd64 arm64
+Depends: ${shlibs:Depends}, ${misc:Depends}, ca-certificates
+Description: Install authenticated upstream releases
+ Packslip verifies signed release metadata and installs a complete upstream
+ release tree, exporting only its declared commands. It preserves trust and
+ ownership state without running downloaded code or editing shell setup.

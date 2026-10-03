@@ -1,0 +1,15 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: packslip
+Source: https://github.com/jdx/packslip
+
+Files: *
+Copyright: 2026 Jeff Dickey and contributors
+License: MIT
+ The complete MIT license is included in LICENSE.
+
+Files: vendor/*
+Copyright: The respective crate authors
+License: See each vendored crate's Cargo.toml and license files
+ Dependencies are bundled for offline third-party archive builds. This source
+ package is not a Debian-main submission; distro-native dependency packaging
+ remains a separate process.

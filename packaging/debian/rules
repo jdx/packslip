@@ -1,0 +1,28 @@
+#!/usr/bin/make -f
+export CARGO_HOME = $(CURDIR)/.cargo-home
+export CARGO_TARGET_DIR = $(CURDIR)/target
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	cargo build --release --frozen --no-default-features --features install-cli --bin packslip
+
+override_dh_auto_test:
+	cargo test --frozen --no-default-features --features install-cli
+
+override_dh_auto_install:
+	install -Dm755 target/release/packslip debian/packslip/usr/bin/packslip
+	install -d debian/packslip/etc/packslip/pins.d
+	install -Dm644 packaging/packslip.1 debian/packslip/usr/share/man/man1/packslip.1
+	install -Dm644 content/docs/bootstrap.md debian/packslip/usr/share/doc/packslip/bootstrap.md
+	install -Dm644 LICENSE debian/packslip/usr/share/doc/packslip/copyright-upstream
+	install -d debian/packslip/usr/share/bash-completion/completions
+	target/release/packslip completion bash > debian/packslip/usr/share/bash-completion/completions/packslip
+	install -d debian/packslip/usr/share/zsh/site-functions
+	target/release/packslip completion zsh > debian/packslip/usr/share/zsh/site-functions/_packslip
+	install -d debian/packslip/usr/share/fish/vendor_completions.d
+	target/release/packslip completion fish > debian/packslip/usr/share/fish/vendor_completions.d/packslip.fish
+
+override_dh_auto_clean:
+	rm -rf target .cargo-home
