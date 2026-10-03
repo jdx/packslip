@@ -43,6 +43,8 @@ default = ["cli"]
 cli = ["verify-cli", "create", "manifest", "schema"]
 # A verifier binary suitable for distro packaging, without publishing/signing.
 verify-cli = ["dep:color-eyre", "dep:eyre", "dep:usage_rs"]
+# Authenticated, fresh trust-root refresh and offline cache replay.
+trust-root = ["dep:sigstore-tuf", "dep:reqwest", "dep:tempfile", "sigstore-trust-root/tuf"]
 # `packslip create`: build a statement from a set of built artifacts.
 create = ["archive", "linkage", "sign"]
 # Read a release TOML manifest for `packslip create --manifest`.
@@ -58,6 +60,9 @@ sign = ["dep:getrandom", "dep:sigstore-oidc", "dep:sigstore-sign"]
 schema = ["dep:schemars"]
 
 [dependencies]
+reqwest = { version = "0.13", default-features = false, features = ["rustls"], optional = true }
+sigstore-tuf = { version = "0.11", default-features = false, optional = true }
+tempfile = { version = "3", optional = true }
 base64 = "0.23"
 blake2 = "0.11"
 bzip2 = { version = "0.6", optional = true }
