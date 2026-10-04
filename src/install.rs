@@ -614,6 +614,18 @@ fn candidate_matches(bundle: &str, project: &str, repository_id: Option<&str>) -
 
 #[cfg(test)]
 mod tests {
+    /// Create a fixture directory and its parents as `rwxr-xr-x`, so the
+    /// tests pass under any umask, as the installer's own directories do.
+    fn test_dirs(path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt as _;
+            builder.mode(0o755);
+        }
+        builder.create(path)
+    }
     use super::*;
     use serde_json::json;
 
@@ -769,10 +781,12 @@ mod tests {
     }
     impl Fixture {
         fn new() -> Self {
-            let root = tempfile::tempdir().unwrap();
+            let root = crate::install_extract::private_builder(".tmp")
+                .tempdir()
+                .unwrap();
             let tree = root.path().join("publisher/dist");
-            std::fs::create_dir_all(tree.join("bin")).unwrap();
-            std::fs::create_dir_all(tree.join("runtime")).unwrap();
+            test_dirs(tree.join("bin")).unwrap();
+            test_dirs(tree.join("runtime")).unwrap();
             std::fs::write(tree.join("runtime/data"), "complete runtime").unwrap();
             let name = if cfg!(windows) { "tool.exe" } else { "tool" };
             let source = root.path().join("probe.rs");
@@ -823,7 +837,7 @@ mod tests {
                 statement,
                 bundle_url: "https://example.test/releases/packslip.sigstore.json".into(),
             };
-            std::fs::create_dir_all(fixture.scope().state.join("downloads")).unwrap();
+            test_dirs(fixture.scope().state.join("downloads")).unwrap();
             fixture.cache(
                 "https://example.test/tool.tar",
                 false,
@@ -1044,7 +1058,7 @@ mod tests {
         let f = Fixture::new();
         let report = f.run(f.request(true)).unwrap();
         let pins = f.scope().admin.join("pins.d");
-        std::fs::create_dir_all(&pins).unwrap();
+        test_dirs(&pins).unwrap();
         let other = crate::minisign::SecretKey::from_seed([99; 32])
             .public_key()
             .to_file();
@@ -1128,7 +1142,7 @@ mod tests {
                 .to_string()
                 .contains("public-key file is missing")
         );
-        std::fs::create_dir(&path).unwrap();
+        test_dirs(&path).unwrap();
         let mut request = f.request(false);
         request.constraints.pubkey = Some(path.to_str().unwrap().into());
         assert!(f.run(request).is_err());
@@ -1138,7 +1152,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn configuration_fifo_is_rejected_without_waiting_for_a_writer() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::install_extract::private_builder(".tmp")
+            .tempdir()
+            .unwrap();
         let path = root.path().join("key.pub");
         assert!(
             std::process::Command::new("mkfifo")

@@ -31,6 +31,9 @@ jobs:
       - run: cargo clippy --all-features --all-targets -- -D warnings
       - run: cargo build --all-features
       - run: cargo test --all-features
+      # Debian and Ubuntu give login users a user-private-group umask of 002.
+      # The installer must still create directories it will accept.
+      - run: umask 002 && cargo test --all-features --lib -- install discovery
       # A consumer that only verifies takes the crate with no default
       # features; keep that build compiling and its tests passing.
       - run: cargo clippy --no-default-features --all-targets -- -D warnings
