@@ -76,7 +76,10 @@ container=$(docker create --network none packslip-repository-tools bash -euo pip
   packslip install --help
   packslip usage > /tmp/usage.kdl
   grep -q "cmd install" /tmp/usage.kdl
-  ! grep -E "cmd (create|releases|keygen|schema)" /tmp/usage.kdl
+  if grep -Eq "cmd (create|releases|keygen|schema)" /tmp/usage.kdl; then
+    echo "installer package includes publisher commands" >&2
+    exit 1
+  fi
   test -d /etc/packslip/pins.d
 ')
 containers+=("$container")
@@ -91,7 +94,10 @@ container=$(docker create --network none packslip-repository-fedora bash -euo pi
   packslip install --help
   packslip usage > /tmp/usage.kdl
   grep -q "cmd install" /tmp/usage.kdl
-  ! grep -E "cmd (create|releases|keygen|schema)" /tmp/usage.kdl
+  if grep -Eq "cmd (create|releases|keygen|schema)" /tmp/usage.kdl; then
+    echo "installer package includes publisher commands" >&2
+    exit 1
+  fi
   test -d /etc/packslip/pins.d
 ')
 containers+=("$container")
