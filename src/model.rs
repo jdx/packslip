@@ -1604,7 +1604,7 @@ impl Statement {
             }
             match resource.kind.as_str() {
                 "completion" => {
-                    if resource.shell.is_some() == !resource.shells.is_empty() {
+                    if resource.shell.is_some() != resource.shells.is_empty() {
                         return Err(InvalidDocument::CompletionShell(label));
                     }
                     if let Some(bad) = resource
@@ -1620,8 +1620,9 @@ impl Statement {
                         .iter()
                         .chain(resource.env.values())
                         .any(|s| s.contains("{shell}"));
-                    if !resource.shells.is_empty()
-                        && (source != ResourceSource::Exec || !mentions_shell)
+                    if (source == ResourceSource::Exec && resource.shell.is_some())
+                        || (!resource.shells.is_empty()
+                            && (source != ResourceSource::Exec || !mentions_shell))
                     {
                         return Err(InvalidDocument::CompletionShells(label));
                     }
@@ -2432,6 +2433,14 @@ mod tests {
                     ..Resource::new("completion")
                 },
                 |e| matches!(e, InvalidDocument::Shell(_, _)),
+            ),
+            (
+                Resource {
+                    shell: Some("bash".into()),
+                    exec: vec!["mise".into(), "completion".into(), "bash".into()],
+                    ..Resource::new("completion")
+                },
+                |e| matches!(e, InvalidDocument::CompletionShells(_)),
             ),
             (
                 Resource {

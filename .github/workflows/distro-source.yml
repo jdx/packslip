@@ -1,0 +1,144 @@
+name: distro-source
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+    secrets:
+      PACKSLIP_GPG_KEY:
+        required: true
+      COPR_API_LOGIN:
+        required: true
+      COPR_API_TOKEN:
+        required: true
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release tag to package
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: distro-source-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  release-commit:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.release.outputs.sha }}
+    steps:
+      - name: Resolve a published release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+          test "$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease --jq '[.isDraft,.isPrerelease]|any')" = false
+          type=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq .object.type)
+          sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq .object.sha)
+          if [ "$type" = tag ]; then
+            sha=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$sha" --jq .object.sha)
+          fi
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+  source:
+    needs: release-commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.release-commit.outputs.sha }}
+          persist-credentials: false
+      - name: Prepare offline source packages
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          PPA_DISTRIBUTION: ${{ vars.PPA_DISTRIBUTION || 'resolute' }}
+          PACKAGE_REVISION: ${{ vars.PPA_REVISION || '1' }}
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
+          test "$RELEASE_TAG" = "v$version"
+          sudo apt-get update
+          sudo apt-get install -y devscripts debhelper rpm
+          scripts/package-source.sh source
+          scripts/package-debian-source.sh source "$PPA_DISTRIBUTION"
+          scripts/package-rpm-source.sh source
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: distro-source
+          path: source/*
+          if-no-files-found: error
+
+  ppa:
+    needs: source
+    runs-on: ubuntu-latest
+    environment: ppa-publishing
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: distro-source
+          path: source
+      - run: sudo apt-get update && sudo apt-get install -y devscripts dput
+      - uses: crazy-max/ghaction-import-gpg@2dc316deee8e90f13e1a351ab510b4d5bc0c82cd # v7
+        with:
+          gpg_private_key: ${{ secrets.PACKSLIP_GPG_KEY }}
+      - name: Sign and submit the source package
+        env:
+          GPG_FINGERPRINT: ${{ vars.PACKSLIP_GPG_FINGERPRINT }}
+          PPA_NAME: ${{ vars.PPA_NAME || 'ppa:jdxcode/packslip' }}
+        run: |
+          set -euo pipefail
+          [[ "$GPG_FINGERPRINT" =~ ^[0-9A-Fa-f]{40}$ ]] || exit 1
+          [[ "$PPA_NAME" =~ ^ppa:[a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+$ ]] || exit 1
+          debsign -k"$GPG_FINGERPRINT" source/*_source.changes
+          dput "$PPA_NAME" source/*_source.changes
+
+  copr:
+    needs: source
+    runs-on: ubuntu-latest
+    environment: copr-publishing
+    timeout-minutes: 180
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: distro-source
+          path: source
+      - name: Install the COPR client
+        run: |
+          python3 -m venv "$RUNNER_TEMP/copr-cli"
+          # copr-cli 2.5 imports rich but omits it from its package dependencies.
+          "$RUNNER_TEMP/copr-cli/bin/pip" install copr-cli==2.5 rich==14.2.0
+          "$RUNNER_TEMP/copr-cli/bin/copr-cli" --version
+      - name: Submit and wait for both architecture builds
+        env:
+          COPR_API_LOGIN: ${{ secrets.COPR_API_LOGIN }}
+          COPR_API_TOKEN: ${{ secrets.COPR_API_TOKEN }}
+          COPR_OWNER: ${{ vars.COPR_OWNER || 'jdxcode' }}
+          COPR_PROJECT: ${{ vars.COPR_PROJECT || 'packslip' }}
+          COPR_CHROOTS: ${{ vars.COPR_CHROOTS || 'fedora-44-x86_64 fedora-44-aarch64' }}
+        run: |
+          set -euo pipefail
+          [[ "$COPR_OWNER/$COPR_PROJECT" =~ ^[a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+$ ]] || exit 1
+          test -n "$COPR_API_LOGIN" && test -n "$COPR_API_TOKEN"
+          config=$(mktemp)
+          trap 'rm -f "$config"' EXIT
+          printf '[copr-cli]\nlogin = %s\nusername = %s\ntoken = %s\ncopr_url = https://copr.fedorainfracloud.org\n' "$COPR_API_LOGIN" "$COPR_OWNER" "$COPR_API_TOKEN" > "$config"
+          args=(build --timeout 10800 --enable-net off)
+          read -r -a chroots <<< "$COPR_CHROOTS"
+          test "${#chroots[@]}" -gt 0
+          for chroot in "${chroots[@]}"; do
+            [[ "$chroot" =~ ^[a-zA-Z0-9._+-]+$ ]] || exit 1
+            args+=(--chroot "$chroot")
+          done
+          "$RUNNER_TEMP/copr-cli/bin/copr-cli" --config "$config" "${args[@]}" "$COPR_OWNER/$COPR_PROJECT" source/*.src.rpm

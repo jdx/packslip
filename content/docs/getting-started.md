@@ -56,7 +56,7 @@ packslip version
 {{< /tab >}}
 {{< tab "Build from source" >}}
 
-With Rust 1.95 or newer installed:
+The current crates.io release (1.4.0) requires Rust 1.95 or newer:
 
 ```sh
 cargo install packslip --locked
@@ -65,7 +65,8 @@ packslip version
 
 This builds the latest release from crates.io. To build unreleased
 changes, clone the repository and run `cargo install --path . --locked` in
-it, then return to an empty directory for the walkthrough. Cargo installs
+it with Rust 1.93 or newer, then return to an empty directory for the
+walkthrough. Cargo installs
 the executable in its bin directory, usually `~/.cargo/bin`; make sure that
 directory is on PATH.
 

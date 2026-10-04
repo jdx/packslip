@@ -103,6 +103,9 @@ bootstrap installs commands and keeps the full archive layout.
 
 ## Build for a distribution
 
+[Distribution packaging](/docs/distributions/) provides offline source
+recipes and interim PPA/COPR publication configuration for this build.
+
 ```sh
 cargo build --locked --release --no-default-features --features install-cli
 ```
