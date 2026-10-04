@@ -28,6 +28,8 @@ jobs:
       major-tag: ${{ steps.version.outputs.major-tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Check the shared action and CLI version
         id: version
         shell: python
@@ -80,6 +82,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       # The Developer ID certificate has to be in the keychain before the
       # signing step below can find it.
       - if: contains(matrix.target, 'apple')
@@ -92,6 +96,7 @@ jobs:
       - run: rustup target add ${{ matrix.target }}
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
+          lookup-only: true
           key: ${{ matrix.target }}
       - if: contains(matrix.target, 'musl')
         run: sudo apt-get update && sudo apt-get install -y musl-tools
@@ -215,12 +220,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           # Communiqué compares this tag with the previous release and needs
           # the intervening commits and tags to write accurate notes.
           fetch-depth: 0
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         continue-on-error: true
         with:
+          cache: false
           install_args: communique
         env:
           # A stale lock must fail instead of silently changing the release-
@@ -344,7 +351,7 @@ jobs:
   # CLI it was released with.
   list:
     needs: release
-    uses: ./.github/workflows/packslip-releases.yml
+    uses: $/.github/workflows/packslip-releases.yml
     secrets:
       CLOUDFLARE_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_ACCESS_KEY_ID }}
       CLOUDFLARE_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_SECRET_ACCESS_KEY }}
@@ -400,6 +407,28 @@ jobs:
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
 
+  distro-source:
+    needs: release
+    if: vars.DISTRO_SOURCE_ENABLED == 'true'
+    uses: $/.github/workflows/distro-source.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets:
+      PACKSLIP_GPG_KEY: ${{ secrets.PACKSLIP_GPG_KEY }}
+      COPR_API_LOGIN: ${{ secrets.COPR_API_LOGIN }}
+      COPR_API_TOKEN: ${{ secrets.COPR_API_TOKEN }}
+
+  package-repositories:
+    needs: release
+    if: vars.PACKAGE_REPOSITORIES_ENABLED == 'true'
+    uses: $/.github/workflows/package-repositories.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets:
+      PACKSLIP_GPG_KEY: ${{ secrets.PACKSLIP_GPG_KEY }}
+      CLOUDFLARE_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_ACCESS_KEY_ID }}
+      CLOUDFLARE_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_SECRET_ACCESS_KEY }}
+
   # Describe an earlier release as packslip.dev. It runs from this workflow
   # file on purpose: a consumer remembers which workflow signed a project's
   # bundles, and a backfilled release must not look like a different signer.
@@ -414,6 +443,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           # The tag's commit is recorded in the bundle.
           fetch-depth: 0
       - name: Install packslip
@@ -445,7 +475,7 @@ jobs:
 
   backfill-list:
     needs: backfill
-    uses: ./.github/workflows/packslip-releases.yml
+    uses: $/.github/workflows/packslip-releases.yml
     secrets:
       CLOUDFLARE_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_ACCESS_KEY_ID }}
       CLOUDFLARE_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_SECRET_ACCESS_KEY }}

@@ -1,6 +1,6 @@
 // packslip.dev: the documentation is served as static assets, and this
 // script runs first only for the paths run_worker_first lists in
-// wrangler.jsonc: /v* and /.well-known/packslip.json. Two shapes of those
+// wrangler.jsonc: release files, the signed list, and package repositories. Two shapes of those
 // are release data in R2, laid out as <tool>/<tag>/<file> and
 // <tool>/.well-known/packslip.json; everything else, including a release
 // path R2 has no object for, is handed to the assets, which answer with
@@ -13,12 +13,25 @@
 const IMMUTABLE = "public, max-age=31536000, immutable";
 const LIST = "public, max-age=300";
 
+function repository(path) {
+  if (path === "/gpg-key.pub" || path === "/rpm/packslip.repo") return { immutable: false };
+  if (/^\/apt\/pool\/main\/packslip-[a-f0-9]{64}_(amd64|arm64)\.deb$/.test(path)) return { immutable: true };
+  if (/^\/apt\/dists\/stable\/main\/binary-(amd64|arm64)\/by-hash\/SHA256\/[a-f0-9]{64}$/.test(path)) return { immutable: true };
+  if (/^\/apt\/dists\/stable\/(InRelease|Release|Release\.gpg)$/.test(path)) return { immutable: false };
+  if (/^\/apt\/dists\/stable\/main\/binary-(amd64|arm64)\/Packages(\.gz)?$/.test(path)) return { immutable: false };
+  if (/^\/rpm\/(x86_64|aarch64)\/packages\/packslip-[a-f0-9]{64}\.rpm$/.test(path)) return { immutable: true };
+  if (/^\/rpm\/(x86_64|aarch64)\/repodata\/repomd\.xml(\.asc)?$/.test(path)) return { immutable: false };
+  if (/^\/rpm\/(x86_64|aarch64)\/repodata\/[a-f0-9]{64}-[a-zA-Z0-9._-]+$/.test(path)) return { immutable: true };
+  return null;
+}
+
 export default {
   async fetch(request, env, ctx) {
     const path = new URL(request.url).pathname;
     const isList = path === "/.well-known/packslip.json";
     const release = isList ? null : path.match(/^\/(v[^/]+)\/([^/]+)$/);
-    if (!isList && !release) {
+    const repo = repository(path);
+    if (!isList && !release && !repo) {
       return env.ASSETS.fetch(request);
     }
     if (request.method !== "GET" && request.method !== "HEAD") {
@@ -28,7 +41,13 @@ export default {
     // A tag's files never change, so the edge keeps them; the list does,
     // and is small, so every request for it reads R2.
     const cache = caches.default;
-    let response = isList ? undefined : await cache.match(request);
+    const immutable = release !== null || repo?.immutable === true;
+    // Let R2 evaluate conditional/range requests. HEAD responses cannot be
+    // placed in Cache API, which accepts only full GET responses.
+    const cacheable = immutable && request.method === "GET" &&
+      !["range", "if-match", "if-none-match", "if-modified-since", "if-unmodified-since"]
+        .some((header) => request.headers.has(header));
+    let response = cacheable ? await cache.match(request) : undefined;
     if (!response) {
       // Only hand R2 the headers as a range when one was actually asked
       // for: given a plain GET it still reports a range covering the whole
@@ -45,7 +64,7 @@ export default {
       object.writeHttpMetadata(headers);
       headers.set("etag", object.httpEtag);
       headers.set("accept-ranges", "bytes");
-      headers.set("cache-control", isList ? LIST : IMMUTABLE);
+      headers.set("cache-control", immutable ? IMMUTABLE : LIST);
       if (isList) {
         headers.set("content-type", "application/json");
       }
@@ -59,24 +78,25 @@ export default {
         const length = suffix ? object.range.suffix : object.range.length ?? size - offset;
         headers.set("content-range", `bytes ${offset}-${offset + length - 1}/${size}`);
       }
-      const status = object.body === undefined ? 304 : partial ? 206 : 200;
+      const unmetPrecondition = request.headers.has("if-match") || request.headers.has("if-unmodified-since");
+      const status = object.body === undefined ? (unmetPrecondition ? 412 : 304) : partial ? 206 : 200;
       response = new Response(
-        request.method === "HEAD" || status === 304 ? null : object.body,
+        request.method === "HEAD" || status === 304 || status === 412 ? null : object.body,
         { status, headers },
       );
-      if (!isList && status === 200) {
+      if (cacheable && status === 200) {
         ctx.waitUntil(cache.put(request, response.clone()));
       }
     }
 
-    const file = isList ? "" : release[2];
+    const file = isList ? "" : repo ? path.split("/").at(-1) : release[2];
     env.DOWNLOADS.writeDataPoint({
       indexes: [env.TOOL],
       blobs: [
         env.TOOL,
-        isList ? "" : release[1],
+        isList ? "" : repo ? "repository" : release[1],
         file,
-        kind(isList, file),
+        repo ? "repository" : kind(isList, file),
         client(request.headers.get("user-agent") || ""),
         request.cf?.country || "",
       ],
