@@ -34,7 +34,7 @@ toolchain, for example `RUSTUP_TOOLCHAIN=1.93.0 mise run docs`.
 | --- | --- |
 | Overview and task guides | `README.md`, `content/_index.md`, `content/docs/` |
 | Format rules | `docs/spec/packslip.md` (canonical specification) |
-| CLI help | Command and argument documentation in `src/main.rs` and `src/cli.rs` |
+| CLI overview and help | `docs/cli.md` for the landing page; command and argument documentation in `src/main.rs` and `src/cli.rs` for the reference |
 | Schema and validation | `src/model.rs` |
 | Conformance vectors | `tests/conformance/` (see its README) |
 | Creation and verification | `src/create.rs`, `src/verify.rs`, `src/sigstore.rs`; key signing in `src/dsse.rs` and `src/minisign.rs` |
@@ -78,8 +78,8 @@ mise run docs:check  # Build, check links, and run offline examples.
 
 `mise run render` regenerates the
 [generated files](#find-the-right-source) without starting Hugo. It
-deletes and recreates `content/cli/`, so keep handwritten pages in
-`content/docs/`.
+deletes and recreates `content/cli/`, combining `docs/cli.md` with the
+generated command overview. Keep other handwritten pages in `content/docs/`.
 
 `site.yml` deploys packslip.dev on every push to `main`, separately from
 releases. A merged guide or specification change is live at once, and the

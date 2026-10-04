@@ -6,9 +6,10 @@ description: Declare the libraries, commands, and operating-system versions your
 ---
 # Host requirements
 
-Host requirements help consumers explain missing dependencies before a
-user tries to run the tool. They describe what must already be available;
-they do not tell a package manager what to install.
+Declare host requirements so consumers can identify missing libraries,
+commands, or unsupported system versions before a user runs the tool.
+Requirements name what must be available on the host; consumers decide
+how to resolve them.
 
 Each artifact's `requires` can hold four fields. `packslip create` reads
 `libs` from the executables where it can, and you declare the others:
@@ -20,20 +21,22 @@ Each artifact's `requires` can hold four fields. `packslip create` reads
 | `glibc_min` | Minimum glibc for a `gnu` Linux build | TOML `requires` on the artifact |
 | `os_min` | Minimum OS version, in the OS's own numbering | TOML `requires` on the artifact |
 
-Requirements use loader or command names, such as `libssl.so.3` and
-`java`, rather than distribution package names. Consumers decide how to
-resolve them.
+Use loader or command names, such as `libssl.so.3` and `java`, rather than
+distribution package names such as `libssl3` or `openjdk-17-jre`.
+Requirements describe dependencies, without instructing a package manager
+to install those packages.
 
 ## Let `create` read shared libraries
 
 `create` reads the ELF, Mach-O, or PE executables named by `bin` out of
 each artifact and records the shared libraries they load from the host
 as `requires.libs`. It leaves out the C runtime, libraries the OS always
-provides, and any library the artifact ships itself. An empty list means
-the executables were read and need nothing more. No list means nothing
-was read, for one of these reasons: the artifact is an installer, disk
-image, or 7z archive; its executables are scripts; it lists no `bin`; or
-you passed `--no-libs`.
+provides, and any library the artifact ships itself.
+
+An empty `libs` list means the executables were read and need no additional
+shared libraries. An absent list means no library requirements were read.
+That happens when the artifact is an installer, disk image, or 7z archive;
+its executables are scripts; it lists no `bin`; or you passed `--no-libs`.
 
 For an artifact `create` cannot read, you may write `libs` in its TOML
 `requires`. When `create` can read the executables, a list you write
@@ -47,12 +50,25 @@ shows.
 
 ## Declare required commands
 
-Declare a command the executables run with `--require bin:NAME[@MIN]`,
-or with one line per command in the action's `require` input.
-`--require bin:java@17` adds `java` 17 or later to every artifact that
-has executables; `create` fails if neither `--bin` nor the TOML manifest
-names an executable. In TOML, list the command in an artifact's
-`requires` instead: `requires = { bin = [{ name = "java", min = "17" }] }`.
+Use `--require bin:NAME[@MIN]` for commands your executable needs, or put
+one declaration per line in the action's `require` input. For example,
+this adds Java 17 or later to every artifact that has executables:
+
+```yaml
+require: |
+  bin:java@17
+```
+
+The equivalent CLI flag is `--require bin:java@17`. `create` fails if
+neither `--bin` nor the TOML manifest names an executable. To declare the
+requirement for just one artifact, put it in that artifact's `requires`:
+
+```toml
+[[artifact]]
+path = "dist/mytool-1.2.3-linux-x64.tar.gz"
+bin = ["mytool"]
+requires = { bin = [{ name = "java", min = "17" }] }
+```
 
 `NAME` is the bare command as the program runs it, with no directory and
 no `.exe`. `MIN` is the lowest version that works, written as
@@ -66,12 +82,17 @@ integrations in [extensions](/release/v1/#extensions).
 ## Set minimum OS and glibc versions
 
 `create` does not detect minimum OS or glibc versions, and no flag sets
-them, so write them in each artifact's TOML `requires`. `os_min` uses the
-OS's own version numbers, such as `12` for macOS Monterey or `10.0.17763`
-for Windows. `glibc_min`, such as `2.31`, applies only to a `gnu` Linux
-build. Keep both out of the top-level `requires`: every artifact without
-its own table inherits it, so a top-level `glibc_min` would also be
-recorded on your macOS and Windows artifacts.
+them. Write them in each artifact's TOML `requires`:
+
+| Field | Example | Applies to |
+| --- | --- | --- |
+| `os_min` | `"12"` for macOS Monterey, or `"10.0.17763"` for Windows | That artifact's OS, using its own version numbering. |
+| `glibc_min` | `"2.31"` | A Linux artifact with `libc = "gnu"`. |
+
+For a release with several platforms, keep these fields out of the
+top-level `requires`. Every artifact without its own table inherits that
+default, so a top-level `glibc_min` would also be recorded on macOS and
+Windows artifacts. The example below shows separate platform minimums.
 
 ## Combine defaults and per-artifact requirements
 

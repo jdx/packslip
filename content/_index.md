@@ -1,14 +1,14 @@
 ---
 title: Signed manifests for software releases
-description: Publish the checksums, platforms, executables, and resources for your software in one signed release manifest.
-lede: Publish the information installers need to select, download, and verify your release artifacts, including supported platforms, executable paths, and file digests.
+description: Publish signed software release manifests, verify downloads, and install upstream tools with packslip.
+lede: Describe your release once with signed digests, platforms, and executable paths. Installers can then select and verify the right download without guessing its layout.
 ---
 ## What a packslip does
 
 A packslip is one signed file, `packslip.sigstore.json`, published beside
 your release artifacts. It records each file's digest, platform, and
 executable paths, and links to resources and build provenance. A
-consumer, such as a package manager or mirror, verifies the packslip
+consumer, such as an installer, package manager, or mirror, verifies the packslip
 against a signer it trusts, then checks each file it downloads against the
 signed digest.
 
@@ -20,6 +20,24 @@ a sigstore bundle.
 
 [How packslip fits a release](/docs/release-workflow/) follows local
 configuration to a signed bundle and shows how consumers find it.
+
+## Install a tool from its signed release
+
+The packslip CLI can install any supported tool that publishes a packslip.
+For example, with [packslip 1.5.1 or newer installed](/cli/#install-the-cli):
+
+```sh
+packslip install github.com/jdx/mise --pin ps1_nlhmwtfeufglxv5myvwvronk7a
+```
+
+This installs mise's latest stable release. packslip verifies the signing
+repository and the artifact's digest and size, preserves the complete archive,
+and exposes only the declared commands. It runs no downloaded code. Add
+`--version 2026.10.1` to choose an exact mise version.
+
+[Install a tool with packslip](/docs/bootstrap/) covers destinations,
+replacement, and trust. [packslip and mise](/docs/mise/) shows how to pin the
+bootstrapper while mise follows upstream releases, including in Docker.
 
 ## Inside a packslip
 
@@ -71,6 +89,8 @@ for the full statement.
 
 | If you… | Start here |
 | --- | --- |
+| Need the packslip command | [Install the CLI](/cli/#install-the-cli) |
+| Want to install an upstream tool | [Install a tool with packslip](/docs/bootstrap/) |
 | Want to try the format | [Getting started](/docs/getting-started/) |
 | Publish from a GitHub release job | [Publish with GitHub Actions](/docs/publishing/) |
 | Need to describe a complex release | [Artifact configuration](/docs/describing-releases/) |
@@ -78,7 +98,7 @@ for the full statement.
 | Serve releases from your own domain | [Host releases on your own domain](/docs/self-hosting/) |
 | Download software and check it | [Verify a release](/docs/verifying/) |
 | Build an installer or use the Rust crate | [Build an installer or mirror](/docs/installers/) |
-| Want a consumer example | [Use packslip with mise](/docs/mise/) |
+| Use mise or want to bootstrap it | [packslip and mise](/docs/mise/) |
 
 The [documentation index](/docs/) lists every guide.
 
@@ -86,8 +106,9 @@ The [documentation index](/docs/) lists every guide.
 
 The [specification](/release/v1/) defines the release and release-list
 predicates, signing schemes, and consumer rules. The
-[CLI reference](/cli/) documents every command, including `create`,
-`verify`, `pin`, `releases`, and `keygen`. The
+[CLI overview](/cli/) covers installation and common tasks, followed by the
+command reference. The [JSON schemas](/release/v1/#json-schemas) describe the
+decoded release and release-list statements. The
 [Introducing packslip](https://jdx.dev/posts/2026-09-05-introducing-packslip/)
 announcement explains why the format exists and shows it in use with mise.
 

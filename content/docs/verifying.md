@@ -6,14 +6,25 @@ description: Check a release bundle and the files you downloaded against a repos
 ---
 # Verify a release
 
-This guide is for anyone who downloads a release and wants to check it
-with the packslip CLI before unpacking or running it. `packslip verify`
-checks the bundle against a pin you trust: a repository identity, a
-signer fingerprint, or a public key. Pass each file you downloaded with
-`--artifact`, and the same call checks it against the bundle. If you
-have not chosen a file yet, verify the bundle alone first, choose the
-artifact for your platform (`packslip show` lists them), and then verify
-the downloaded file under the same pin.
+Use `packslip verify` to check downloaded release files before unpacking
+or running them. You need the signed bundle, the files you want to check,
+and a signer policy you trust. [Install packslip](/docs/getting-started/#install-packslip)
+first if the command is not available.
+
+Choose the policy from the publisher's documentation or an earlier
+release you already trust:
+
+| Publisher supplies | Use |
+| --- | --- |
+| A GitHub or GitLab repository | [An identity prefix and issuer](#verify-against-the-expected-repository) |
+| A `ps1_…` signer fingerprint | [`--pin`](#pin-a-signer-with-its-fingerprint), which identifies the repository across renames |
+| An Ed25519 public key | [`--pubkey`](#verify-against-a-public-key) |
+
+Pass every downloaded file with `--artifact`. If you have not chosen a
+file yet, verify the bundle alone, inspect it with `packslip show`, then
+verify the selected download under the same policy. For a command that
+does discovery, verification, and installation together, see
+[Install a tool](/docs/bootstrap/).
 
 ## Verify against the expected repository
 
@@ -81,12 +92,11 @@ signer fingerprint closes the gap. It is `ps1_` followed by 26 characters
 derived from the forge's issuer and the repository's numeric ID, so it
 names one repository whatever that repository is called.
 
-A vendor publishes its fingerprint where consumers can read it without
-trusting a release, such as its website or README. A consumer records it
-once in its own configuration, such as a Dockerfile, a CI workflow, or a
-lockfile. The fingerprint protects you from the moment you record it: one
-copied from the repository, or printed by `packslip pin` from a release,
-after the name changed hands is the newcomer's.
+A vendor publishes its fingerprint on its website or in its README.
+Record it in your Dockerfile, CI workflow, or lockfile. Obtain it before
+the repository name changes hands: a fingerprint copied from the new
+repository, or calculated from its release, identifies the new owner’s
+repository.
 
 A vendor gets its fingerprint by running `packslip pin` on a release its
 own workflow just published, as
@@ -126,17 +136,13 @@ prints:
 verification failed: the release is signed by ps1_snirenkjwr7m5ozgcufameodnm, but the pin is ps1_kwhjac5qpc45qetfh6ppwisi6a
 ```
 
-`--pin` adds a check to the identity policy rather than replacing it. The
-example passes no identity flags, so `verify` derives the policy from the
-project the bundle names, which it can do only for a GitHub or GitLab
-project. A release then passes only when:
-
-- it is keyless and verifies under the policy;
-- its certificate records a repository ID, as GitHub Actions and GitLab
-  CI certificates have since Fulcio added the extension;
-- that repository's fingerprint equals the pin; and
-- for a GitHub or GitLab project, the certificate's repository is the one
-  the statement names, and the signer is a workflow of it.
+`--pin` adds a repository check to the identity policy. The example uses
+the policy derived from the signed project's GitHub name. The keyless
+signature must pass that policy, its certificate must contain a
+repository ID, and that ID must produce the fingerprint you pinned.
+packslip also checks that the signing repository is the one the statement
+names. Older certificates without repository IDs cannot pass `--pin`;
+use an identity prefix and issuer for those releases.
 
 The fingerprint stays the same when the repository is renamed, moves to
 another owner, or changes its release workflow. Every tool in a monorepo
@@ -195,11 +201,11 @@ artifact(s) checked)`. With `--json`, `checked_artifacts` and
 `artifact_count` cover artifacts, and `checked_assets` and `asset_count`
 cover assets. An asset you supply is reported only in `checked_assets`.
 
-Without `--artifact`, success verifies the bundle alone. It does not
-fetch, hash, or install remote artifacts. `--json` prints the report to
-standard output for scripts. On failure nothing is printed there: the
-reason goes to standard error, and the command exits 1 for a failed
-verification or unusable input, or 2 for a usage error.
+Without `--artifact`, success verifies the bundle alone. No remote
+artifact is downloaded, hashed, or installed. `--json` prints a report
+to standard output for scripts; on failure that stream is empty and the
+reason goes to standard error. Exit status is 0 for success, 1 for failed
+verification or unusable input, and 2 for a usage error.
 
 ## Verify a release list
 
@@ -281,12 +287,13 @@ for inspection, not as evidence of authenticity.
 | `no transparency log entry` | Confirm with the vendor that it omitted logging on purpose before you pass `--allow-unlogged`. |
 | `not listed in the document` | Restore the file's original name. |
 | `sha256 is` or `size is`, followed by `document says` | Confirm the original file name and release version, then download it again from the vendor's URL. |
-| Expired, rolled-back, or missing signed list | Obtain a current list; retain the existing trust state while investigating. |
+| An installer reports an expired, rolled-back, or missing signed list | Obtain a current list and retain existing trust state while investigating. `verify` checks the list's signature and structure; the installer enforces freshness and remembered sequence. |
 
 ## Build an installer or mirror
 
-The CLI verifies one document at a time. An installer also needs
-discovery, artifact selection, and remembered trust; see
+`packslip verify` checks one document at a time and keeps no state between
+runs. If you are implementing an installer, add discovery, artifact
+selection, and remembered trust; see
 [Build an installer or mirror](/docs/installers/) and the
 [consumer rules](/release/v1/#consumer-rules).
 

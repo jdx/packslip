@@ -6,13 +6,19 @@ description: Create and verify your first packslip locally with an Ed25519 key.
 ---
 # Getting started
 
-This walkthrough is for trying packslip on your own machine. It packages a
-one-file tool, signs a packslip for it with a key you generate, and checks
-the archive against the signature. The steps after installation run
-offline: the signature uses a local Ed25519 key and is not recorded in
-Rekor, sigstore's public transparency log, so you need no CI identity or
-network connection. A real release should be logged;
-[Publish a real release](#publish-a-real-release) says what to change.
+Create and verify a signed release on your own machine. This walkthrough
+packages a small shell script, signs its release metadata with a local
+Ed25519 key, and checks the archive against that signed record. You will
+also change the archive to see verification fail.
+
+After installing packslip, the example runs offline. It uses no CI
+identity and leaves the test signature out of Rekor, sigstore's public
+transparency log. [Publish a real release](#publish-a-real-release)
+explains how to turn the example into a logged release.
+
+If you want to install someone else's software instead, install packslip
+below, then follow [Install a tool](/docs/bootstrap/). To check files you
+already downloaded, see [Verify a release](/docs/verifying/).
 
 ## Install packslip
 
@@ -20,7 +26,8 @@ We recommend [mise](https://mise.jdx.dev/getting-started.html) to install
 packslip and manage its version. You can also run the install script,
 copy packslip from its container image, download a release, or build from
 source. Release builds cover Linux and Windows on x64 and arm64, and macOS
-on arm64. On an Intel Mac, build from source.
+on arm64. On an Intel Mac, build from source. Linux users can also install
+from the [signed APT and RPM repositories](/docs/distributions/#signed-apt-and-rpm-repositories).
 
 {{< tabs "Installation method" >}}
 {{< tab "mise" >}}
@@ -64,16 +71,20 @@ release was built. It installs the executable in `~/.local/bin`, or in
 directory is not on PATH, and it downloads and runs nothing else.
 
 Each release publishes its own copy of the scripts, and
-`https://packslip.sh/vVERSION` always serves that release's `install.sh`.
-One copy covers every platform, so its SHA-256 pins packslip on all of
-them. In a Dockerfile, Docker checks it for you:
+`https://packslip.sh/vVERSION` serves that release's `install.sh`. Replace
+`VERSION` with a release number, such as `1.5.1`, and `SHA256` with the
+SHA-256 of that release's script. One script covers every supported
+platform, so its checksum pins the bootstrap download across architectures.
+In a Dockerfile, Docker checks that script before running it:
 
 ```dockerfile
 ADD --checksum=sha256:SHA256 https://packslip.sh/vVERSION /tmp/install-packslip.sh
 RUN sh /tmp/install-packslip.sh
 ```
 
-The image needs curl or wget for the script's download. The scripts are
+The image needs curl or wget for the script's download. To calculate the
+script's checksum, download the versioned script and run `sha256sum
+install.sh` (Linux) or `shasum -a 256 install.sh` (macOS). The scripts are
 attested with the rest of the release, so you can check a copy you saved
 with `gh attestation verify install.sh --repo jdx/packslip`.
 
@@ -120,19 +131,18 @@ packslip version
 {{< /tab >}}
 {{< tab "Build from source" >}}
 
-The current crates.io release (1.4.0) requires Rust 1.95 or newer:
+The current release requires Rust 1.93 or newer:
 
 ```sh
 cargo install packslip --locked
 packslip version
 ```
 
-This builds the latest release from crates.io. To build unreleased
-changes, clone the repository and run `cargo install --path . --locked` in
-it with Rust 1.93 or newer, then return to an empty directory for the
-walkthrough. Cargo installs
-the executable in its bin directory, usually `~/.cargo/bin`; make sure that
-directory is on PATH.
+This builds the latest release from crates.io. To pin the bootstrapper,
+add `--version 1.5.1`. To try development changes, clone the repository
+and run `cargo install --path . --locked` there, then return to an empty
+directory for the walkthrough. Cargo installs the executable in its bin
+directory, usually `~/.cargo/bin`; make sure that directory is on PATH.
 
 {{< /tab >}}
 {{< /tabs >}}
@@ -140,8 +150,8 @@ directory is on PATH.
 ## Create a sample release
 
 The following commands use a POSIX shell and `tar`. Run them in an empty
-directory. The sample is a portable shell script, so it needs no
-platform-specific compiler.
+directory. The sample needs no platform-specific compiler. On Windows,
+use a POSIX environment such as WSL for these commands.
 
 <!-- docs-test: quickstart -->
 ```sh
@@ -152,9 +162,9 @@ tar -czf dist/mytool-1.2.3.tar.gz -C staging bin
 packslip keygen --out release.key
 ```
 
-These lines build `dist/mytool-1.2.3.tar.gz`, an archive with one
-executable at `bin/mytool`. Then `packslip keygen` generates a signing key
-pair and prints its key ID (yours will differ):
+You now have `dist/mytool-1.2.3.tar.gz`, an archive with one executable at
+`bin/mytool`. `packslip keygen` also generated a signing key pair and
+printed its key ID (yours will differ):
 
 ```text
 wrote release.key and release.pub (key id C8B574447E4F0ACA)
@@ -257,9 +267,9 @@ and the supplied archive matched its signed digest and size.
 Without `--artifact`, the line ends `(0 of 1 artifact(s) checked)`: the
 bundle was checked, the archive was not.
 
-`verify` does not check that the project and version are the ones you
-meant to install. Check them in the `ok:` line yourself, as a consumer
-does before installing.
+Compare the project and version in the `ok:` line with the release you
+expected. `verify` authenticates the document under your key but does not
+know which project or version you intended to install.
 [Verify a release](/docs/verifying/#understand-the-result) lists what a
 successful check does and does not establish.
 

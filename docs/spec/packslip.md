@@ -42,6 +42,26 @@ for readability; those placeholders are not valid release data.
 - [Tooling](#tooling): the reference implementation, task guides, and the
   [conformance vectors](https://github.com/jdx/packslip/tree/main/tests/conformance).
 
+## JSON schemas
+
+The schemas describe the decoded in-toto statements inside bundles:
+
+| Document | Download | CLI |
+| --- | --- | --- |
+| One release (`release/v1`) | [release-v1.json](https://packslip.dev/schema/release-v1.json) | `packslip schema` |
+| A release list (`releases/v1`) | [releases-v1.json](https://packslip.dev/schema/releases-v1.json) | `packslip schema --releases` |
+
+Use them to check field shapes, required values, and value patterns. They do
+not validate the enclosing sigstore bundle, authenticate its signer, or apply
+rules that require comparing fields, downloaded bytes, or remembered state.
+The reference implementation validates those relationships; consumers also
+apply the [consumer rules](#consumer-rules).
+
+To inspect a bundle's statement, use `packslip show packslip.sigstore.json`.
+That command decodes the payload without verifying it. See
+[Verify a release](https://packslip.dev/docs/verifying/) for an authenticated
+check, and the [CLI overview](https://packslip.dev/cli/) to install packslip.
+
 ## Goal
 
 A publisher describes a release once, in a signed document that any
@@ -1566,12 +1586,17 @@ publishes a release's packslip
 ([action.yml](https://github.com/jdx/packslip/blob/main/action.yml)) and
 one builds and signs a release list
 ([releases/action.yml](https://github.com/jdx/packslip/blob/main/releases/action.yml)).
-The CLI creates and verifies release and list bundles and prints signer
-fingerprints; consumers implement discovery, selection, installation, and
-persistent policy around those operations.
+The CLI creates and verifies release and list bundles, prints signer
+fingerprints, and installs tools from signed releases. `packslip install`
+implements discovery, selection, installation, and remembered trust;
+`packslip verify` checks the supplied bundle and local files without keeping
+that state. Other consumers implement those policies around the library's
+verification and selection operations.
 
 | Task | Guide | Command reference |
 | --- | --- | --- |
+| Install the CLI | [Installation methods](https://packslip.dev/docs/getting-started/#install-packslip) | [CLI overview](https://packslip.dev/cli/) |
+| Install an upstream tool | [Install a tool with packslip](https://packslip.dev/docs/bootstrap/) | [install](https://packslip.dev/cli/install/) |
 | Create a first packslip | [Getting started](https://packslip.dev/docs/getting-started/) | [create](https://packslip.dev/cli/create/) |
 | Generate an Ed25519 key | [Getting started](https://packslip.dev/docs/getting-started/#create-a-sample-release) | [keygen](https://packslip.dev/cli/keygen/) |
 | Publish from GitHub | [Publish with GitHub Actions](https://packslip.dev/docs/publishing/) | [action.yml](https://github.com/jdx/packslip/blob/main/action.yml) |
@@ -1582,7 +1607,7 @@ persistent policy around those operations.
 | Pin a keyless signer by fingerprint | [Verify a release](https://packslip.dev/docs/verifying/#pin-a-signer-with-its-fingerprint) | [pin](https://packslip.dev/cli/pin/), [verify](https://packslip.dev/cli/verify/) `--pin` |
 | Inspect a statement without verification | [Verify a release](https://packslip.dev/docs/verifying/#understand-the-result) | [show](https://packslip.dev/cli/show/) |
 | Build a consumer or mirror | [Build an installer or mirror](https://packslip.dev/docs/installers/) | — |
-| Export JSON schemas | [Documentation](https://packslip.dev/docs/#reference) | [schema](https://packslip.dev/cli/schema/) |
+| Export JSON schemas | [JSON schemas](#json-schemas) | [schema](https://packslip.dev/cli/schema/) |
 | Check another implementation | [Conformance vectors](https://github.com/jdx/packslip/tree/main/tests/conformance) | — |
 
 The CLI reference is generated from command help. The specification page

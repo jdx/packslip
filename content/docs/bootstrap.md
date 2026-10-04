@@ -1,28 +1,108 @@
 ---
-title: Bootstrap a package manager
+title: Install a tool with packslip
 weight: 52
 group: consume
-description: Install an authenticated upstream release with user or system scope, without running an installer script.
+description: Install signed upstream tools directly, choose a version and installation scope, or bootstrap mise with a pinned verifier.
 ---
-# Bootstrap a package manager
+# Install a tool with packslip {#bootstrap-a-package-manager}
 
-`packslip install` installs a publisher's signed upstream release without
-requiring another package manager beyond the distribution's own. The command
-is available in the development branch; it has not shipped in a release yet.
-It verifies the release, keeps the complete artifact tree, and exposes only
-its declared commands. It runs no downloaded code and changes no shell files.
+`packslip install` downloads, verifies, and installs a tool's signed upstream
+release. Use it for a CLI you want on PATH, to bootstrap a package manager such
+as mise, or to install a release in a container. Any tool that publishes a
+packslip can use this path; it is not limited to package managers.
+
+Install [packslip 1.5.1 or newer](/docs/getting-started/#install-packslip) first.
+The command checks the release's signer, project, version, digest, and size,
+keeps the complete artifact tree, and exposes its declared commands. It runs
+no downloaded code and changes no shell files.
+
+## Install an upstream release
+
+For example, install [hk](https://hk.jdx.dev), which publishes signed GitHub
+releases:
 
 ```sh
-packslip install github.com/jdx/mise
-packslip install owner/repo --version 1.2
-packslip install tool.example.com --pubkey /path/to/vendor.pub
+packslip install github.com/jdx/hk
+~/.local/bin/hk --version
+```
+
+These commands assume an ordinary Unix user. packslip prints every command
+path it creates, so you can invoke that path even before adding its directory
+to PATH. Root uses `/usr/local/bin` instead.
+
+The default version request is `latest`. Use `--version` for an exact release,
+a version prefix, or a release tag:
+
+```sh
+packslip install github.com/jdx/mise --version 2026.10.1 \
+  --pin ps1_nlhmwtfeufglxv5myvwvronk7a
 ```
 
 The publisher must provide a packslip. GitHub releases may also carry a signed
 supplementary list; a host project needs its signed well-known list.
 Other forge APIs are not supported by this bootstrap command yet. The
 [installer library guide](/docs/installers/) describes the general format.
-Use a signer `--pin` from trusted publisher instructions when available.
+For a key-signed project on its own domain, pass its public key with `--pubkey`.
+For a forge project, use a signer `--pin` from trusted publisher instructions
+when available. Without a caller pin, the first installation trusts the
+repository the forge reports for the name and remembers it for later installs.
+
+## Pin the bootstrapper and let mise float
+
+Pinning packslip and pinning the tool it installs are separate decisions.
+A CI configuration or Dockerfile can keep one reviewed packslip version while
+requesting the current mise release every time installation runs:
+
+```sh
+packslip version
+packslip install github.com/jdx/mise \
+  --pin ps1_nlhmwtfeufglxv5myvwvronk7a
+~/.local/bin/mise --version
+```
+
+Obtain the packslip version you chose through a
+[versioned install script or pinned container image](/docs/getting-started/#install-packslip).
+The mise signer pin above identifies its GitHub repository, not a version:
+new tags still match it. Omitting `--version` lets mise float; adding
+`--version 2026.10.1` fixes mise too. Rerun `packslip install` to fetch a later
+release, or let mise manage its own updates with `mise self-update`. No
+background updater runs on packslip's behalf.
+
+This is useful when you want a small bootstrapper in a base image or a
+distribution package, while allowing mise to track the upstream releases it
+needs to work with changing tool registries. A stable version 1 manifest format
+supports that separation. It is not a promise to freeze the verifier forever:
+security fixes and new signing formats may require a packslip update. See
+[Compatibility and support](/docs/compatibility/#maintaining-packaged-verifiers).
+
+### Bootstrap mise in Docker
+
+This Debian example pins packslip's multi-platform image by digest, then asks
+it to verify and install the current mise release. The CA bundle enables HTTPS;
+no shell installer, curl, or external archive extractor is needed:
+
+```dockerfile
+FROM ghcr.io/jdx/packslip:1.5.1@sha256:fcbbcb85ab02d433d6108c212ffc7eaeda0bbafca4b82111c452568ac680b9c4 AS bootstrap
+FROM debian:13-slim
+
+COPY --from=bootstrap /packslip /usr/local/bin/packslip
+COPY --from=bootstrap /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+
+ARG MISE_VERSION=latest
+RUN packslip install github.com/jdx/mise --version "$MISE_VERSION" \
+      --pin ps1_nlhmwtfeufglxv5myvwvronk7a \
+    && mise --version
+
+CMD ["mise", "--version"]
+```
+
+Build with `docker build --no-cache -t mise-bootstrap .` to resolve `latest`
+again: an unchanged cached `RUN` layer does not check for new releases.
+Pass `--build-arg MISE_VERSION=2026.10.1` to fix mise's release as well.
+Keep `/opt/packslip` if you copy this installation into another stage;
+`/usr/local/bin/mise` points into that tree. The
+[mise Docker cookbook](https://mise.jdx.dev/mise-cookbook/docker.html#bootstrap-with-packslip)
+shows how to add project tools and use mise in the container.
 
 ## Choose an installation scope
 
@@ -40,7 +120,7 @@ to user scope; `--system` selects shared paths and requires suitable permissions
 and Windows x64/ARM64 are the bootstrap targets. Intel macOS is unsupported.
 
 ```sh
-sudo packslip install owner/repo --system
+sudo packslip install github.com/jdx/hk --system
 packslip install owner/repo --install-dir /absolute/tree --bin-dir /absolute/bin
 ```
 
@@ -60,7 +140,7 @@ config directory are independent requirements. Windows uses ProgramData
 
 ```toml
 [projects."github.com/jdx/mise"]
-pins = ["ps1_aaaaaaaaaaaaaaaaaaaaaaaaaa"] # illustrative; obtain the real pin separately
+pins = ["ps1_nlhmwtfeufglxv5myvwvronk7a"]
 ```
 
 Ordinary releases retain signing-workflow continuity by default. A publisher's
@@ -126,10 +206,14 @@ the layout.
 The [compatibility and support matrix](/docs/compatibility/) records required CI
 coverage and the checks needed before publishing instructions for a real tool.
 
-Before recommending mise, rustup, uv, or pnpm through this path, record the exact
+Before recommending a tool on a new platform or scope, record the exact
 upstream release, platform, scope, tree, and command paths; then run the tool's
 normal setup and self-update in an isolated account. Check runtime lookup,
 argument and exit-status forwarding, whether self-update replaces the executable
 or its export, and whether a later Packslip install respects that changed ownership.
-These real publisher checks remain outstanding; the synthetic fixture passes
-are evidence for the installation mechanism only.
+The compatibility matrix distinguishes checked publisher handoffs from pending
+ones. Synthetic fixtures are evidence for the installation mechanism only.
+
+See the [`install` reference](/cli/install/) for every flag. For project
+configuration, version switching, and the tool's man pages and completions,
+use [mise's packslip backend](/docs/mise/#install-a-tool).

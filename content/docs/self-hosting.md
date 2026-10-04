@@ -2,19 +2,42 @@
 title: Host releases on your own domain
 weight: 45
 group: publish
-description: Name a project after its download host, publish its releases and signed release list there from GitHub Actions, and keep the list current.
+description: Publish signed releases on your own domain from GitHub Actions and maintain the release list consumers use to discover them.
 ---
 # Host releases on your own domain
 
-A project named after its host, such as `mytool.example.com`, is found
-through the signed release list at that host and nowhere else. The bytes
-can live anywhere; this guide puts them on the same host, publishes both
-from a GitHub Actions release job, and keeps the list current between
-releases. Releases are still signed by the repository's workflow, so
-consumers pin that repository's workflows, as they would for a GitHub
-project. If the
-project already publishes as `github.com/owner/repo`, read
-[Move a GitHub project](#move-a-github-project) before switching consumers.
+Use your own domain as the project name, such as `mytool.example.com`,
+when consumers should discover releases through your host. Publish a
+signed release list at its well-known URL, then point each list entry to
+a release bundle. Artifacts and bundles can be served elsewhere; this
+guide puts them all on the same host.
+
+The release workflow still signs as your GitHub repository. Consumers
+need an explicit pin for that identity, because the domain name does not
+imply a signer.
+
+The setup has four parts:
+
+1. [Lay out and serve the files](#lay-out-the-host).
+2. [Publish the repository's signing identity](#sign-as-the-repository).
+3. [Upload each release's files and signed bundle](#publish-a-release).
+4. [Publish and refresh the signed list](#build-and-publish-the-list).
+
+If you already publish as `github.com/owner/repo`, follow
+[Move a GitHub project](#move-a-github-project) before switching consumers
+to the domain name.
+
+## Before you start
+
+The workflow examples use a Cloudflare R2 bucket named `releases`, with
+the `mytool/` prefix served at `https://mytool.example.com/`. Any host
+that serves files over HTTPS can use the same layout.
+
+For the R2 examples, provide an AWS CLI on the runner, replace `<account>`
+in its endpoint, and configure the `R2_ACCESS_KEY_ID` and
+`R2_SECRET_ACCESS_KEY` repository secrets with access to that bucket.
+Your existing release job builds the final archives and creates the
+GitHub release; these examples add publishing and discovery metadata.
 
 ## Lay out the host
 
@@ -34,12 +57,11 @@ A project with a path, `example.com/tools/mytool`, serves its list at
 
 ## Serve the files
 
-A static site host serves the release directories and the list like any
-other files, as long as the list has the right path and content type:
-`application/json` at `/.well-known/packslip.json`, or at
-`/.well-known/packslip/<path>.json` for a project with a path. Check that
-the host publishes the `.well-known` directory, because some site
-generators and hosts skip dot-directories.
+A static site host can serve the release directories and the list like
+any other files. Serve the list as `application/json` at
+`/.well-known/packslip.json`, or `/.well-known/packslip/<path>.json` for a
+project with a path. Check that the host includes `.well-known`, because
+some site generators and hosts skip dot-directories.
 
 The release directories never change once published: a consumer pins the
 digest of every file it downloads, so serve them with a long, immutable
@@ -62,18 +84,21 @@ other tags or for a project with a path.
 
 ## Sign as the repository
 
-A domain name implies no signer, so consumers have to be told what to pin:
-the OIDC issuer and an identity prefix covering the repository's
-workflows, `https://github.com/owner/repo/`. That is the identity a
-`github.com/owner/repo` name implies, spelled out, except that the prefix
-names the repository by its path rather than by its repository ID. In
-mise, a tool or registry entry carries it as options, as
-[Use packslip with mise](/docs/mise/) describes:
+Publish the OIDC issuer and identity prefix that consumers should pin.
+For GitHub Actions, the issuer is
+`https://token.actions.githubusercontent.com` and a prefix such as
+`https://github.com/owner/repo/` covers that repository's workflows.
+In mise, set both as tool or registry options:
 
 ```toml
 [tools]
 "packslip:mytool.example.com" = { version = "latest", issuer = "https://token.actions.githubusercontent.com", identity_prefix = "https://github.com/owner/repo/" }
 ```
+
+This is the repository workflow identity a `github.com/owner/repo`
+project implies, but an explicit prefix names the repository by its path
+rather than its stable repository ID. See
+[Use packslip with mise](/docs/mise/) for the consumer configuration.
 
 Because the prefix is a path, it does not follow a rename. Once the
 repository is renamed or moves to another owner, its workflows sign as the
@@ -157,11 +182,7 @@ steps:
         --content-type application/json --cache-control "public, max-age=31536000, immutable"
 ```
 
-The example writes to a Cloudflare R2 bucket through its S3 endpoint; any
-host that serves files over HTTPS works the same way. The examples on
-this page assume the host serves the bucket's `mytool/` prefix at
-`https://mytool.example.com/`. Give the storage credentials only to the
-upload steps, so they never reach the action. The job still grants
+Give the storage credentials only to the upload steps. The job still grants
 `contents: write` to every step, the action included. To keep the action
 away from that as well, split the job as
 [Keep the action away from release write access](/docs/publishing/#keep-the-action-away-from-release-write-access)
@@ -324,6 +345,7 @@ jobs:
 ```
 
 A weekly run against a 30-day validity leaves room for a few failed runs.
+The concurrency group prevents two runs from publishing out of order.
 
 ### Keep withdrawals in the repository
 
@@ -334,13 +356,19 @@ or post-release list, and consumers are offered the withdrawn release
 again. That is why the workflow reads both from committed files on every
 run.
 
-To withdraw `v1.2.3`, add `v1.2.3=Incorrect Linux archive` to
-`.github/mytool/yanked` and merge. The `push` trigger publishes a new list
-with the release marked `yanked`, and it stays withdrawn through every
-later run until you remove its line. To mark a security fix, add its tag
-to `.github/mytool/security` the same way. Put the reason for a security
-mark in a `#` comment above its line. Keep a withdrawn release's bundle in
-the bucket: an entry for a tag that `dir` does not hold fails the run with
+To withdraw `v1.2.3`, add this line to `.github/mytool/yanked` and merge:
+
+```text
+v1.2.3=Incorrect Linux archive
+```
+
+The `push` trigger publishes a new list with that release marked `yanked`.
+It stays withdrawn on later runs until you remove its line. To mark a
+security fix, add the release tag to `.github/mytool/security`; put any
+explanation in a `#` comment above it.
+
+Keep a withdrawn release's bundle in the bucket. If `yank` names a tag
+that `dir` does not hold, the run fails with
 `is not among the --release entries`.
 
 The files must exist, even when empty. A missing file fails the run, so a
@@ -350,9 +378,6 @@ withdrawn release.
 does this, and its
 [procedure](https://github.com/jdx/packslip/blob/main/RELEASING.md#withdraw-a-release-or-mark-a-security-fix)
 is a worked example.
-
-A weekly run against a 30-day validity leaves room for a few failed runs,
-and the concurrency group stops two runs from publishing out of order.
 
 ## Move a GitHub project
 

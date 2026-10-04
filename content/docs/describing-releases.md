@@ -6,10 +6,14 @@ description: Configure artifact platforms, variants, executable paths, and per-f
 ---
 # Artifact configuration
 
-A packslip describes the files you already build. This page covers how
-`packslip create` reads those files, how to set what their names and
-archive layouts leave unclear, and every key of `release.toml`, the TOML
-file `packslip create --manifest` reads.
+A packslip describes the release files your build already produces. Use
+`packslip create` to record their platforms, executable paths, download
+URLs, and other metadata. It infers common file names and archive layouts;
+you supply the details it cannot infer.
+
+Start with flags for a uniform set of archives, or keep per-artifact
+configuration in `release.toml`. For complete example layouts and
+manifests, see [Release recipes](/docs/recipes/).
 
 ## Choose flags or a TOML manifest {#choose-flags-or-a-manifest}
 
@@ -18,9 +22,25 @@ Flags and `release.toml` produce the same signed release statement:
 interchange format. This page also calls it the TOML manifest, and calls
 the signed output the bundle.
 
-Flags are enough when every artifact contains the same executables.
+Flags are enough when every artifact contains the same executables. For
+example, in a CI job with a supported OIDC identity:
+
+```sh
+packslip create \
+  --project github.com/owner/mytool --version 1.2.3 \
+  --url-base https://github.com/owner/mytool/releases/download/v1.2.3 \
+  --bin mytool --out packslip \
+  dist/mytool-1.2.3-linux-x64.tar.gz \
+  dist/mytool-1.2.3-darwin-arm64.tar.gz
+```
+
+This finds `mytool` in both archives and writes
+`packslip/packslip.sigstore.json`. For local key signing, add
+`--key release.key`; to try it without recording a signature in the public
+log, also add `--no-log`, as in [Getting started](/docs/getting-started/).
+
 Artifact suffixes (`PATH:os/arch/libc@variant`) and per-file flags
-(`--format FILENAME=FORMAT`, `--url FILENAME=URL`) cover platforms,
+(`--format FILENAME=FORMAT`, `--url FILENAME=URL`) cover explicit platforms,
 variants, formats, and URLs. Use `release.toml` when:
 
 - artifacts hold different executables, or need an explicit executable
@@ -52,9 +72,10 @@ extension:
 | `windows`, `win32`, `win64`, or a `.exe`, `.msi`, or `.msix` file | `windows` |
 | `freebsd`, `netbsd`, `openbsd`, `illumos`, `android`, `ios` | The same word |
 
-A name with no OS records no `os`, so the artifact fits hosts on every
-OS: consumers offer `mytool-x86_64.tar.gz` to every x86_64 host, whatever
-its OS, and `packslip create` does not warn about it.
+A name with no OS records no `os`. Consumers then consider the artifact
+compatible with every OS: `mytool-x86_64.tar.gz` is offered to any x86_64
+host. `packslip create` does not warn about this, so check the inferred
+platform before publishing a native build.
 
 The format comes from the extension, such as `.tar.gz`, `.zip`, or
 `.deb`; [Name the executables](#name-the-executables) explains how a
@@ -101,14 +122,17 @@ host can select it. By convention such a build is universal or x86_64,
 and both systems run x86_64 builds on ARM.
 
 For a Linux artifact whose name does not say `musl` or `gnu`,
-`packslip create` reads the libc from the executables it lists. A
-statically linked build, such as a Go binary built with
-`CGO_ENABLED=0`, gets no `libc` and fits glibc and musl hosts alike, and
-one whose loader is musl's gets `musl`. When `packslip create` cannot read an ELF binary for every listed
-executable (there are none, one is a script, the format is one it cannot
-open, or `--no-libs` is set), libc defaults to `gnu`, which does not fit a
-musl host. Give `libc = "any"` or `PATH:linux/x86_64/any` for a build that
-loads no C library, such as an archive of shell scripts.
+`packslip create` reads libc from the listed executables. A statically
+linked build, such as a Go binary built with `CGO_ENABLED=0`, gets no
+`libc` and fits both glibc and musl hosts. A build that uses musl's loader
+gets `musl`.
+
+If `create` cannot read an ELF binary for every listed executable, libc
+defaults to `gnu`, which does not fit a musl host. This happens when no
+executables are listed, an executable is a script, the format cannot be
+opened, or `--no-libs` is set. For a build that loads no C library, such
+as an archive of shell scripts, set `libc = "any"` or use
+`PATH:linux/x86_64/any` explicitly.
 
 ### Override the inferred platform
 
@@ -172,7 +196,8 @@ executable. Give that artifact its own `bin` in `release.toml`, or
 `bin = []` if it has none.
 
 Use `--bin mytool=bin/mytool-x86_64` when the command name differs from the
-file's name. In TOML, write the equivalent as:
+file's name. Consumers expose `bin/mytool-x86_64` as the command `mytool`.
+In TOML, write the equivalent as:
 
 ```toml
 bin = [{ name = "mytool", path = "bin/mytool-x86_64" }]
@@ -226,7 +251,9 @@ In a CI job with a supported OIDC identity:
 packslip create --manifest release.toml --out packslip
 ```
 
-For local key signing, add `--key release.key`.
+For local key signing, add `--key release.key`. For an offline trial, also
+add `--no-log`; the [quickstart](/docs/getting-started/) shows how to
+generate a temporary key and verify an unlogged bundle.
 
 In the GitHub Action, set `manifest: release.toml` and set `artifacts` to
 the files its `[[artifact]]` entries name. The action fails when

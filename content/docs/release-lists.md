@@ -6,24 +6,31 @@ description: Publish a signed release list, withdraw versions, and recommend a d
 ---
 # Manage release lists
 
-A release manifest records what shipped. A signed release list records
-which releases are available, which were withdrawn, and optionally which
-version the vendor recommends. Updating a list does not replace the
-individual release manifests.
+Publish a signed release list to tell consumers which versions are
+available, withdraw a broken release, mark a security fix, or recommend a
+default version. Each entry points to a release bundle and records its
+digest. Updating the list leaves the individual release manifests intact.
 
 A project on its own domain must publish a list; a GitHub project may add
 one. This page covers the list itself and `packslip releases`. To publish
 from GitHub Actions to a host you run, follow
 [Host releases on your own domain](/docs/self-hosting/).
 
+Publishing a list also means maintaining it: schedule a refresh before
+expiry and retain withdrawals on every rebuild. Consumers that have
+accepted a list reject a missing or expired replacement. See
+[Refresh or withdraw releases](#refresh-or-withdraw-releases) for the
+update procedure.
+
 ## Where consumers look for the list {#choose-a-discovery-location}
 
 For a project named after its own domain, the signed list is the only
-place consumers find its releases. A GitHub project needs one only to
-withdraw a release, mark a security fix, recommend a default version, or
-list a release whose tag names no version; without one, consumers
-discover its releases from the repository's GitHub releases whose tags
-name a version. The project name sets the location:
+place consumers find releases. For a GitHub project, it supplements
+discovery from release tags that name a version. Add a list when you need
+withdrawals, security markers, a recommended version, or a release whose
+tag does not name a version.
+
+The project name sets the list's location:
 
 | Project name | Where consumers find the signed list |
 | --- | --- |
@@ -45,10 +52,12 @@ yanked status.
 
 ## Create the list
 
-Keep local copies of the released bundles, and verify each one first:
-`packslip releases` copies their version, tag, and publication time and
-records their digests, but does not verify them. Each `--release` pairs
-the public bundle URL with its local path:
+Keep local copies of the released bundles and verify each one before
+listing it. `packslip releases` reads their version, tag, and publication
+time and records their digests; it does not verify their signatures.
+Each `--release` pairs a public bundle URL with its local path. This
+example lists version `1.2.3` of a key-signed project and recommends it as
+the default:
 
 ```sh
 packslip verify releases/v1.2.3/packslip.sigstore.json --pubkey release.pub
@@ -74,8 +83,9 @@ list, since a domain name implies no signer. In supported CI, omit
 of the published bundles; see
 [Host releases on your own domain](/docs/self-hosting/#build-and-publish-the-list).
 
-`packslip verify` checks the list's signature and structure; expiry and
-sequence continuity remain consumer checks.
+Verify the resulting list before uploading it, as the last command above
+does. `packslip verify` checks its signature and structure. Consumers also
+check expiry and remember the highest sequence they have accepted.
 
 The example's sequence is the current Unix time, the action's default. A
 Unix-time sequence increases on its own; a project that adopts it cannot
@@ -177,12 +187,14 @@ the full [latest selection rules](/release/v1/#latest).
 
 ## Publish or trust a third-party list {#use-a-third-party-list}
 
-A registry, mirror, or scanning service can sign a list of the releases
-it has checked. The list is a *stamp* on each release it names, and the
-service is a *stamping host*. It publishes one list per vendor project under its own host, at
-the well-known path with the vendor's full project name. `--project` is
-the vendor's project, since every listed bundle must name it, and
-`--evidence` records what the service checked:
+A registry, mirror, or scanning service can sign a list of releases it has
+checked. The list places a *stamp* on each release it names; the service
+is a *stamping host*.
+
+The service publishes one list per vendor project on its own host, using
+the well-known path with the vendor's full project name. Set `--project`
+to the vendor's project, since every listed bundle must name it. Use
+`--evidence` to record what the service checked:
 
 ```sh
 packslip releases \
@@ -198,9 +210,9 @@ A service at `scanner.example` serves it at
 `https://scanner.example/.well-known/packslip/github.com/owner/repo.json`.
 Consumers trust stamping hosts by configuration and pin each one
 separately. A consumer that trusts one or more stamping hosts installs
-only versions that at least one of them lists without a yank. A vendor withdrawal still
-excludes a version whatever the stamps say, and a user can exempt one
-project and trust its vendor alone.
+only versions that at least one of them lists without a yank. A vendor
+withdrawal excludes a version regardless of its stamps. A user can also
+exempt a project and trust its vendor alone.
 
 A stamp does not replace the vendor's signature: consumers check the
 list's digest of the release bundle and still verify the release against

@@ -1,8 +1,8 @@
 <!doctype html>
 <html lang="en">
 <head>
-{{ $pageTitle := "packslip CLI reference" }}
-{{ $description := "Command-line reference for packslip." }}
+{{ $pageTitle := "packslip CLI" }}
+{{ $description := "Install the packslip CLI, choose a task, and look up commands for publishing, verifying, and installing software." }}
 {{ if not .IsSection }}
   {{ $pageTitle = printf "packslip %s — CLI reference" .File.ContentBaseName }}
   {{ $description = printf "Command-line reference for packslip %s." .File.ContentBaseName }}
@@ -53,7 +53,9 @@
   </aside>
 
   <article class="prose">
-    <p class="meta">For complete examples, see the <a href="/docs/">guides</a>. This reference is generated from CLI help.</p>
+    {{ if not .IsSection }}
+    <p class="meta">For installation and common tasks, see the <a href="/cli/">CLI overview</a>. This reference is generated from development CLI help; run <code>packslip {{ .File.ContentBaseName }} --help</code> for your installed version.</p>
+    {{ end }}
     {{ .Content }}
   </article>
 </main>
