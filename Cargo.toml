@@ -48,6 +48,7 @@ trust-root = ["dep:sigstore-tuf", "dep:reqwest", "dep:tempfile", "sigstore-trust
 discovery = ["trust-root", "dep:rustix", "dep:windows-sys"]
 install-policy = ["discovery", "dep:toml"]
 install-extract = ["archive", "dep:tempfile", "dep:lzma-rust2"]
+install-fs = ["install-policy", "install-extract", "dep:windows-permissions", "dep:exacl", "dep:nix", "dep:libc"]
 # `packslip create`: build a statement from a set of built artifacts.
 create = ["archive", "linkage", "sign"]
 # Read a release TOML manifest for `packslip create --manifest`.
@@ -104,10 +105,16 @@ zip = { version = "8", default-features = false, features = ["deflate"], optiona
 usage_rs = { package = "usage-rs", version = "6", features = ["completions"], optional = true }
 
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "1", features = ["fs"], optional = true }
+rustix = { version = "1", features = ["fs", "process"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"], optional = true }
+windows-permissions = { version = "0.2.4", optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+exacl = { version = "0.13", optional = true }
+nix = { version = "0.31", default-features = false, features = ["user"], optional = true }
+libc = { version = "0.2", optional = true }
 
 [dev-dependencies]
 dsse = "0.1.1"
