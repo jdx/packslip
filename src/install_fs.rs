@@ -940,13 +940,11 @@ impl Session {
         let mut slots = Vec::new();
         let mut operations = Vec::new();
         let mut prepare = |destination: PathBuf, source: Option<&Path>| -> Result<(), Error> {
-            let slot = tempfile::Builder::new()
-                .prefix(".packslip-txn-")
-                .tempdir_in(
-                    destination
-                        .parent()
-                        .ok_or_else(|| conflict("entry has no parent"))?,
-                )?;
+            let slot = crate::install_extract::private_builder(".packslip-txn-").tempdir_in(
+                destination
+                    .parent()
+                    .ok_or_else(|| conflict("entry has no parent"))?,
+            )?;
             let before = entry(&destination)?;
             if let Some(source) = source {
                 rename(source, &slot.path().join("new"))?;
@@ -996,8 +994,7 @@ impl Session {
             {
                 return Err(conflict("command path escapes the installation"));
             }
-            let temp = tempfile::Builder::new()
-                .prefix(".packslip-export-")
+            let temp = crate::install_extract::private_builder(".packslip-export-")
                 .tempdir_in(&self.bin)?;
             let path = temp.path().join("command");
             make_export(&path, &self.tree.join(relative))?;
@@ -1033,7 +1030,8 @@ impl Session {
             exports,
             history: history.clone(),
         };
-        let temp = tempfile::tempdir_in(&self.state)?;
+        let temp =
+            crate::install_extract::private_builder(".packslip-state-").tempdir_in(&self.state)?;
         let receipt_stage = temp.path().join("receipt");
         atomic(&receipt_stage, &receipt)?;
         prepare(self.receipt_path(project), Some(&receipt_stage))?;
@@ -1180,15 +1178,29 @@ pub fn symlink_export(path: &Path, target: &Path) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
+    /// Create a fixture directory and its parents as `rwxr-xr-x`, so the
+    /// tests pass under any umask, as the installer's own directories do.
+    fn test_dirs(path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt as _;
+            builder.mode(0o755);
+        }
+        builder.create(path)
+    }
     use super::*;
 
     #[cfg(unix)]
     #[test]
     fn traverses_search_only_ancestors() {
         use std::os::unix::fs::PermissionsExt as _;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::install_extract::private_builder(".tmp")
+            .tempdir()
+            .unwrap();
         let prefix = root.path().join("prefix");
-        fs::create_dir_all(prefix.join("inner")).unwrap();
+        test_dirs(prefix.join("inner")).unwrap();
         fs::set_permissions(&prefix, fs::Permissions::from_mode(0o111)).unwrap();
         let result = directory(&prefix.join("inner/state"), true);
         fs::set_permissions(&prefix, fs::Permissions::from_mode(0o755)).unwrap();
@@ -1200,9 +1212,11 @@ mod tests {
     fn rejects_extended_acl_writers_even_with_private_mode_bits() {
         use exacl::{AclEntry, Perm};
         use std::os::unix::fs::PermissionsExt as _;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::install_extract::private_builder(".tmp")
+            .tempdir()
+            .unwrap();
         let unsafe_dir = root.path().join("unsafe");
-        fs::create_dir(&unsafe_dir).unwrap();
+        test_dirs(&unsafe_dir).unwrap();
         fs::set_permissions(&unsafe_dir, fs::Permissions::from_mode(0o700)).unwrap();
         exacl::setfacl(
             &[&unsafe_dir],
@@ -1229,9 +1243,11 @@ mod tests {
             constants::{SeObjectType, SecurityInformation},
             wrappers,
         };
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::install_extract::private_builder(".tmp")
+            .tempdir()
+            .unwrap();
         let unsafe_dir = root.path().join("unsafe");
-        fs::create_dir(&unsafe_dir).unwrap();
+        test_dirs(&unsafe_dir).unwrap();
         let sid = windows_permissions::utilities::current_process_sid().unwrap();
         let mut handle = fs::OpenOptions::new()
             .access_mode(0x0006_0080)
@@ -1266,9 +1282,11 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn rejects_junctions_without_creating_children_at_the_target() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::install_extract::private_builder(".tmp")
+            .tempdir()
+            .unwrap();
         let target = root.path().join("target");
-        fs::create_dir(&target).unwrap();
+        test_dirs(&target).unwrap();
         let link = root.path().join(".packslip-txn-junction");
         let status = std::process::Command::new("cmd.exe")
             .args(["/d", "/c", "mklink", "/J"])
@@ -1299,9 +1317,11 @@ mod tests {
     #[test]
     fn rejects_a_trusted_symlink_to_an_unprotected_target_before_creating_children() {
         use std::os::unix::fs::PermissionsExt as _;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::install_extract::private_builder(".tmp")
+            .tempdir()
+            .unwrap();
         let unsafe_target = root.path().join("unsafe");
-        fs::create_dir(&unsafe_target).unwrap();
+        test_dirs(&unsafe_target).unwrap();
         fs::set_permissions(&unsafe_target, fs::Permissions::from_mode(0o777)).unwrap();
         let link = root.path().join("link");
         std::os::unix::fs::symlink(&unsafe_target, &link).unwrap();
@@ -1314,12 +1334,14 @@ mod tests {
     #[test]
     fn resolved_symlink_target_is_opened_after_the_alias_changes() {
         use std::os::unix::fs::PermissionsExt as _;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::install_extract::private_builder(".tmp")
+            .tempdir()
+            .unwrap();
         let safe = root.path().join("safe");
         let unsafe_parent = root.path().join("foreign-writable");
         let redirected = unsafe_parent.join("protected-leaf");
-        fs::create_dir(&safe).unwrap();
-        fs::create_dir_all(&redirected).unwrap();
+        test_dirs(&safe).unwrap();
+        test_dirs(&redirected).unwrap();
         fs::set_permissions(&unsafe_parent, fs::Permissions::from_mode(0o777)).unwrap();
         let link = root.path().join("link");
         std::os::unix::fs::symlink(&safe, &link).unwrap();
@@ -1340,7 +1362,9 @@ mod tests {
     }
 
     fn staged(root: &Path, commands: &[&str]) -> Extracted {
-        let tree = tempfile::tempdir_in(root).unwrap();
+        let tree = crate::install_extract::private_builder(".tmp")
+            .tempdir_in(root)
+            .unwrap();
         let bins = commands
             .iter()
             .map(|name| {
@@ -1348,7 +1372,7 @@ mod tests {
                 ((*name).to_owned(), PathBuf::from(name))
             })
             .collect();
-        fs::create_dir(tree.path().join("runtime")).unwrap();
+        test_dirs(tree.path().join("runtime")).unwrap();
         fs::write(tree.path().join("runtime/data"), b"runtime dependency").unwrap();
         Extracted { tree, bins }
     }
@@ -1376,7 +1400,9 @@ mod tests {
             ("bin/state", "tree", "bin"),
             ("same", "tree", "same"),
         ] {
-            let root = tempfile::tempdir().unwrap();
+            let root = crate::install_extract::private_builder(".tmp")
+                .tempdir()
+                .unwrap();
             let state = root.path().join(state);
             let error = Session::open(&state, &root.path().join(tree), &root.path().join(bin))
                 .err()
@@ -1388,7 +1414,9 @@ mod tests {
 
     #[test]
     fn post_commit_error_reports_the_live_receipt_as_success() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::install_extract::private_builder(".tmp")
+            .tempdir()
+            .unwrap();
         let state = root.path().join("state");
         let tree = root.path().join("tree/tool");
         let bin = root.path().join("bin");
@@ -1437,7 +1465,9 @@ mod tests {
 
     #[test]
     fn relocating_without_previous_export_locks_preserves_receipt_and_commands() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::install_extract::private_builder(".tmp")
+            .tempdir()
+            .unwrap();
         let state = root.path().join("state");
         let tree = root.path().join("tree/tool");
         let bin = root.path().join("old-bin");
@@ -1486,7 +1516,9 @@ mod tests {
 
     #[test]
     fn refuses_extraction_stages_outside_the_locked_parent() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::install_extract::private_builder(".tmp")
+            .tempdir()
+            .unwrap();
         let session = Session::open(
             &root.path().join("state"),
             &root.path().join("tree/tool"),
@@ -1509,7 +1541,9 @@ mod tests {
 
     #[test]
     fn vanished_stage_preserves_the_previous_installation() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::install_extract::private_builder(".tmp")
+            .tempdir()
+            .unwrap();
         let session = Session::open(
             &root.path().join("state"),
             &root.path().join("tree/tool"),
@@ -1546,7 +1580,9 @@ mod tests {
 
     #[test]
     fn replacement_and_obsolete_exports_respect_ownership() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::install_extract::private_builder(".tmp")
+            .tempdir()
+            .unwrap();
         let session = Session::open(
             &root.path().join("state"),
             &root.path().join("tree/tool"),
@@ -1596,14 +1632,16 @@ mod tests {
 
     #[test]
     fn force_replaces_unmarked_tree_and_command_entry() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::install_extract::private_builder(".tmp")
+            .tempdir()
+            .unwrap();
         let session = Session::open(
             &root.path().join("state"),
             &root.path().join("tree/tool"),
             &root.path().join("bin"),
         )
         .unwrap();
-        fs::create_dir(&session.tree).unwrap();
+        test_dirs(&session.tree).unwrap();
         fs::write(session.tree.join("prior"), b"prior installation").unwrap();
         let command = session.bin.join(export_name("tool").unwrap());
         fs::write(&command, b"prior command").unwrap();
@@ -1636,7 +1674,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn force_replaces_symlinks_without_touching_their_targets() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::install_extract::private_builder(".tmp")
+            .tempdir()
+            .unwrap();
         let session = Session::open(
             &root.path().join("state"),
             &root.path().join("tree/tool"),
@@ -1644,7 +1684,7 @@ mod tests {
         )
         .unwrap();
         let outside = root.path().join("outside");
-        fs::create_dir(&outside).unwrap();
+        test_dirs(&outside).unwrap();
         fs::write(outside.join("valuable"), b"untouched").unwrap();
         std::os::unix::fs::symlink(&outside, &session.tree).unwrap();
         std::os::unix::fs::symlink(outside.join("valuable"), session.bin.join("tool")).unwrap();
@@ -1696,7 +1736,9 @@ mod tests {
 
     #[test]
     fn ordinary_failure_rolls_back_tree_commands_and_receipt() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::install_extract::private_builder(".tmp")
+            .tempdir()
+            .unwrap();
         let session = Session::open(
             &root.path().join("state"),
             &root.path().join("tree/tool"),
@@ -1757,7 +1799,9 @@ mod tests {
     fn failed_commit_record_keeps_the_prior_installation_recoverable() {
         use std::os::windows::fs::OpenOptionsExt as _;
         use windows_sys::Win32::Storage::FileSystem::{FILE_SHARE_READ, FILE_SHARE_WRITE};
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::install_extract::private_builder(".tmp")
+            .tempdir()
+            .unwrap();
         let state = root.path().join("state");
         let tree = root.path().join("tree/tool");
         let bin = root.path().join("bin");
@@ -1821,7 +1865,9 @@ mod tests {
 
     #[test]
     fn relocating_commands_removes_only_still_owned_previous_exports() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::install_extract::private_builder(".tmp")
+            .tempdir()
+            .unwrap();
         let state = root.path().join("state");
         let tree = root.path().join("tree/tool");
         let old_bin = root.path().join("old-bin");
@@ -1891,7 +1937,9 @@ mod tests {
 
     #[test]
     fn destination_locks_serialize_different_state_directories() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::install_extract::private_builder(".tmp")
+            .tempdir()
+            .unwrap();
         let session = Session::open(
             &root.path().join("state"),
             &root.path().join("tree/tool"),
@@ -1926,7 +1974,9 @@ mod tests {
         // Tree, command, receipt and history each have backup/publish boundaries,
         // plus prepared and committed boundaries. Exit skips every destructor.
         for boundary in 0..=9 {
-            let root = tempfile::tempdir().unwrap();
+            let root = crate::install_extract::private_builder(".tmp")
+                .tempdir()
+                .unwrap();
             {
                 let session = Session::open(
                     &root.path().join("state"),

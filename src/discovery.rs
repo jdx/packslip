@@ -248,7 +248,7 @@ impl Client {
                 continue;
             }
             if response.status() == reqwest::StatusCode::NOT_FOUND {
-                std::fs::create_dir_all(&self.cache)?;
+                create_cache(&self.cache)?;
                 std::fs::write(path.with_extension("missing"), b"404")?;
                 if path.exists() {
                     std::fs::remove_file(&path)?;
@@ -275,7 +275,7 @@ impl Client {
                 }
                 bytes.extend_from_slice(&chunk);
             }
-            std::fs::create_dir_all(&self.cache)?;
+            create_cache(&self.cache)?;
             let mut tmp = tempfile::NamedTempFile::new_in(&self.cache)?;
             tmp.write_all(&bytes)?;
             tmp.as_file().sync_all()?;
@@ -351,7 +351,7 @@ impl Client {
                     url: display_url(&current),
                 });
             }
-            std::fs::create_dir_all(&self.cache)?;
+            create_cache(&self.cache)?;
             let mut tmp = tempfile::NamedTempFile::new_in(&self.cache)?;
             let mut size = 0u64;
             while let Some(chunk) = response
@@ -847,6 +847,20 @@ fn matches_request(release: &Release, request: &str) -> bool {
             && release.version.as_bytes().get(requested.len()) == Some(&b'.');
     }
     semver::VersionReq::parse(requested).is_ok_and(|range| range.matches(&version))
+}
+
+/// Create the download cache and its missing parents as `rwxr-xr-x`, whatever
+/// the umask. The cache usually sits in the installer's state directory, which
+/// must not become group-writable under a user-private-group umask such as 002.
+fn create_cache(path: &std::path::Path) -> std::io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt as _;
+        builder.mode(0o755);
+    }
+    builder.create(path)
 }
 
 #[cfg(test)]

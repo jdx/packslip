@@ -338,10 +338,38 @@ fn tar_entries(file: &mut std::fs::File, limits: Limits) -> Result<Vec<Entry>, E
     }
     Ok(result)
 }
+/// A builder for a temporary directory only this user can write, whatever
+/// the umask. Without explicit permissions, a user-private-group umask such as
+/// Debian's 002 makes it group-writable, which the installer
+/// refuses to install through.
+pub(crate) fn private_builder(prefix: &str) -> tempfile::Builder<'_, 'static> {
+    let mut builder = tempfile::Builder::new();
+    builder.prefix(prefix);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        builder.permissions(std::fs::Permissions::from_mode(0o700));
+    }
+    builder
+}
+
+/// Create `path` and its missing parents as `rwxr-xr-x`, whatever the umask,
+/// so an extracted tree is never group- or world-writable.
+fn create_dirs(path: &Path) -> std::io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt as _;
+        builder.mode(0o755);
+    }
+    builder.create(path)
+}
+
 fn output(root: &Path, relative: &Path) -> Result<std::fs::File, Error> {
     let out = root.join(relative);
     if let Some(parent) = out.parent() {
-        std::fs::create_dir_all(parent)?;
+        create_dirs(parent)?;
     }
     Ok(std::fs::OpenOptions::new()
         .write(true)
@@ -425,7 +453,7 @@ fn links(
             Kind::Symlink(target) => {
                 let destination = root.join(&out);
                 if let Some(parent) = destination.parent() {
-                    std::fs::create_dir_all(parent)?;
+                    create_dirs(parent)?;
                 }
                 #[cfg(unix)]
                 std::os::unix::fs::symlink(target, destination)?;
@@ -472,7 +500,7 @@ fn links(
     for (out, anchor) in resolved {
         let destination = root.join(out);
         if let Some(parent) = destination.parent() {
-            std::fs::create_dir_all(parent)?;
+            create_dirs(parent)?;
         }
         std::fs::hard_link(root.join(anchor), destination)?;
     }
@@ -591,7 +619,7 @@ fn materialized_links(
         }
         let destination = root.join(out);
         if let Some(parent) = destination.parent() {
-            std::fs::create_dir_all(parent)?;
+            create_dirs(parent)?;
         }
         std::fs::copy(target, destination)?;
     }
@@ -601,7 +629,7 @@ fn materialized_links(
         }
         let destination = root.join(out);
         if let Some(parent) = destination.parent() {
-            std::fs::create_dir_all(parent)?;
+            create_dirs(parent)?;
         }
         std::fs::hard_link(root.join(&anchors[key]), destination)?;
     }
@@ -621,9 +649,7 @@ pub fn extract(
         return Err(Error::Limit);
     }
     std::fs::create_dir_all(parent)?;
-    let tree = tempfile::Builder::new()
-        .prefix(".packslip-stage-")
-        .tempdir_in(parent)?;
+    let tree = private_builder(".packslip-stage-").tempdir_in(parent)?;
     let format = artifact
         .format
         .as_deref()
@@ -654,7 +680,7 @@ pub fn extract(
                 continue;
             }
             if entry.header().entry_type().is_dir() {
-                std::fs::create_dir_all(tree.path().join(&relative))?;
+                create_dirs(&tree.path().join(&relative))?;
             } else if entry.header().entry_type().is_file() {
                 let mut file = output(tree.path(), &relative)?;
                 let n = std::io::copy(&mut entry, &mut file)?;
@@ -726,7 +752,7 @@ pub fn extract(
                 continue;
             }
             match entry.kind {
-                Kind::Dir => std::fs::create_dir_all(tree.path().join(relative))?,
+                Kind::Dir => create_dirs(&tree.path().join(relative))?,
                 Kind::File => {
                     let file = zip
                         .by_index(index)
