@@ -28,6 +28,8 @@ pub mod discovery;
 pub mod dsse;
 pub mod fingerprint;
 pub mod forge;
+#[cfg(feature = "install-cli")]
+pub mod install;
 #[cfg(feature = "install-extract")]
 pub mod install_extract;
 #[cfg(feature = "install-fs")]

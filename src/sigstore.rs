@@ -511,7 +511,8 @@ impl SourceRepository {
 
 /// The source repository the signing certificate in a bundle records:
 /// none for a key-signed bundle or a certificate without the extensions.
-/// Verifies nothing, so read it only from a bundle that verified;
+/// Verifies nothing. It may filter discovery candidates, but establishes no
+/// authority: authenticate the bundle before trusting the returned identity.
 /// [`crate::verify::verify_forge`] does both.
 pub fn source_repository(bundle_json: &str) -> Result<Option<SourceRepository>, Error> {
     let bundle = Bundle::from_json(bundle_json).map_err(|e| Error::BundleJson(e.to_string()))?;

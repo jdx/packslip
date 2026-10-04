@@ -40,8 +40,10 @@ required-features = ["cli"]
 [features]
 default = ["cli"]
 # The complete CLI keeps its existing publishing and schema commands.
-cli = ["verify-cli", "create", "manifest", "schema"]
-# A verifier binary suitable for distro packaging, without publishing/signing.
+cli = ["install-cli", "create", "manifest", "schema"]
+# A complete bootstrap installer suitable for distro packaging, without signing.
+install-cli = ["verify-cli", "install-launcher", "install-host"]
+# A verifier binary for consumers that do not need installation.
 verify-cli = ["dep:color-eyre", "dep:eyre", "dep:usage_rs"]
 # Authenticated, fresh trust-root refresh and offline cache replay.
 trust-root = ["dep:sigstore-tuf", "dep:reqwest", "dep:tempfile", "sigstore-trust-root/tuf"]

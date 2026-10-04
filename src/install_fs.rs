@@ -35,6 +35,9 @@ pub struct History {
     pub release: Option<Record>,
     pub list: Option<Record>,
     pub sequence: Option<u64>,
+    /// Retain the actual key for key-signed host projects, not only its ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pubkey: Option<String>,
 }
 
 /// A command is owned only while its current entry matches this identity.
