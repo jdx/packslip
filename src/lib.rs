@@ -32,8 +32,15 @@ pub mod forge;
 pub mod install_extract;
 #[cfg(feature = "install-fs")]
 pub mod install_fs;
+#[cfg(feature = "install-launcher")]
+pub mod install_launcher;
 #[cfg(feature = "install-policy")]
 pub mod install_policy;
+#[cfg(any(
+    all(feature = "install-launcher", windows),
+    all(feature = "install-launcher", test)
+))]
+mod launcher_payload;
 #[cfg(feature = "linkage")]
 pub mod linkage;
 #[cfg(feature = "manifest")]
