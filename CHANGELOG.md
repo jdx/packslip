@@ -1,5 +1,68 @@
 # Changelog
 
+## [1.5.0](https://github.com/jdx/packslip/compare/v1.4.0..v1.5.0) - 2026-10-04
+
+### 🚀 Features
+
+- **(cli)** add a verifier-only build for distro packaging by [@jdx](https://github.com/jdx) in [#165](https://github.com/jdx/packslip/pull/165)
+- **(discovery)** resolve bootstrap releases with bounded HTTPS downloads by [@jdx](https://github.com/jdx) in [#167](https://github.com/jdx/packslip/pull/167)
+- **(forge)** let consumers compare signers, hold several pins, and keep accepted owners across transfers by [@jdx](https://github.com/jdx) in [#136](https://github.com/jdx/packslip/pull/136)
+- **(forge)** pin a keyless signer with a short ps1_ fingerprint by [@jdx](https://github.com/jdx) in [#154](https://github.com/jdx/packslip/pull/154)
+- **(install)** stage complete artifacts with bounded safe extraction by [@jdx](https://github.com/jdx) in [#170](https://github.com/jdx/packslip/pull/170)
+- **(install)** recover transactional tree and command replacement by [@jdx](https://github.com/jdx) in [#175](https://github.com/jdx/packslip/pull/175)
+- **(install)** export native Windows command launchers by [@jdx](https://github.com/jdx) in [#176](https://github.com/jdx/packslip/pull/176)
+- **(install)** check selected artifact host requirements by [@jdx](https://github.com/jdx) in [#177](https://github.com/jdx/packslip/pull/177)
+- **(install)** bootstrap authenticated releases in user and system scopes by [@jdx](https://github.com/jdx) in [#184](https://github.com/jdx/packslip/pull/184)
+- **(packaging)** build the installer offline with distro Rust toolchains by [@jdx](https://github.com/jdx) in [#186](https://github.com/jdx/packslip/pull/186)
+- **(packaging)** distribute native installers through signed APT and RPM repositories by [@jdx](https://github.com/jdx) in [#187](https://github.com/jdx/packslip/pull/187)
+- **(spec)** let reusable-workflow vendors opt out of workflow pinning by [@jdx](https://github.com/jdx) in [#153](https://github.com/jdx/packslip/pull/153)
+- **(trust)** refresh Sigstore keys through authenticated TUF history by [@jdx](https://github.com/jdx) in [#166](https://github.com/jdx/packslip/pull/166)
+- **(trust)** enforce bootstrap pins and remembered signer continuity by [@jdx](https://github.com/jdx) in [#169](https://github.com/jdx/packslip/pull/169)
+- publish a packslip agent skill with releases by [@jdx](https://github.com/jdx) in [#139](https://github.com/jdx/packslip/pull/139)
+- install packslip from packslip.sh with checksum-pinned scripts by [@jdx](https://github.com/jdx) in [#174](https://github.com/jdx/packslip/pull/174)
+- publish packslip as a multi-arch container image on ghcr.io by [@jdx](https://github.com/jdx) in [#179](https://github.com/jdx/packslip/pull/179)
+
+### 🐛 Bug Fixes
+
+- **(create)** find executables in zips that use backslash separators by [@jdx](https://github.com/jdx) in [#180](https://github.com/jdx/packslip/pull/180)
+- **(discovery)** retain artifact snapshots across cache replacement by [@jdx](https://github.com/jdx) in [#171](https://github.com/jdx/packslip/pull/171)
+- **(dsse)** try every signature before rejecting an envelope by [@astrogilda](https://github.com/astrogilda) in [#149](https://github.com/jdx/packslip/pull/149)
+- **(forge)** follow repository transfers by repository ID by [@jdx](https://github.com/jdx) in [#152](https://github.com/jdx/packslip/pull/152)
+- **(forge)** let packslip pin and verify --pin accept reusable-workflow releases by [@jdx](https://github.com/jdx) in [#157](https://github.com/jdx/packslip/pull/157)
+- **(release)** link Windows builds with the static C runtime by [@jdx](https://github.com/jdx) in [#178](https://github.com/jdx/packslip/pull/178)
+- **(verify)** count assets separately from artifacts in the success line by [@jdx](https://github.com/jdx) in [#159](https://github.com/jdx/packslip/pull/159)
+
+### 📚 Documentation
+
+- **(action)** show how to isolate release publishing by [@jdx](https://github.com/jdx) in [#138](https://github.com/jdx/packslip/pull/138)
+- **(spec)** restore wording the docs rewrite changed by [@jdx](https://github.com/jdx) in [#162](https://github.com/jdx/packslip/pull/162)
+- credit Shunsuke Suzuki as a packslip author by [@jdx](https://github.com/jdx) in [#140](https://github.com/jdx/packslip/pull/140)
+- keep punctuation adjacent to rendered links by [@jdx](https://github.com/jdx) in [#141](https://github.com/jdx/packslip/pull/141)
+- reorganize the guides by reader and add an installer guide by [@jdx](https://github.com/jdx) in [#161](https://github.com/jdx/packslip/pull/161)
+
+### 🧪 Testing
+
+- **(compatibility)** retain a released verifier baseline and publish support evidence by [@jdx](https://github.com/jdx) in [#185](https://github.com/jdx/packslip/pull/185)
+
+### 🔍 Other Changes
+
+- **(entire)** store checkpoints in a private repository by [@jdx](https://github.com/jdx) in [73def51](https://github.com/jdx/packslip/commit/73def512b2a13413d03ed919c83e661f50162a47)
+- **(entire)** commit codex session hooks by [@jdx](https://github.com/jdx) in [0bf9db4](https://github.com/jdx/packslip/commit/0bf9db472d9506956a7e9c6ba96245303966ceed)
+- **(entire)** commit claude session hooks by [@jdx](https://github.com/jdx) in [4c67271](https://github.com/jdx/packslip/commit/4c6727167710c13bab38bec81d84beaa769cee44)
+- **(entire)** restore lower-cost trail findings by [@jdx](https://github.com/jdx) in [b648bc8](https://github.com/jdx/packslip/commit/b648bc86e7105d79c0161518d19425dc24df8f02)
+- fix stale comments and align the site's Hugo version by [@jdx](https://github.com/jdx) in [#158](https://github.com/jdx/packslip/pull/158)
+- add hk.pkl for lint and pre-commit by [@jdx](https://github.com/jdx) in [#164](https://github.com/jdx/packslip/pull/164)
+- gate the final check on the zizmor workflow audit by [@jdx](https://github.com/jdx) in [#172](https://github.com/jdx/packslip/pull/172)
+
+### 📦️ Dependency Updates
+
+- update rust crate usage_rs to v6.12.0 by [@renovate[bot]](https://github.com/renovate[bot]) in [#142](https://github.com/jdx/packslip/pull/142)
+- update dependency usage to latest by [@renovate[bot]](https://github.com/renovate[bot]) in [#144](https://github.com/jdx/packslip/pull/144)
+- update rust crate x509-cert to 0.3 by [@renovate[bot]](https://github.com/renovate[bot]) in [#145](https://github.com/jdx/packslip/pull/145)
+- update dependency communique to latest by [@renovate[bot]](https://github.com/renovate[bot]) in [#148](https://github.com/jdx/packslip/pull/148)
+
+<!-- generated by git-cliff -->
+
 ## [1.4.0](https://github.com/jdx/packslip/compare/v1.3.0..v1.4.0) - 2026-09-27
 
 ### 🚀 Features
