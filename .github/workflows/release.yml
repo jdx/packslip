@@ -293,66 +293,6 @@ jobs:
         run: |
           set -euo pipefail
           gh release create "$GITHUB_REF_NAME" --draft --verify-tag --generate-notes dist/*
-      # The CLI archives do not exist until this tag workflow builds them, so
-      # their digests cannot live in the immutable source tag without a
-      # circular rebuild. Make a second, action-only commit after GitHub has
-      # accepted the final draft assets. `v1` moves to that commit below.
-      - name: Lock the released CLI archives into the action
-        id: action-lock
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
-          lock_tag="action-v$version"
-          lock_file="$(mktemp)"
-          trap 'rm -f "$lock_file"' EXIT
-          release="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}")"
-          for asset in \
-            "packslip-v${version}-linux-x64.tar.xz" \
-            "packslip-v${version}-linux-arm64.tar.xz" \
-            "packslip-v${version}-darwin-arm64.tar.xz" \
-            "packslip-v${version}-windows-x64.zip" \
-            "packslip-v${version}-windows-arm64.zip"; do
-            local_digest="$(sha256sum "dist/$asset" | awk '{print $1}')"
-            remote_digest="$(jq -r --arg asset "$asset" '.assets[] | select(.name == $asset) | .digest' <<<"$release")"
-            if [ "$(printf '%s\n' "$remote_digest" | sed '/^$/d' | wc -l | tr -d ' ')" != 1 ] || ! [[ "$remote_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-              echo "GitHub did not return one SHA-256 digest for $asset" >&2
-              exit 1
-            fi
-            remote_digest="${remote_digest#sha256:}"
-            if [ "$local_digest" != "$remote_digest" ]; then
-              echo "GitHub release asset digest differs from local $asset" >&2
-              exit 1
-            fi
-            printf '%s  %s\n' "$remote_digest" "$asset" >> "$lock_file"
-          done
-
-          if lock_commit="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${lock_tag}" --jq .object.sha 2>/dev/null)"; then
-            parent="$(gh api "repos/${GITHUB_REPOSITORY}/git/commits/${lock_commit}" --jq '.parents[0].sha')"
-            test "$parent" = "$GITHUB_SHA"
-            gh api "repos/${GITHUB_REPOSITORY}/contents/action/archives.sha256?ref=${lock_commit}" --jq .content \
-              | tr -d '\n' | base64 --decode > "${lock_file}.existing"
-            cmp -s "$lock_file" "${lock_file}.existing" || {
-              echo "existing $lock_tag does not lock this release's assets" >&2
-              exit 1
-            }
-          else
-            blob="$(base64 < "$lock_file" | tr -d '\n')"
-            blob_sha="$(jq -n --arg content "$blob" '{content: $content, encoding: "base64"}' \
-              | gh api -X POST "repos/${GITHUB_REPOSITORY}/git/blobs" --input - --jq .sha)"
-            base_tree="$(gh api "repos/${GITHUB_REPOSITORY}/git/commits/${GITHUB_SHA}" --jq .tree.sha)"
-            tree_sha="$(jq -n --arg base "$base_tree" --arg blob "$blob_sha" \
-              '{base_tree: $base, tree: [{path: "action/archives.sha256", mode: "100644", type: "blob", sha: $blob}]}' \
-              | gh api -X POST "repos/${GITHUB_REPOSITORY}/git/trees" --input - --jq .sha)"
-            lock_commit="$(jq -n --arg tree "$tree_sha" --arg parent "$GITHUB_SHA" --arg version "$version" \
-              '{message: ("chore(action): lock v" + $version + " archive digests"), tree: $tree, parents: [$parent]}' \
-              | gh api -X POST "repos/${GITHUB_REPOSITORY}/git/commits" --input - --jq .sha)"
-            gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
-              -f "ref=refs/tags/${lock_tag}" -f "sha=${lock_commit}" >/dev/null
-          fi
-          echo "commit=$lock_commit" >> "$GITHUB_OUTPUT"
-          echo "tag=$lock_tag" >> "$GITHUB_OUTPUT"
       - name: Rewrite the release body with Communiqué
         continue-on-error: true
         env:
@@ -386,8 +326,6 @@ jobs:
       - name: Move the shared major action tag
         env:
           MAJOR_TAG: ${{ needs.version.outputs.major-tag }}
-          ACTION_LOCK_COMMIT: ${{ steps.action-lock.outputs.commit }}
-          ACTION_LOCK_TAG: ${{ steps.action-lock.outputs.tag }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -395,17 +333,17 @@ jobs:
           # sends the tag's tree, and GitHub refuses one from the built-in
           # token when that tree touches .github/workflows -- which any
           # release since the last major-tag move may well do, and there is
-          # no `workflows` key in a job's permissions to grant. The
-          # action-lock commit was created through the GitHub API above, so
-          # this update sends no workflow-bearing objects either.
+          # no `workflows` key in a job's permissions to grant. The commit
+          # is already on the default branch, so updating the ref pushes no
+          # objects and the check does not apply.
           if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${MAJOR_TAG}" >/dev/null 2>&1; then
             gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${MAJOR_TAG}" \
-              -f sha="$ACTION_LOCK_COMMIT" -F force=true >/dev/null
-            echo "moved $MAJOR_TAG to $ACTION_LOCK_COMMIT ($ACTION_LOCK_TAG)"
+              -f sha="$GITHUB_SHA" -F force=true >/dev/null
+            echo "moved $MAJOR_TAG to $GITHUB_SHA"
           else
             gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
-              -f ref="refs/tags/${MAJOR_TAG}" -f sha="$ACTION_LOCK_COMMIT" >/dev/null
-            echo "created $MAJOR_TAG at $ACTION_LOCK_COMMIT ($ACTION_LOCK_TAG)"
+              -f ref="refs/tags/${MAJOR_TAG}" -f sha="$GITHUB_SHA" >/dev/null
+            echo "created $MAJOR_TAG at $GITHUB_SHA"
           fi
 
   # The release list at https://packslip.dev/.well-known/packslip.json,
@@ -508,21 +446,10 @@ jobs:
           persist-credentials: false
           # The tag's commit is recorded in the bundle.
           fetch-depth: 0
-      - name: Select the released Packslip version
-        id: packslip-version
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="${TAG#v}"
-          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
-            echo "backfill tag must be vMAJOR.MINOR.PATCH, got $TAG" >&2
-            exit 1
-          }
-          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Install packslip
         env:
           GH_TOKEN: ${{ github.token }}
-          PACKSLIP_VERSION: ${{ steps.packslip-version.outputs.version }}
+          PACKSLIP_VERSION: ""
           PACKSLIP_PATH: ""
           PACKSLIP_ACTION_ROOT: .
         run: bash scripts/install-packslip.sh

@@ -140,11 +140,7 @@ fn both_actions_wire_the_optional_download_digest_to_the_installer() {
 }
 
 #[cfg(target_os = "linux")]
-fn run_install(
-    version_override: Option<&str>,
-    caller_digest: Option<&str>,
-    locked_digest: Option<&str>,
-) -> std::process::Output {
+fn run_install(expected_digest: Option<&str>, version_override: &str) -> std::process::Output {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let fixture = root.join("packslip-fixture");
@@ -158,7 +154,12 @@ fn run_install(
         "aarch64" => "arm64",
         other => panic!("unsupported test architecture: {other}"),
     };
-    let asset = format!("packslip-v1.5.1-linux-{arch}.tar.xz");
+    let version = if version_override.is_empty() {
+        env!("CARGO_PKG_VERSION")
+    } else {
+        version_override
+    };
+    let asset = format!("packslip-v{version}-linux-{arch}.tar.xz");
     let archive = root.join(&asset);
     assert!(
         Command::new("tar")
@@ -186,24 +187,6 @@ fn run_install(
     .unwrap()
     .to_owned();
 
-    let action_root = root.join("action-root");
-    fs::create_dir(&action_root).unwrap();
-    fs::write(
-        action_root.join("Cargo.toml"),
-        "[package]\nversion = \"1.5.1\"\n",
-    )
-    .unwrap();
-    if let Some(digest) = locked_digest {
-        let action_dir = action_root.join("action");
-        fs::create_dir(&action_dir).unwrap();
-        let digest = if digest == "$ACTUAL" { &actual } else { digest };
-        fs::write(
-            action_dir.join("archives.sha256"),
-            format!("{digest}  {asset}\n"),
-        )
-        .unwrap();
-    }
-
     let bin = root.join("bin");
     fs::create_dir(&bin).unwrap();
     let gh = bin.join("gh");
@@ -221,9 +204,9 @@ fn run_install(
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .env("RUNNER_TEMP", root)
         .env("GITHUB_PATH", root.join("github-path"))
-        .env("PACKSLIP_ACTION_ROOT", action_root)
-        .env("PACKSLIP_VERSION", version_override.unwrap_or(""))
-        .env("PACKSLIP_SHA256", caller_digest.unwrap_or(""))
+        .env("PACKSLIP_ACTION_ROOT", env!("CARGO_MANIFEST_DIR"))
+        .env("PACKSLIP_VERSION", version_override)
+        .env("PACKSLIP_SHA256", expected_digest.unwrap_or(&actual))
         .env("PACKSLIP_PATH", "")
         .env("FIXTURE", archive)
         .env("ASSET", asset)
@@ -234,34 +217,23 @@ fn run_install(
 
 #[cfg(target_os = "linux")]
 #[test]
-fn install_uses_the_checked_out_action_lock_before_running_the_archive() {
-    let accepted = run_install(None, None, Some("$ACTUAL"));
+fn install_checks_the_pinned_archive_digest_before_running_it() {
+    let accepted = run_install(None, "1.5.1");
     assert!(
         accepted.status.success(),
         "{}",
         String::from_utf8_lossy(&accepted.stderr)
     );
     assert!(String::from_utf8_lossy(&accepted.stdout).contains("invoked"));
-    let rejected = run_install(None, None, Some("not-a-digest"));
+    let rejected = run_install(Some("not-a-digest"), "1.5.1");
     assert!(!rejected.status.success());
-    assert!(String::from_utf8_lossy(&rejected.stderr).contains("internal archive digest lock"));
-
-    let missing = run_install(None, None, None);
-    assert!(!missing.status.success());
-    assert!(String::from_utf8_lossy(&missing.stderr).contains("no internal archive digest lock"));
-
-    let disagreement = run_install(None, Some(&"0".repeat(64)), Some("$ACTUAL"));
-    assert!(!disagreement.status.success());
-    assert!(
-        String::from_utf8_lossy(&disagreement.stderr)
-            .contains("disagrees with the action's internal archive digest lock")
-    );
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("packslip-sha256 must be"));
 }
 
 #[cfg(target_os = "linux")]
 #[test]
-fn install_rejects_a_mismatched_internal_lock_before_provenance_or_execution() {
-    let rejected = run_install(None, None, Some(&"0".repeat(64)));
+fn install_rejects_a_tampered_pinned_archive_before_provenance_or_execution() {
+    let rejected = run_install(Some(&"0".repeat(64)), "1.5.1");
     assert!(!rejected.status.success());
     assert!(
         String::from_utf8_lossy(&rejected.stderr).contains("packslip archive SHA-256 mismatch")
@@ -271,17 +243,14 @@ fn install_rejects_a_mismatched_internal_lock_before_provenance_or_execution() {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn explicit_version_override_keeps_compatibility_and_can_add_a_strict_digest() {
-    let accepted = run_install(Some("1.5.1"), None, None);
-    assert!(accepted.status.success());
+fn source_checkout_defaults_work_without_a_digest_lock() {
+    let accepted = run_install(Some(""), "");
     assert!(
+        accepted.status.success(),
+        "{}",
         String::from_utf8_lossy(&accepted.stderr)
-            .contains("verifying build provenance without an archive SHA-256")
     );
-
-    let rejected = run_install(Some("1.5.1"), Some(&"0".repeat(64)), None);
-    assert!(!rejected.status.success());
-    assert!(
-        String::from_utf8_lossy(&rejected.stderr).contains("packslip archive SHA-256 mismatch")
-    );
+    assert!(String::from_utf8_lossy(&accepted.stdout).contains("invoked"));
+    let pinned = run_install(None, "");
+    assert!(pinned.status.success());
 }

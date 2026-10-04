@@ -6,7 +6,7 @@
 #   PACKSLIP_ACTION_ROOT  the checkout of jdx/packslip the action came from;
 #                         its Cargo.toml gives the default version
 #   PACKSLIP_VERSION      a release to download instead of that default
-#   PACKSLIP_SHA256       optional SHA-256 for a version override
+#   PACKSLIP_SHA256       optional SHA-256 for the downloaded release archive
 #   PACKSLIP_PATH         an executable to use instead of downloading
 #   GH_TOKEN              for `gh release download` and `gh attestation verify`
 # Uses the runner's RUNNER_TEMP and GITHUB_PATH.
@@ -35,8 +35,7 @@ if [ -n "$PACKSLIP_PATH" ]; then
   [ -x "$bin" ] || { echo "packslip-path is not an executable file: $PACKSLIP_PATH" >&2; exit 1; }
   cp "$bin" "$dir/packslip$exe"
 else
-  default_version="$(sed -nE 's/^version *= *"([^"]+)".*/\1/p' "${PACKSLIP_ACTION_ROOT}/Cargo.toml" | head -n1)"
-  version="${PACKSLIP_VERSION:-$default_version}"
+  version="${PACKSLIP_VERSION:-$(sed -nE 's/^version *= *"([^"]+)".*/\1/p' "${PACKSLIP_ACTION_ROOT}/Cargo.toml" | head -n1)}"
   [ -n "$version" ] || { echo "could not read the packslip version from Cargo.toml" >&2; exit 1; }
   case "$(uname -m)" in
     x86_64|amd64) arch=x64 ;;
@@ -45,34 +44,6 @@ else
   esac
   if [ "$os" = windows ]; then ext=zip; else ext=tar.xz; fi
   asset="packslip-v${version}-${os}-${arch}.${ext}"
-  expected=""
-  if [ -z "$PACKSLIP_VERSION" ]; then
-    # The major action tag points at an action-lock commit made after this
-    # CLI release's draft contains its final assets. The archive digest is
-    # therefore part of the action commit a workflow pins, not a release
-    # sidecar that could later be replaced with the binary.
-    lock="${PACKSLIP_ACTION_ROOT}/action/archives.sha256"
-    [ -f "$lock" ] || {
-      echo "this action checkout has no internal archive digest lock; pin the generated action-v${version} tag or its commit" >&2
-      exit 1
-    }
-    expected="$(awk -v asset="$asset" '$2 == asset { print $1 }' "$lock")"
-    if [ "$(printf '%s\n' "$expected" | sed '/^$/d' | wc -l | tr -d ' ')" != 1 ] || ! [[ "$expected" =~ ^[0-9a-f]{64}$ ]]; then
-      echo "internal archive digest lock has no unique lowercase SHA-256 for $asset" >&2
-      exit 1
-    fi
-    if [ -n "${PACKSLIP_SHA256:-}" ] && [ "$PACKSLIP_SHA256" != "$expected" ]; then
-      echo "packslip-sha256 disagrees with the action's internal archive digest lock" >&2
-      exit 1
-    fi
-  elif [ -n "${PACKSLIP_SHA256:-}" ]; then
-    expected="$PACKSLIP_SHA256"
-  else
-    # Preserve the old explicit-version escape hatch. It is intentionally
-    # noisier than the default: an action commit can lock only the CLI
-    # release it was prepared for.
-    echo "::warning::packslip-version overrides the action's internally pinned release; verifying build provenance without an archive SHA-256. Set packslip-sha256 for a strict override." >&2
-  fi
   if ! gh release download "v${version}" -R jdx/packslip -p "$asset" -D "$dir" --clobber; then
     echo "could not download $asset from jdx/packslip v${version}" >&2
     if [ "$os" = darwin ] && [ "$arch" = x64 ]; then
@@ -81,8 +52,8 @@ else
     fi
     exit 1
   fi
-  if [ -n "$expected" ]; then
-    if ! [[ "$expected" =~ ^[0-9a-f]{64}$ ]]; then
+  if [ -n "${PACKSLIP_SHA256:-}" ]; then
+    if ! [[ "$PACKSLIP_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
       echo "packslip-sha256 must be a 64-character lowercase hexadecimal SHA-256 digest" >&2
       exit 1
     fi
@@ -94,8 +65,8 @@ else
       echo "packslip-sha256 was set but neither sha256sum nor shasum is available" >&2
       exit 1
     fi
-    if [ "$actual" != "$expected" ]; then
-      echo "packslip archive SHA-256 mismatch: expected $expected, got $actual" >&2
+    if [ "$actual" != "$PACKSLIP_SHA256" ]; then
+      echo "packslip archive SHA-256 mismatch: expected $PACKSLIP_SHA256, got $actual" >&2
       exit 1
     fi
   fi

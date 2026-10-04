@@ -108,8 +108,7 @@ inputs:
     default: ""
   packslip-sha256:
     description: >
-      SHA-256 digest for an explicit packslip-version override. The default
-      version uses the generated action commit's internal archive digest lock.
+      SHA-256 digest of the packslip release archive this action downloads.
       It is checked before provenance verification and extraction, and is
       ignored when packslip-path supplies the executable.
     required: false
