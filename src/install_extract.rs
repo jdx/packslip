@@ -648,7 +648,7 @@ pub fn extract(
     if limits.bytes == 0 || limits.entries == 0 {
         return Err(Error::Limit);
     }
-    std::fs::create_dir_all(parent)?;
+    create_dirs(parent)?;
     let tree = private_builder(".packslip-stage-").tempdir_in(parent)?;
     let format = artifact
         .format
