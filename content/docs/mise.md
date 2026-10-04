@@ -216,7 +216,7 @@ lists it and has not withdrawn it, and a vendor withdrawal still excludes
 it. A stamp limits which releases mise accepts; the vendor's signature
 still authenticates them. Set the tool option `trust = "vendor"` to
 exempt one tool. See
-[Manage release lists](/docs/release-lists/#use-a-third-party-list) for
+[Manage release lists](/docs/release-lists/#publish-or-trust-a-third-party-list) for
 how stamping works, and
 [mise's stamp settings](https://mise.jdx.dev/dev-tools/packslip-verification.html#stamps)
 for the pin formats.

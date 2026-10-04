@@ -175,7 +175,7 @@ need only the public key, `release.pub`. The key ID names the signer in
 later output. `keygen` refuses to overwrite a key, so to run the
 walkthrough again, start in a new empty directory.
 
-## Create and sign the packslip {#sign-the-manifest}
+## Create and sign the packslip
 
 <!-- docs-test: quickstart -->
 ```sh
@@ -216,7 +216,7 @@ wrote dist/packslip.sigstore.json (1 artifact(s), signed by C8B574447E4F0ACA, un
   as in `mytool-1.2.3-linux-x64.tar.gz`. This sample's name gives no
   platform, so here the suffix only makes the intent explicit.
 
-## Read the signed statement {#read-the-manifest}
+## Read the signed statement
 
 `packslip show` prints the statement inside the bundle. It only decodes
 the statement; the next step checks the signature.

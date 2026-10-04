@@ -53,7 +53,7 @@ https://mytool.example.com/.well-known/packslip.json             the release lis
 
 A project with a path, `example.com/tools/mytool`, serves its list at
 `https://example.com/.well-known/packslip/tools/mytool.json` instead; see
-[Manage release lists](/docs/release-lists/#choose-a-discovery-location).
+[Manage release lists](/docs/release-lists/#where-consumers-look-for-the-list).
 
 ## Serve the files
 
@@ -135,7 +135,7 @@ explains. Consumers that already accepted a release refuse the first one
 that declares it until a person approves it. Consumers written before the
 field existed ignore it, so they still refuse a release from another file
 until a person approves it; see
-[Reusable workflows](/release/v1/#reusable-workflows).
+[Workflow pinning](/release/v1/#workflow-pinning).
 
 ## Publish a release
 

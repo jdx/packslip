@@ -5,7 +5,7 @@ weight: 58
 group: consume
 ---
 
-# Distribution packages {#distribute-the-installer}
+# Distribution packages
 
 The distribution build provides `packslip install` and verification
 without the publisher commands. A native package manager installs
@@ -153,7 +153,7 @@ An accepted PPA upload is not evidence that Launchpad built or published both
 architectures. Check those builds separately. COPR submission waits for its
 build results. Before announcing either repository, install its package on a
 clean native machine, confirm `packslip install --help`, and run the
-[publisher adoption checks](/docs/compatibility/#bootstrap-platform-and-handoff-coverage).
+[publisher adoption checks](/docs/compatibility/#installation-platforms-and-tool-handoff).
 
 The PPA/COPR signature authenticates packslip's package distribution. It does
 not approve the publishers installed by `packslip install`: their release

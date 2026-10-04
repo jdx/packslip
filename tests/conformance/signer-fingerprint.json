@@ -1,5 +1,5 @@
 {
-  "rule": "https://packslip.dev/release/v1/#signer-fingerprint",
+  "rule": "https://packslip.dev/release/v1/#signer-fingerprints",
   "description": "The signer fingerprint of a keyless project and how a consumer checks one. Every case has a `kind`. `derive`: the pin for an `issuer` and a `repository_id`, as the certificate records them; `expect` is the pin, or null when the inputs have no fingerprint (a missing or non-decimal repository ID). `parse`: whether the text in `pin` is a fingerprint at all; `expect` is `valid` or `invalid`, and only the one canonical spelling is valid. `check`: a `pin` against the certificate of a release that already verified, which carries an `issuer` and a `repository_id` (null when the certificate records none); `expect` is `match`, `mismatch` for another repository or issuer, or `no-repository-id` when the certificate gives nothing to compare. A `check` case names the `project` and `owner` the certificate was issued under only to show that neither is consulted.",
   "cases": [
     { "name": "a GitHub repository", "kind": "derive", "issuer": "https://token.actions.githubusercontent.com", "repository_id": "922514152", "expect": "ps1_snirenkjwr7m5ozgcufameodnm" },

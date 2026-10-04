@@ -53,7 +53,7 @@ it, how to unpack it, and which executable it contains. The signed
 artifact also carries whichever of `os`, `arch`, and `libc` it depends
 on; a statically linked Linux executable, for example, has no `libc`.
 
-[Create this example and read the field-by-field explanation](/docs/getting-started/#read-the-manifest),
+[Create this example and read the field-by-field explanation](/docs/getting-started/#read-the-signed-statement),
 or explore the [full specification](/release/v1/#the-release-statement).
 
 ## Use release metadata in installers

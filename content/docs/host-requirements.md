@@ -45,7 +45,7 @@ must match what it reads, or `create` fails.
 `--no-libs` skips reading the executables, which also turns off libc
 detection: a Linux artifact whose name does not say `musl` or `gnu` is
 then recorded as `gnu`. Set `libc` explicitly for a static or musl build,
-as [Artifact configuration](/docs/describing-releases/#check-inferred-metadata)
+as [Artifact configuration](/docs/describing-releases/#how-packslip-create-reads-file-names)
 shows.
 
 ## Declare required commands

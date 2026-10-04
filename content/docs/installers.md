@@ -251,7 +251,7 @@ The library provides these pieces for signer continuity:
   consumers hold later releases to the repository instead of one workflow
   file. `continues_signer` then accepts any workflow of the repository.
   Store the value beside the signer and apply the downgrade rule in
-  [Reusable workflows](/release/v1/#reusable-workflows).
+  [Workflow pinning](/release/v1/#workflow-pinning).
   `packslip verify --json` reports `"pin_workflow": false` for such a
   release and omits the field otherwise.
 - `packslip::forge::same_workflow` compares two remembered signers, each

@@ -22,7 +22,7 @@ accepted a list reject a missing or expired replacement. See
 [Refresh or withdraw releases](#refresh-or-withdraw-releases) for the
 update procedure.
 
-## Where consumers look for the list {#choose-a-discovery-location}
+## Where consumers look for the list
 
 For a project named after its own domain, the signed list is the only
 place consumers find releases. For a GitHub project, it supplements
@@ -43,7 +43,7 @@ Other forges need the discovery mechanism the specification describes in
 [Discovery](/release/v1/#discovery); a recognized signing issuer alone
 does not give consumers a release list.
 
-### A supplementary list adds to GitHub discovery {#github-lists-supplement-release-discovery}
+### A supplementary list adds to GitHub discovery
 
 A supplementary list overrides the releases it names; it does not replace
 discovery through the repository's GitHub releases. A version it omits is
@@ -185,7 +185,7 @@ A latest request skips prereleases, meaning versions with a prerelease
 part such as `1.3.0-rc.1`; GitHub's prerelease flag is not consulted. See
 the full [latest selection rules](/release/v1/#latest).
 
-## Publish or trust a third-party list {#use-a-third-party-list}
+## Publish or trust a third-party list
 
 A registry, mirror, or scanning service can sign a list of releases it has
 checked. The list places a *stamp* on each release it names; the service

@@ -4,7 +4,7 @@ weight: 52
 group: consume
 description: Install signed upstream tools directly, choose a version and installation scope, or bootstrap mise with a pinned verifier.
 ---
-# Install a tool with packslip {#bootstrap-a-package-manager}
+# Install a tool with packslip
 
 `packslip install` downloads, verifies, and installs a tool's signed upstream
 release. Use it for a CLI you want on PATH, to bootstrap a package manager such

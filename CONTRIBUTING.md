@@ -1,23 +1,32 @@
 # Contributing
 
-packslip is a stable format at version 1 and a Rust reference
-implementation of it. For a bug report or format feedback, open an
+This repository contains the version 1 packslip specification, its Rust
+implementation, the CLI, GitHub Actions, and the documentation site.
+Start with the source map below to find the part you want to change.
+
+For a bug report or format feedback, open an
 [issue](https://github.com/jdx/packslip/issues) with the use case and,
-where possible, a small release layout that demonstrates it. A proposal
-that changes anything version 1 holds fixed is a version 2 proposal; the
-specification's [Stability](https://packslip.dev/release/v1/#stability)
-section draws the line.
+where possible, a small release layout that demonstrates it. Changes to
+the format must respect the version 1 [stability
+contract](https://packslip.dev/release/v1/#stability); changes outside that
+contract require a version 2 proposal.
 
 ## Set up the repository
 
-You need Rust 1.93 or newer from rustup (this repository's `mise.toml`
-does not pin Rust), and mise 2026.9.7 or newer. `mise install` installs the versions
-pinned in `mise.toml` and `mise.lock`: Hugo, usage, and shellcheck for the
-docs and lint tasks, Communiqué for release notes, and mr-boxington
-(`mbx`). In this repository mise wraps `cargo` so that it builds through
-`mbx`, which makes `target/` a symlink into `~/.cache/mbx`.
-`mise run docs:check` also needs Python 3.9 or newer, a POSIX shell, and
-`tar`.
+Install Rust 1.93 or newer through rustup and mise 2026.9.7 or newer.
+`mise.toml` does not pin a Rust toolchain. `mise install` installs the
+other tools at the versions recorded in `mise.toml` and `mise.lock`:
+
+| Tools | Used for |
+| --- | --- |
+| Hugo and usage | Building the site and generating command documentation |
+| shellcheck and hk | Lint checks and local hooks |
+| Communiqué | Release notes |
+| mr-boxington (`mbx`) | Building through the repository's Cargo wrapper |
+
+The wrapper makes `target/` a symlink into `~/.cache/mbx`. The documentation
+check also needs Python 3.9 or newer, a POSIX shell, and `tar`; the Worker
+tests need Node.js 20 or newer.
 
 ```sh
 mise install
@@ -61,12 +70,13 @@ release's section to `CHANGELOG.md` from the merged pull request titles;
 edit that file by hand only when
 [publishing a version release-plz would not propose](RELEASING.md#publishing-a-version-release-plz-would-not-propose).
 
-A change to a rule the [conformance vectors](tests/conformance/README.md)
-cover changes the vectors too, in the same pull request. They are the
-specification in executable form, so a vector that has to be edited to
-keep the tests passing is a signal: either the change is a specification
-change, or the vector was describing behavior the specification does not
-require. Say which in the pull request.
+### Change a format rule
+
+The [conformance vectors](tests/conformance/README.md) express format rules
+as test cases. Change the affected vectors in the same pull request as a
+rule change, and explain whether you changed the specification or corrected
+a vector that required behavior outside it. An editorial clarification
+should leave the cases and expected results unchanged.
 
 ## Preview and build the docs
 
@@ -92,11 +102,11 @@ in the specification and command details in CLI help. Check examples
 against the implementation, distinguish draft integrations from shipped
 features, and use site paths such as `/docs/verifying/` for internal links.
 
-Preserve existing anchors when reorganizing sections, because other sites
-link to them and `mise run docs:check` sees only links within this one.
-`docs/spec/packslip.md` is also rendered on GitHub, so keep the exact text
-of any heading that others link to, and never add `{#id}` there. In
-`content/docs/`, give a renamed heading its old anchor with `{#old-id}`.
+When renaming a section, update its links in the guides, specification,
+fixture metadata, and repository documentation. `mise run docs:check`
+checks links within the built site; check repository-only links separately.
+Use ordinary Markdown headings in `docs/spec/packslip.md`, because it is
+also rendered on GitHub and Hugo's `{#id}` syntax is not portable there.
 
 ## Check a change
 
@@ -142,17 +152,25 @@ The `final` job in `ci.yml` gates on `test`, `signing`, and `zizmor`; make it
 the required status check. The pull request title check stays in its own
 workflow, `conventional-commits.yml`, because it runs on `pull_request_target`.
 
-For documentation changes, also inspect the affected pages in a browser.
-`mise run docs:check` fails when a local link, anchor, or asset is
-missing, when a page has no H1 or more than one, when a page repeats an
-`id`, or when inline markup is followed by a space and then punctuation.
-It also fails when one of the guide URLs listed in `scripts/check-docs.py`
-stops resolving; if you rename or move a guide, list its old path under
-`aliases` in the front matter. The check then runs the quickstart and the
-recipes in temporary directories with unlogged keys, without uploading
-files or logging signatures. The homepage and quickstart share
-`docs/examples/release-excerpt.json`, which is checked against the
-statement the quickstart creates.
+### Validate documentation
+
+Run `mise run docs:check` and inspect the affected pages in a browser.
+The check covers:
+
+- Local links, anchors, assets, and the guide URLs listed in
+  `scripts/check-docs.py`.
+- One H1 per page, unique element IDs, and spacing around inline markup.
+- The quickstart and release recipes, run in temporary directories with
+  unlogged keys and no uploads.
+- The shared homepage/quickstart example in
+  `docs/examples/release-excerpt.json`, compared with the statement the
+  quickstart creates.
+
+If you move a guide, update the required paths in `scripts/check-docs.py`
+and links that point to it. An alias in the page's front matter can keep an
+old path resolving when that is useful.
+
+### Keep executable examples in sync
 
 `content/docs/getting-started.md` has exactly four blocks marked
 `<!-- docs-test: quickstart -->` (setup, create, show, verify). The check
@@ -164,8 +182,9 @@ install packslip are not marked and never run.
 Each TOML block in `content/docs/recipes.md` marked
 `<!-- docs-test: recipe NAME -->` needs a matching `NAME` entry in
 `RECIPE_FILES` in `scripts/check-docs.py`, which describes its sample
-archives; the check fails when the markers and the entries differ. Recipe checks validate configuration and archive layout,
-not language builds or platform signing.
+archives; the check fails when the markers and the entries differ. Recipe
+checks validate configuration and archive layout, not language builds or
+platform signing.
 
 When you try key-signed commands locally, pass `--no-log` to
 `packslip create` (and to `packslip releases`), and `--allow-unlogged` to

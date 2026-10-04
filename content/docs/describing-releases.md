@@ -15,7 +15,7 @@ Start with flags for a uniform set of archives, or keep per-artifact
 configuration in `release.toml`. For complete example layouts and
 manifests, see [Release recipes](/docs/recipes/).
 
-## Choose flags or a TOML manifest {#choose-flags-or-a-manifest}
+## Choose flags or a TOML manifest
 
 Flags and `release.toml` produce the same signed release statement:
 `release.toml` configures `packslip create` and is not a second
@@ -59,7 +59,7 @@ artifact's file name, and libc from the name or the executables inside.
 Run `packslip show` on the bundle to check what it inferred before
 publishing, and set explicit values for anything it got wrong.
 
-### How `packslip create` reads file names {#check-inferred-metadata}
+### How `packslip create` reads file names
 
 Inference reads file names and executables, not your build
 configuration. The OS comes from a word in the name or from its
@@ -265,7 +265,7 @@ download URL prefix, release-notes URL, and source settings, including
 their defaults, replace those in `release.toml`; see
 [Action inputs](/docs/publishing/#action-inputs).
 
-### Keys in `release.toml` {#manifest-keys}
+### Keys in `release.toml`
 
 Each table lists the keys `release.toml` accepts at that level and the
 flag, if any, that sets the same value.
@@ -338,7 +338,7 @@ without opening the archive, and `packslip verify` does not check them
 either. Copy them from the archive listing, and do not put `dist/` in an
 `archive` path unless that directory is inside the archive.
 
-### How `release.toml` and flags combine {#defaults-and-overrides}
+### How `release.toml` and flags combine
 
 When you pass both, `packslip create` combines them as follows:
 

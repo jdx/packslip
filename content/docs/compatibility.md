@@ -83,7 +83,7 @@ also needs an available, eligible release and valid current trust and list
 metadata. Historical compatibility never accepts an expired list, rolls back a
 sequence, or bypasses a security rejection.
 
-## Installation platforms and tool handoff {#bootstrap-platform-and-handoff-coverage}
+## Installation platforms and tool handoff
 
 Required native CI tests installation on Linux x64/ARM64, macOS ARM64,
 and Windows x64/ARM64. It covers discovery, extraction, ownership and

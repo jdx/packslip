@@ -148,7 +148,7 @@ The fingerprint stays the same when the repository is renamed, moves to
 another owner, or changes its release workflow. Every tool in a monorepo
 shares it, so still check that the verified project is the tool you asked
 for. A key-signed project has no fingerprint; pin its key with `--pubkey`.
-See [Signer fingerprint](/release/v1/#signer-fingerprint) for how it is
+See [Signer fingerprint](/release/v1/#signer-fingerprints) for how it is
 derived.
 
 ## Verify against a public key
@@ -253,7 +253,7 @@ ok: github.com/jdx/hk 2.3.0 published 2026-09-26T19:59:21.295096144Z signed by h
   reports them as `source_repository`. A repository keeps its ID when it
   is renamed or transferred to another owner, so a consumer pins the ID
   rather than the name or the owner; see
-  [Forge identity](/release/v1/#forge-identity).
+  [Repository identity and renames](/release/v1/#repository-identity-and-renames).
 - Each `requires` line repeats what one artifact declares. `verify` does
   not check it against this host.
 

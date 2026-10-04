@@ -211,7 +211,7 @@ collect the files with `actions/download-artifact` and `artifacts` instead
 of `download`. Then upload the bundle and publish the release from the job
 that has `contents: write`.
 
-## Check the published result {#check-the-result}
+## Check the published result
 
 The action verifies the local bundle before uploading it. Check the published
 release separately: download the bundle and an artifact from the URLs users
@@ -295,7 +295,7 @@ make them refuse it.
   written before the field existed ignore it, so they still refuse a
   release from a different workflow file until a person approves it.
   `packslip create` refuses the flag with `--key`. See
-  [Reusable workflows](/release/v1/#reusable-workflows).
+  [Workflow pinning](/release/v1/#workflow-pinning).
 
 The [consumer rules](/release/v1/#consumer-rules) define these checks.
 

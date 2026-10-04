@@ -36,7 +36,7 @@ see [installation methods](/docs/getting-started/#install-packslip).
 | Install a tool from its signed release | `packslip install github.com/jdx/mise` | [Install a tool with packslip](/docs/bootstrap/) |
 | Create and sign a release manifest | `packslip create` | [Getting started](/docs/getting-started/) or [publish from CI](/docs/publishing/) |
 | Check a signer and downloaded files | `packslip verify` | [Verify a release](/docs/verifying/) |
-| Read the metadata inside a bundle | `packslip show` | [Read the manifest](/docs/getting-started/#read-the-manifest) |
+| Read the metadata inside a bundle | `packslip show` | [Read the manifest](/docs/getting-started/#read-the-signed-statement) |
 | Get a repository's signer fingerprint | `packslip pin` | [Pin a signer](/docs/verifying/#pin-a-signer-with-its-fingerprint) |
 | Withdraw or recommend releases | `packslip releases` | [Manage release lists](/docs/release-lists/) |
 

@@ -649,7 +649,7 @@ struct Create {
     /// its repository. The signer must still be a workflow of that
     /// repository. A consumer that last accepted a release without the flag
     /// refuses the first one with it until a person approves it. See
-    /// https://packslip.dev/release/v1/#reusable-workflows
+    /// https://packslip.dev/release/v1/#workflow-pinning
     #[usage(long, help_heading = "Signing")]
     no_pin_workflow: bool,
 }
@@ -1304,7 +1304,7 @@ struct Releases {
     no_log: bool,
     /// Keyless only: write identity.pin_workflow: false into the list, as
     /// `packslip create --no-pin-workflow` does for a release. See
-    /// https://packslip.dev/release/v1/#reusable-workflows
+    /// https://packslip.dev/release/v1/#workflow-pinning
     #[usage(long, help_heading = "Signing")]
     no_pin_workflow: bool,
     /// Where to write the list; consumers fetch it only from its .well-known

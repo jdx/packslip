@@ -254,14 +254,14 @@ and match any platform scope on the entry, or `create` refuses the entry.
 For complete configurations, see [Release recipes](/docs/recipes/).
 
 When several entries for the same resource apply, the most specific wins;
-see [How consumers choose among entries](#provide-fallbacks-deliberately).
+see [How consumers choose among entries](#how-consumers-choose-among-entries).
 
-## How consumers choose among entries {#provide-fallbacks-deliberately}
+## How consumers choose among entries
 
 Consumers group entries by resource identity before selecting a source.
 For a completion, the identity is the executable and shell; for a CLI
 spec, the executable and format; for a skill, its name; for an SBOM, its
-format. [Scope and identity](/release/v1/#scope-and-identity) gives the
+format. [Resource identity](/release/v1/#resource-identity) gives the
 identity of every other kind. A bash completion and a zsh completion are
 separate needs, not fallback choices.
 

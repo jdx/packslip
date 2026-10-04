@@ -1,10 +1,21 @@
 # Releasing packslip
 
-Maintainers release by reviewing and merging the release PR maintained by
-release-plz. An ordinary push to `main` updates that PR; it does not by
-itself publish a version. Publication also requires the release job to be
-enabled (see [Repository setup](#repository-setup)). For local builds and
-documentation generation, see [CONTRIBUTING.md](CONTRIBUTING.md).
+For an ordinary release, review and merge the PR maintained by release-plz.
+A push to `main` updates that PR; publication starts after it is merged,
+provided the release job is enabled. See [Repository setup](#repository-setup)
+for the required credentials and settings.
+
+| Task | Procedure |
+| --- | --- |
+| Publish the next version | [Release sequence](#release-sequence) |
+| Check a completed release | [After a release](#after-a-release) |
+| Publish a version release-plz will not propose | [Manual version proposal](#publishing-a-version-release-plz-would-not-propose) |
+| Withdraw a release or mark a security fix | [Update the signed list](#withdraw-a-release-or-mark-a-security-fix) |
+| Add an older release to packslip.dev | [Backfill an earlier release](#backfill-an-earlier-release) |
+| Configure publication for a repository | [Repository setup](#repository-setup) and [crates.io publication](#cratesio-publication) |
+
+For local builds and documentation generation, see
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Release sequence
 
@@ -13,47 +24,46 @@ documentation generation, see [CONTRIBUTING.md](CONTRIBUTING.md).
    commits through `cliff.toml`. The workflow then regenerates the CLI
    documentation against that version and pushes all of it as one commit
    to the `release-plz` branch, creating or updating the
-   `chore: release vX.Y.Z` PR. The PR never exists in a state without the
-   regenerated documentation, so merging it at any moment ships a CLI
-   reference that matches the version.
+   `chore: release vX.Y.Z` PR. The version bump and generated CLI reference
+   are committed together so the published documentation matches the release.
 2. A maintainer reviews and merges the PR.
 3. If `RELEASE_PLZ_RELEASE` is `true`, the `release` job in
    `release-plz.yml` publishes the crate to crates.io and then creates the
    `vX.Y.Z` tag.
-4. The tag starts `release.yml`, which:
-   - checks that the tag matches the version in `Cargo.toml`;
-   - builds each of the five platforms' archive and its executable on its
-     own (see [Platforms](#platforms)), and signs and notarizes the macOS
-     binary;
-   - adds the usage spec, the man page, and bash, zsh, fish, and
-     PowerShell completions;
-   - writes the install scripts `install.sh` and `install.ps1` with
-     `installer/render.sh`, which fills in the SHA-256 of each executable,
-     and attests every release file;
-   - creates a draft GitHub release and rewrites its notes with
-     Communiqué, keeping GitHub's generated notes if that step fails;
-   - signs the release's packslip as the project `packslip.dev`, uploads
-     the files and the bundle to the R2 bucket behind packslip.dev, and
-     attaches the bundle to the GitHub release;
-   - publishes the GitHub release and moves the action's major tag (`v1`
-     for 1.x releases), creating the tag if it does not exist yet;
-   - pushes the container image `ghcr.io/jdx/packslip` for linux/amd64 and
-     linux/arm64, built from the release's own executables, and attests it
-     (see [Container image](#container-image));
-   - calls `packslip-releases.yml` to rebuild the signed release list at
-     `https://packslip.dev/.well-known/packslip.json`. That workflow also
-     re-signs the list every Monday, before its 30-day validity runs out,
-     and every rebuild applies the withdrawals committed under
-     `.github/packslip/`; see
-     [Withdraw a release or mark a security fix](#withdraw-a-release-or-mark-a-security-fix).
-     Once the list names the release, [packslip.sh](#packslipsh) serves
-     its install scripts.
+4. The tag starts `release.yml`, which builds, signs, and publishes the
+   release files, container image, and discovery metadata described below.
+
+### What the tag workflow publishes
+
+The workflow first checks that the tag matches `Cargo.toml`. It then
+produces and publishes these outputs:
+
+| Output | Publication behavior |
+| --- | --- |
+| Executables and archives | Build all five [platforms](#platforms); sign and notarize the macOS executable. |
+| CLI resources | Include the usage spec, man page, and bash, zsh, fish, and PowerShell completions. |
+| Install scripts | Render `install.sh` and `install.ps1` with each executable's SHA-256, and attest all release files. |
+| Signed release manifest | Sign as project `packslip.dev`, upload the files and bundle to R2, and attach the bundle to the GitHub release. |
+| GitHub release and action tag | Create the release as a draft, write notes with Communiqué, then publish it. If note generation fails, retain GitHub's generated notes. Move or create the action's major tag (`v1` for 1.x). |
+| Container image | Publish and attest `ghcr.io/jdx/packslip` for linux/amd64 and linux/arm64, using the release's executables. See [Container image](#container-image). |
+| Signed release list | Call `packslip-releases.yml` to publish the list at `https://packslip.dev/.well-known/packslip.json`. |
+
+The list workflow also refreshes the signature every Monday before its
+30-day validity runs out. Every rebuild retains withdrawals committed in
+`.github/packslip/`; see [Withdraw a release or mark a security
+fix](#withdraw-a-release-or-mark-a-security-fix). Once the list names the
+new release, [packslip.sh](#packslipsh) can serve its install scripts.
 
 ## After a release
 
-Check the workflow result, the platform assets on the GitHub release, and
-the release's packslip. `packslip.dev` names a host, not a GitHub
-repository, so `packslip verify` has no identity to derive from it. Pass
+Confirm that the release workflow succeeded, then check the files,
+discovery list, install script, and container image. Set `v` to the version
+you released in the first example and use the same value in the later checks.
+
+### Verify release files
+
+`packslip.dev` is a domain project, so `packslip verify` needs an explicit
+signer policy. Pass
 the identity of jdx/packslip's GitHub Actions workflows: `release.yml`
 signs each release's packslip, and `packslip-releases.yml` signs the list.
 `--identity-prefix https://github.com/jdx/packslip/` accepts any workflow
@@ -69,7 +79,9 @@ packslip verify packslip.sigstore.json \
   --artifact packslip-v$v-linux-x64.tar.xz
 ```
 
-Then confirm that the signed release list names the new version:
+### Confirm discovery
+
+Verify the signed release list and confirm that it names the new version:
 
 ```sh
 curl -fsSL https://packslip.dev/.well-known/packslip.json -o list.json
@@ -82,20 +94,27 @@ packslip show list.json | jq -r '.predicate.releases[].version'
 [Verify a release](https://packslip.dev/docs/verifying/) explains what
 verification checks and what its output means.
 
-Last, confirm that packslip.sh serves the new release's install script.
+### Check the install script
+
+Confirm that packslip.sh serves the new release's install script.
 `content-location` names the release it came from:
 
 ```sh
 curl -fsSI https://packslip.sh | grep -i '^content-location'
 ```
 
-And that the container image runs the new release and carries its
-attestation:
+### Check the container image
+
+Confirm that the image runs the new release and carries its attestation:
 
 ```sh
 docker run --rm ghcr.io/jdx/packslip:$v version
 gh attestation verify oci://ghcr.io/jdx/packslip:$v --repo jdx/packslip
 ```
+
+If package repository publication is enabled, check those workflow results
+too. The [distribution guide](https://packslip.dev/docs/distributions/)
+describes native APT and RPM installation checks.
 
 ## packslip.sh
 
@@ -111,19 +130,21 @@ from the release files in R2. The Worker is `packslip-sh`, configured in
 | `/vX.Y.Z`, `/vX.Y.Z/install.sh` | `install.sh` of that release |
 | `/vX.Y.Z/install.ps1` | `install.ps1` of that release |
 
-The latest release is the one the signed release list recommends with
-`latest`, or else its highest release that is neither withdrawn nor a
-prerelease, so a withdrawal reaches packslip.sh with the next list. Each
-Cloudflare data center caches a script it served, a release's own copy for
-good and the latest for five minutes, so repeated installs read nothing
-from R2; every request still runs the Worker once. A
-release from before the install scripts existed has none, and its paths
-answer 404. Every client gets the same bytes from a URL: the Worker reads
-the user agent only to count downloads, so a script a browser shows is
-the one a shell runs, and a checksum taken of a versioned URL holds for
-everyone. Each script pins the executables by SHA-256, so its own
-checksum pins the release for every platform, for example in a
-Dockerfile for an image that has curl or wget:
+The latest release is the signed list's `latest` recommendation, or else
+its highest release that is neither withdrawn nor a prerelease. A withdrawal
+therefore changes the script selected when the next list is published.
+Releases from before install scripts were introduced have no script;
+requests for those paths return 404.
+
+Each Cloudflare data center caches versioned scripts indefinitely and the
+latest script for five minutes. Repeated downloads use that cache rather
+than R2, while every request still runs the Worker. User-agent information
+is used only to count downloads; every client receives the same bytes
+from a given script URL.
+
+Each script pins its executable downloads by SHA-256. Pinning the versioned
+script's own checksum therefore fixes the packslip download for every
+supported platform. For example, in a Dockerfile with curl or wget:
 
 ```dockerfile
 ADD --checksum=sha256:<sha256 of install.sh> https://packslip.sh/vX.Y.Z /tmp/install-packslip.sh

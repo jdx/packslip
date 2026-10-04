@@ -9,7 +9,7 @@ their signed releases, publishers can add a packslip to an existing release
 job, and consumer developers can use the format and Rust crate in their own
 installers or mirrors.
 
-## Start here {#guides}
+## Start here
 
 | You want to… | Start here |
 | --- | --- |
@@ -61,7 +61,7 @@ guides cover what a release needs beyond the action's defaults.
   consumer implements. A successful `packslip verify` alone does not meet
   it.
 
-## Reference {#reference}
+## Reference
 
 - [CLI overview and reference](/cli/): installation, common tasks, and every
   command, argument, and flag.

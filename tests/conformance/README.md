@@ -1,9 +1,9 @@
 # Conformance vectors
 
-The rules in the [packslip specification](https://packslip.dev/release/v1/)
-in executable form. They exist for implementations other than this one: a
-consumer written in any language can read these files and check that it
-selects, parses, and refuses what the specification says it should.
+Use these JSON test vectors to check an implementation against the
+[packslip specification](https://packslip.dev/release/v1/). A consumer in
+any language can run the cases to test parsing, artifact and resource
+selection, repository identity, and signer fingerprints.
 
 An implementation that disagrees with a vector disagrees with the
 specification. If you believe a vector is wrong, open an
@@ -17,41 +17,45 @@ something the specification does not.
 | `resource-selection.json` | [Resources](https://packslip.dev/release/v1/#resources) |
 | `tag-versions.json` | [Tags](https://packslip.dev/release/v1/#tags) |
 | `statement-validity.json` | [The release statement](https://packslip.dev/release/v1/#the-release-statement) |
-| `forge-identity.json` | [Forge identity](https://packslip.dev/release/v1/#forge-identity) |
-| `signer-fingerprint.json` | [Signer fingerprint](https://packslip.dev/release/v1/#signer-fingerprint) |
+| `forge-identity.json` | [Repository identity and renames](https://packslip.dev/release/v1/#repository-identity-and-renames) |
+| `signer-fingerprint.json` | [Signer fingerprint](https://packslip.dev/release/v1/#signer-fingerprints) |
 
-Each file is a JSON object with a `rule` link, a `description` of what the
-cases mean, and a `cases` array. Every case has a `name`; some carry a
-`reason` or `comment` explaining the rule at issue. The `description`
-field defines that file's case shape — read it before writing a runner.
+## Read a vector file
+
+Each file is a JSON object with these fields:
+
+| Field | Meaning |
+| --- | --- |
+| `rule` | Link to the specification section the file tests |
+| `description` | Case shape and what the inputs and expected results mean |
+| `cases` | Named test cases; some also carry a `reason` or `comment` |
+
+Read `description` before implementing a runner: the case shape differs
+between files. Report each case's `name` when a result differs so a failure
+can be traced to the corresponding rule.
 
 ## Scope
 
-These cover what is packslip's own: which artifact a host installs, which
-resource entries apply to it, which version a tag names, whether a
-statement is structurally valid, whether a verified forge release is
-the repository a consumer pinned, and the signer fingerprint a keyless
-project has and how a pin is checked against a verified certificate.
+The vectors cover packslip's format and selection rules: which artifact
+fits a host, which resources apply, which version a tag names, whether a
+statement is structurally valid, and whether a verified certificate
+matches the expected repository and fingerprint.
 
-They deliberately do not cover signature verification. A packslip is a
+Signature verification has separate coverage. A packslip is a
 [sigstore bundle](https://github.com/sigstore/protobuf-specs) and its
 signature, certificate chain, and transparency log entry are verified as
-sigstore defines, against sigstore's own conformance suite; restating that
-here would test sigstore, not packslip. The statement vectors are payloads
-rather than bundles for the same reason. This repository's CI signs and
-verifies through both schemes end to end against the public log on every
-push to `main`.
+sigstore defines, against sigstore's own conformance suite. The statement
+vectors contain decoded payloads rather than bundles. This repository's CI
+also signs and verifies through both schemes end to end against the public
+log on every push to `main`.
 
-Nor do they cover the parts of the
-[consumer rules](https://packslip.dev/release/v1/#consumer-rules) that
-depend on state a consumer carries between installs — no-downgrade,
-release-list sequence, minimum release age, where a pin is stored. Those
-are properties of a consumer's history, not of a document, so a vector
-cannot express them; the specification states them normatively and a
-consumer tests them against its own store. The forge identity vectors are
-an exception. Each case supplies the remembered pin as input, so a vector
-can state how a release is compared with the pin without saying how the
-pin was stored.
+The vectors do not model a full installation history. Some
+[consumer rules](https://packslip.dev/release/v1/#consumer-rules) depend
+on state a consumer carries between installs: trust continuity,
+release-list sequence, minimum release age, and pin storage. Test those
+rules against the consumer's own state store. The forge identity cases
+do include a remembered pin as input, which tests comparison with that
+pin without prescribing storage or an installation history.
 
 ## Running them
 
@@ -61,9 +65,14 @@ Against the reference implementation:
 cargo test --test conformance
 ```
 
-They pass with `--no-default-features` too: everything they touch is in
-the crate's always-compiled core, which is what a verify-only consumer
-depends on.
+To check the minimal library build used by verification-only consumers:
+
+```sh
+cargo test --no-default-features --test conformance
+```
+
+The vectors exercise the crate's always-compiled core, so both builds
+run the same cases.
 
 ## Changing the vectors
 
