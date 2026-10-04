@@ -24,7 +24,10 @@ case "$kind" in
       packslip install --help
       packslip usage > /out/installer.usage.kdl
       grep -q "cmd install" /out/installer.usage.kdl
-      ! grep -E "cmd (create|releases|keygen|schema)" /out/installer.usage.kdl
+      if grep -Eq "cmd (create|releases|keygen|schema)" /out/installer.usage.kdl; then
+        echo "installer package includes publisher commands" >&2
+        exit 1
+      fi
       test -d /etc/packslip/pins.d
     ')
     ;;
@@ -41,7 +44,10 @@ case "$kind" in
       packslip install --help
       packslip usage > /out/installer.usage.kdl
       grep -q "cmd install" /out/installer.usage.kdl
-      ! grep -E "cmd (create|releases|keygen|schema)" /out/installer.usage.kdl
+      if grep -Eq "cmd (create|releases|keygen|schema)" /out/installer.usage.kdl; then
+        echo "installer package includes publisher commands" >&2
+        exit 1
+      fi
       test -d /etc/packslip/pins.d
     ')
     ;;
