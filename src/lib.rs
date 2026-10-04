@@ -32,6 +32,8 @@ pub mod forge;
 pub mod install_extract;
 #[cfg(feature = "install-fs")]
 pub mod install_fs;
+#[cfg(feature = "install-host")]
+pub mod install_host;
 #[cfg(feature = "install-launcher")]
 pub mod install_launcher;
 #[cfg(feature = "install-policy")]
