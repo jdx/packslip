@@ -6,11 +6,16 @@ description: Follow release files from local configuration to a signed bundle, d
 ---
 # How packslip fits a release
 
-packslip adds a signed description to the release files you already build.
-Your build produces the software; packslip records what shipped; a consumer
-uses that record to choose and verify a download. This overview is for
-vendors and for anyone building a consumer. It follows one release through
-those steps and names the files involved.
+packslip connects a publisher's release job with the installer that uses
+its output. The publisher signs a description of the files it built; the
+installer uses that description to select a download and check who
+published it and whether the bytes match. You can keep your existing
+build and release hosting.
+
+This overview follows one release from build to installation and explains
+which files belong in your repository, in a release, and at the discovery
+URL. For runnable commands, start with [Getting started](/docs/getting-started/)
+or [Install a tool](/docs/bootstrap/).
 
 ## From build to installation
 
@@ -36,18 +41,18 @@ those steps and names the files involved.
    its signer and metadata against the requested project, chooses an artifact,
    and checks the downloaded bytes before unpacking or running them.
 
-The CLI creates and verifies one document at a time and checks local files
-against it. A consumer, such as a package manager, adds discovery, artifact
-selection, installation, and the trust state it keeps for each project
-across installs, such as its pin and the highest release-list sequence it
-has accepted. See [Build an installer or mirror](/docs/installers/) for
-what a consumer adds, and [Use packslip with mise](/docs/mise/) for one
-consumer's choices.
+`packslip create` prepares the signed bundle; `packslip verify` checks it
+and any local files you supply. `packslip install` also performs discovery,
+artifact selection, and installation, keeping signer pins and release-list
+sequences between runs. A package manager can implement that same consumer
+role. See [Install a tool](/docs/bootstrap/) to use the CLI,
+[Build an installer or mirror](/docs/installers/) to build your own
+consumer, and [Use packslip with mise](/docs/mise/) for mise's integration.
 
 ## Three documents with different jobs
 
-The word *manifest* can mean the vendor's TOML input or the signed release
-record. They are different files:
+Three files appear in the workflow. Only the two signed bundles are
+published for consumers; the TOML is local input to the release job:
 
 | Document | Who creates it | What it contains | Where it belongs |
 | --- | --- | --- | --- |
@@ -55,9 +60,9 @@ record. They are different files:
 | `packslip.sigstore.json` | `packslip create`, or the `jdx/packslip` action | One release statement, its signature, and verification material. | Beside the published release files. |
 | `packslip.json` | `packslip releases`, or the `jdx/packslip/releases` action | A signed list of release bundles, their digests, and discovery policy such as withdrawals. | At `/.well-known/packslip.json` on the project's host (`/.well-known/packslip/<path>.json` for a name with a path), or in the `.well-known/` directory on a GitHub repository's default branch for its optional list. |
 
-`release.toml` is not the document consumers verify. `packslip create`
-resolves its local paths into subject names, digests, download URLs, and
-artifact metadata. Uploading the TOML alone does not publish a packslip.
+`packslip create` resolves `release.toml`'s local paths into subject names,
+digests, download URLs, and artifact metadata. Uploading the TOML alone
+does not publish a packslip.
 See [Use a TOML manifest](/docs/describing-releases/#use-a-toml-manifest)
 for its keys.
 
@@ -89,8 +94,8 @@ files and does not replace the signer pin. Consumers check both the
 expected signer and the signed project and version.
 
 A keyless project can also publish its signer fingerprint, the `ps1_…` value
-that `packslip pin` prints, so a consumer does not have to trust the first
-release it sees; see
+that `packslip pin` prints. A consumer that records it independently of the
+release can check the first install against that pin; see
 [Publish your signer fingerprint](/docs/publishing/#publish-your-signer-fingerprint).
 
 The version must be semver whatever the tag looks like: a tag `v4.1`

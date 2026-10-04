@@ -2,15 +2,49 @@
 title: Use packslip with mise
 weight: 60
 group: consume
-description: Install tools from signed release manifests with mise, get the man pages, completions, and agent skills for the version in use, and keep trust across upgrades.
+description: Bootstrap mise with packslip, or use mise to install tools from signed releases with matching completions, man pages, and agent skills.
 ---
 # Use packslip with mise
 
-This page is for people who install tools with mise. mise is one consumer
-of packslip: it reads a tool's signed release manifest to select and
-verify the release artifact, install its executables, and provide the man
-pages, completions, and agent skills declared for the version active in
-your project.
+packslip and mise work together in two directions:
+
+- **Install mise with packslip.** Start with a small verifier, authenticate
+  mise's upstream release, and put its executable on PATH.
+- **Install tools with mise.** mise's `packslip:` backend reads signed release
+  manifests, manages tool versions, and provides the completions, man pages,
+  and agent skills declared for the version active in your project.
+
+The first installs mise itself. The second needs mise already installed and
+does not need the packslip CLI: mise includes the verifier.
+
+## Install mise with packslip
+
+With [packslip 1.5.1 or newer](/docs/getting-started/#install-packslip), run:
+
+```sh
+packslip install github.com/jdx/mise \
+  --pin ps1_nlhmwtfeufglxv5myvwvronk7a
+~/.local/bin/mise --version
+```
+
+The command checks mise's signed release against its GitHub repository and
+the signer pin, verifies the archive, and exports `mise` into `~/.local/bin`
+for a Unix user (`/usr/local/bin` as root). Follow
+[mise's shell setup](https://mise.jdx.dev/installing-mise.html#shells) if you
+want automatic project activation; packslip does not edit your shell files.
+
+The signer pin fixes the publisher, while omitting `--version` selects the
+current release. You can therefore pin packslip in a base image or bootstrap
+configuration and let mise float independently. Add `--version 2026.10.1`
+when you also want to fix mise's release. Repeating `packslip install` fetches
+and replaces mise; `mise self-update` can update the installed mise directly.
+
+See [Install a tool with packslip](/docs/bootstrap/) for scopes, trust, and a
+[Docker example](/docs/bootstrap/#bootstrap-mise-in-docker). mise's
+[installation guide](https://mise.jdx.dev/installing-mise.html#packslip)
+compares this route with its other installation methods.
+
+## Use mise's packslip backend
 
 The [consumer rules](/release/v1/#consumer-rules) set out what mise must
 check, including the signer, the requested project and version, the
@@ -18,7 +52,7 @@ downloaded bytes, the release list, and the trust remembered from earlier
 installs. They also say when mise may run a vendor's command to generate
 a resource. Where mise stores that trust, which settings control it, and
 how completions, man pages, and skills reach your shell and agent are
-mise's own choices. This page shows them; the
+mise's own choices. The sections below show them; the
 [mise documentation](https://mise.jdx.dev/dev-tools/backends/packslip.html)
 lists every option.
 
@@ -182,7 +216,7 @@ lists it and has not withdrawn it, and a vendor withdrawal still excludes
 it. A stamp limits which releases mise accepts; the vendor's signature
 still authenticates them. Set the tool option `trust = "vendor"` to
 exempt one tool. See
-[Manage release lists](/docs/release-lists/#use-a-third-party-list) for
+[Manage release lists](/docs/release-lists/#publish-or-trust-a-third-party-list) for
 how stamping works, and
 [mise's stamp settings](https://mise.jdx.dev/dev-tools/packslip-verification.html#stamps)
 for the pin formats.

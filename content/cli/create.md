@@ -30,7 +30,7 @@ The TOML manifest and more examples: https://packslip.dev/docs/describing-releas
 - **`--no-log`** — With --key: do not record the signature in Rekor. Consumers must then opt in with --allow-unlogged
 - **`--no-pin-workflow`** — Keyless only: write identity.pin_workflow: false, so consumers hold later releases to the signing repository instead of to the workflow file that signs this one
 
-  For a vendor whose releases are signed by more than one workflow of its repository. The signer must still be a workflow of that repository. A consumer that last accepted a release without the flag refuses the first one with it until a person approves it. See https://packslip.dev/release/v1/#reusable-workflows
+  For a vendor whose releases are signed by more than one workflow of its repository. The signer must still be a workflow of that repository. A consumer that last accepted a release without the flag refuses the first one with it until a person approves it. See https://packslip.dev/release/v1/#workflow-pinning
 
 ## Output
 - **`-o --out <OUT>`** — Directory to write the bundle into, created if missing

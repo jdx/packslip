@@ -6,9 +6,21 @@ description: Example packslip configurations for Rust and Go CLIs, monorepo tool
 ---
 # Release recipes
 
-These recipes start after your build has produced release files. Each
-shows the expected layout and a complete `release.toml` for those files.
+Choose a recipe that matches your release layout. Each starts after your
+build has produced the files and includes a complete `release.toml`.
 Replace the example project, version, URLs, and paths with your own.
+
+| Recipe | Use it when |
+| --- | --- |
+| [Rust CLI](#rust-cli-with-bundled-documentation) | An archive includes a command, static completion script, and man page. |
+| [Go CLI](#go-cli-with-generated-completions) | The installed command generates completions for several shells. |
+| [Monorepo tool](#monorepo-tool-with-an-executable-alias) | A tool needs its own project name or a command alias. |
+| [Desktop application](#desktop-application-for-linux-and-macos) | Linux and macOS releases provide different application resources. |
+
+The metadata choices work with any build language: a Rust CLI can use
+generated completions, and a Go CLI can ship static documentation.
+
+## Create a bundle from a recipe
 
 Save one recipe as `release.toml`, then create the bundle in a CI job
 that provides an OIDC identity (GitHub Actions with `id-token: write`, or
@@ -19,10 +31,16 @@ any job that sets `SIGSTORE_ID_TOKEN`, such as a GitLab CI job with an
 packslip create --manifest release.toml --out packslip
 ```
 
-For local key signing, add `--key release.key`. `packslip create` writes
-`packslip/packslip.sigstore.json`
-(`packslip/packslip.lint.sigstore.json` for the monorepo recipe) and
-uploads nothing, so publish it with the artifacts.
+For local key signing, add `--key release.key`. For an offline trial,
+also add `--no-log`; [Getting started](/docs/getting-started/) shows how
+to generate a temporary key and verify an unlogged bundle.
+
+`packslip create` writes `packslip/packslip.sigstore.json`
+(`packslip/packslip.lint.sigstore.json` for the monorepo recipe).
+Inspect it with `packslip show`, then publish it with the artifacts and
+any separate resource assets. Creation uploads no release files.
+
+## Use a recipe with GitHub Actions
 
 On GitHub, the action in [Publish with GitHub Actions](/docs/publishing/)
 can run a recipe instead: pass `manifest: release.toml` and set
@@ -76,11 +94,12 @@ archive = "mytool-1.2.3/share/man/man1/mytool.1"
 ```
 
 `bin = ["mytool"]` finds the executable and records its full archive
-path. Resource paths are recorded as written and not checked against the
-archive, so copy them from `tar -tzf` output. Unscoped resources apply to
-every artifact, so when you add archives for other targets, each must
-hold these files at the same paths. If the top-level directory differs
-per target,
+path. Resource paths are recorded as written and are not checked against
+the archive, so copy them from `tar -tzf` output.
+
+The resources here are unscoped and apply to every artifact. When you add
+archives for other targets, each must hold these files at the same paths.
+If the top-level directory differs per target,
 [scope each resource to its artifact](/docs/resources/#scope-resources-to-the-right-artifact).
 
 ## Go CLI with generated completions
@@ -226,10 +245,12 @@ notarization.
 
 ## Add build provenance
 
-`release.toml` describes what the release contains; it does not produce
-build provenance. By default (`attest: true`), the action in
-[Publish with GitHub Actions](/docs/publishing/#build-provenance) attests the files its
-`artifacts` and `download` inputs match and links those statements.
+Build provenance describes how an artifact was built. `release.toml`
+can link that evidence but does not produce it. By default
+(`attest: true`), the [GitHub action](/docs/publishing/#build-provenance)
+attests the files matched by `artifacts` and `download` and links those
+statements.
+
 Without the action, list the URLs of provenance statements your build
 already produced in the artifact's `provenance` key:
 

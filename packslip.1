@@ -179,7 +179,7 @@ With this flag, create still finds each \-\-bin inside the archives but does not
 \fB\-\-no\-pin\-workflow\fR
 Keyless only: write identity.pin_workflow: false, so consumers hold later releases to the signing repository instead of to the workflow file that signs this one
 
-For a vendor whose releases are signed by more than one workflow of its repository. The signer must still be a workflow of that repository. A consumer that last accepted a release without the flag refuses the first one with it until a person approves it. See https://packslip.dev/release/v1/#reusable\-workflows
+For a vendor whose releases are signed by more than one workflow of its repository. The signer must still be a workflow of that repository. A consumer that last accepted a release without the flag refuses the first one with it until a person approves it. See https://packslip.dev/release/v1/#workflow\-pinning
 .TP
 \fB\-h, \-\-help\fR
 Print help
@@ -436,7 +436,7 @@ How to sign: oidc (keyless) or key (needs \-\-key). Optional; inferred from whet
 With \-\-key: do not record the signature in Rekor. Consumers must then opt in with \-\-allow\-unlogged
 .TP
 \fB\-\-no\-pin\-workflow\fR
-Keyless only: write identity.pin_workflow: false into the list, as `packslip create \-\-no\-pin\-workflow` does for a release. See https://packslip.dev/release/v1/#reusable\-workflows
+Keyless only: write identity.pin_workflow: false into the list, as `packslip create \-\-no\-pin\-workflow` does for a release. See https://packslip.dev/release/v1/#workflow\-pinning
 .TP
 \fB\-o, \-\-out\fR \fI<OUT>\fR
 Where to write the list; consumers fetch it only from its .well\-known path, never under this default name

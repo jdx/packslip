@@ -134,7 +134,7 @@ With this flag, create still finds each --bin inside the archives but does not d
         long_help #"""
 Keyless only: write identity.pin_workflow: false, so consumers hold later releases to the signing repository instead of to the workflow file that signs this one
 
-For a vendor whose releases are signed by more than one workflow of its repository. The signer must still be a workflow of that repository. A consumer that last accepted a release without the flag refuses the first one with it until a person approves it. See https://packslip.dev/release/v1/#reusable-workflows
+For a vendor whose releases are signed by more than one workflow of its repository. The signer must still be a workflow of that repository. A consumer that last accepted a release without the flag refuses the first one with it until a person approves it. See https://packslip.dev/release/v1/#workflow-pinning
 """#
     }
     flag "-h --help" help="Print help" action=help builtin=#true
@@ -314,7 +314,7 @@ Publish the list at https://HOST/.well-known/packslip/PATH.json for a project na
         arg <SIGN>
     }
     flag --no-log help="With --key: do not record the signature in Rekor. Consumers must then opt in with --allow-unlogged" help_heading=Signing
-    flag --no-pin-workflow help="Keyless only: write identity.pin_workflow: false into the list, as `packslip create --no-pin-workflow` does for a release. See https://packslip.dev/release/v1/#reusable-workflows" help_heading=Signing
+    flag --no-pin-workflow help="Keyless only: write identity.pin_workflow: false into the list, as `packslip create --no-pin-workflow` does for a release. See https://packslip.dev/release/v1/#workflow-pinning" help_heading=Signing
     flag "-o --out" help="Where to write the list; consumers fetch it only from its .well-known path, never under this default name" default=packslip-releases.sigstore.json {
         arg <OUT>
     }

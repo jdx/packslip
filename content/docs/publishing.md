@@ -6,30 +6,37 @@ description: Add a signed packslip to an existing GitHub release workflow.
 ---
 # Publish with GitHub Actions
 
-The `jdx/packslip` action adds a signed packslip to a GitHub release from
-the workflow that builds it. It describes your release files in a release
-manifest, signs it with the workflow's identity, and verifies the result.
-No long-lived signing key is needed. Run it in one of two ways:
+Add `jdx/packslip` to the workflow that builds your release. The action
+describes the finished files in a release manifest, signs it with the
+workflow's identity, verifies the result, and uploads the bundle. You do
+not need a long-lived signing key.
 
-- **In a separate job without release write access.** The action signs
-  with `upload: false`, and a short job you write uploads the bundle.
-  Choose this when the action must not be able to change your release; see
-  [Keep the action away from release write access](#keep-the-action-away-from-release-write-access).
-- **As one step in your release job.** The action also uploads the bundle,
-  so the job needs `contents: write`; see
-  [Add the release step to an existing job](#add-the-release-step-to-an-existing-job).
+Choose the job layout that fits your workflow:
+
+| Layout | When to use it |
+| --- | --- |
+| [One step in your release job](#add-the-release-step-to-an-existing-job) | The action may share the job's `contents: write` permission and upload the bundle itself. |
+| [A separate signing job](#keep-the-action-away-from-release-write-access) | The action should have only `contents: read`; your own upload job attaches its output to the release. |
+
+The action adds metadata to your release process. Keep your existing build
+and artifact-upload steps. For publishing without GitHub Actions, start
+with [Getting started](/docs/getting-started/) and
+[Artifact configuration](/docs/describing-releases/).
 
 ## Prepare the files and release
 
-The action consumes final local files. Complete any archive rewriting,
-platform signing, or notarization that changes the bytes first.
+Finish building, rewriting archives, platform signing, and notarization
+before describing the files. The action records the digest of each final
+file, so later changes to its bytes fail verification.
 
 Create the GitHub release and upload the artifacts through your existing
-workflow. If the repository uses immutable releases, create the release as
-a draft and publish it only after the bundle is uploaded, because a
-published release's assets cannot change. Upload separate resource assets,
-such as SBOMs, too. The action uploads only the packslip bundle. Listing a
-file's URL in the release manifest does not put the file there.
+workflow. Upload separate resource assets, such as SBOMs, too: the action
+uploads only the packslip bundle. Listing a file's URL does not publish
+that file.
+
+If the repository uses immutable releases, create the release as a draft.
+Publish it after uploading the bundle, because a published immutable
+release's assets cannot change.
 
 Once those files are on the release, either bring them into the signing
 job yourself (a build matrix typically stages them with
@@ -39,52 +46,49 @@ fetch them straight from the release; see
 `contents: read` cannot see a draft release, so a read-only job that signs
 a draft must use the first way.
 
-## What the action does
+## Add the release step to an existing job
 
-The action installs the packslip CLI released with it, fetches any
-`download` assets, attests the collected files (see
-[Build provenance](#build-provenance)), creates and signs the release
-manifest, verifies the bundle, and uploads it to the release unless
-`upload` is `false`. Its `bundle` output is the local bundle path.
+Use this single-job form when the action may hold `contents: write`, which
+it needs to upload the bundle itself (`upload` defaults to `true`). Add it
+to your release job after the steps that build the files and create the
+release:
 
-Run it on a release tag, or pass the tag as `tag`. By default `project` is
-`github.com/<owner>/<repo>` and `version` is the tag without a leading `v`.
-The action does not normalize other tag spellings, so for a tag such as
-`mytool-v1.2.3`, pass `version: 1.2.3`.
+```yaml
+permissions:
+  contents: write      # Upload the bundle.
+  id-token: write      # Sign with the workflow's identity.
+  attestations: write  # Attest the collected files.
 
-The action and CLI share a version: `@v1` follows CLI 1.x releases, and
-`@v1.4.0` pins both to 1.4.0. By default, the action installs the CLI
-version from its own commit's `Cargo.toml`. Set `packslip-version` to
-override that selection. `packslip-path` runs a CLI the job already has
-instead of downloading one; see
-[Build the CLI on the runner](#build-the-cli-on-the-runner).
+steps:
+  # Your existing build and release steps go here.
+  - uses: jdx/packslip@v1
+    id: packslip
+    with:
+      artifacts: dist/*.tar.xz dist/*.zip
+      bin: mytool
+```
 
-When a step passes an input that the pinned release does not define,
-GitHub only warns, and the step runs without that input. Check that the
-release you pin has every input you use: `download` needs 1.0.1 or later
-and `commit` 1.3.0 or later.
+The default action inputs derive the project, version, download URLs, and
+source commit from this workflow's repository and tag. This example finds
+`mytool` in each archive, publishes provenance, and attaches
+`packslip.sigstore.json` to the existing release.
 
-The action's steps run in bash 4 or later (macOS's own `/bin/bash` 3.2 is
-too old). They use the GitHub CLI (`gh`), in a version that has
-`gh attestation verify`, to install and check packslip, download release
-assets, and upload the bundle; `tar` with xz support (`unzip` on Windows)
-to unpack the CLI; and `sha256sum` to link provenance. GitHub-hosted Linux
-and Windows runners have them all. On a macOS or self-hosted runner, check
-that they are installed. The `jdx/packslip/releases` action, which builds
-a release list for [Host releases on your own domain](/docs/self-hosting/),
-also needs `jq`.
+To try the workflow without attaching a bundle, set `upload: false`. The
+run still signs: its keyless signature is recorded in the public Rekor
+log, and the default `attest: true` publishes provenance. For an offline
+trial with a temporary key, use [Getting started](/docs/getting-started/).
 
 ## Keep the action away from release write access
 
 Run packslip in its own job after the job that publishes your release
-files, and give it `contents: read`. That is enough to download release
-assets but not to change the release. The job also needs `id-token: write`
-to sign and `attestations: write` to attest the files. A second job that
-you write, with `contents: write`, receives the bundle as a workflow
-artifact and uploads that one file. GitHub grants token permissions per
-job, not per step, and an action can use its job's token even when the
-workflow does not pass it as an input. So `upload: false` alone does not
-keep the action away from release write access; the separate job does.
+files. Give it `contents: read` to download assets, `id-token: write` to
+sign, and `attestations: write` to publish provenance. Set `upload: false`
+and pass its bundle to your own job with `contents: write`.
+
+GitHub grants token permissions per job, not per step. An action can use
+its job's token even when you do not pass it as an input, so the separate
+job is what limits release write access. `upload: false` controls the
+action's upload behavior.
 
 ```yaml
 jobs:
@@ -207,35 +211,7 @@ collect the files with `actions/download-artifact` and `artifacts` instead
 of `download`. Then upload the bundle and publish the release from the job
 that has `contents: write`.
 
-## Add the release step to an existing job
-
-Use this single-job form when the action may hold `contents: write`, which
-it needs to upload the bundle itself (`upload` defaults to `true`). Add it
-to your release job after the steps that build the files and create the
-release:
-
-```yaml
-permissions:
-  contents: write      # Upload the bundle.
-  id-token: write      # Sign with the workflow's identity.
-  attestations: write  # Attest the collected files.
-
-steps:
-  # Your existing build and release steps go here.
-  - uses: jdx/packslip@v1
-    id: packslip
-    with:
-      artifacts: dist/*.tar.xz dist/*.zip
-      bin: mytool
-```
-
-To try the workflow without attaching a bundle, set `upload: false`. The
-run still signs for real: a keyless signature is always recorded in the
-public Rekor log, and with the default `attest: true` the action publishes
-provenance for the files. For a trial that contacts no signing service,
-use [Getting started](/docs/getting-started/).
-
-## Check the published result {#check-the-result}
+## Check the published result
 
 The action verifies the local bundle before uploading it. Check the published
 release separately: download the bundle and an artifact from the URLs users
@@ -319,7 +295,7 @@ make them refuse it.
   written before the field existed ignore it, so they still refuse a
   release from a different workflow file until a person approves it.
   `packslip create` refuses the flag with `--key`. See
-  [Reusable workflows](/release/v1/#reusable-workflows).
+  [Workflow pinning](/release/v1/#workflow-pinning).
 
 The [consumer rules](/release/v1/#consumer-rules) define these checks.
 
@@ -473,6 +449,44 @@ packslip-path: ${{ runner.os == 'macOS' && runner.arch == 'X64' && format('{0}/p
 warns about when both are set. A downloaded archive is checked against
 jdx/packslip's build provenance before it runs; a binary supplied this way
 is not checked at all, so the job vouches for where it came from.
+
+## What the action does
+
+The action installs the packslip CLI released with it, fetches any
+`download` assets, attests the collected files (see
+[Build provenance](#build-provenance)), creates and signs the release
+manifest, verifies the bundle, and uploads it to the release unless
+`upload` is `false`. Its `bundle` output is the local bundle path.
+
+Run it on a release tag, or pass the tag as `tag`. By default `project` is
+`github.com/<owner>/<repo>` and `version` is the tag without a leading `v`.
+The action does not normalize other tag spellings, so for a tag such as
+`mytool-v1.2.3`, pass `version: 1.2.3`.
+
+The action and CLI share a version: `@v1` follows CLI 1.x releases, and
+`@v1.4.0` pins both to 1.4.0. By default, the action installs the CLI
+version from its own commit's `Cargo.toml`. Set `packslip-version` to
+override that selection. `packslip-path` runs a CLI the job already has
+instead of downloading one; see
+[Build the CLI on the runner](#build-the-cli-on-the-runner).
+
+When a step passes an input that the pinned release does not define,
+GitHub only warns, and the step runs without that input. Check that the
+release you pin has every input you use: `download` needs 1.0.1 or later
+and `commit` 1.3.0 or later.
+
+GitHub-hosted Linux and Windows runners provide the required tools. For
+macOS or self-hosted runners, check these before adding the action:
+
+| Tool | Used for |
+| --- | --- |
+| bash 4 or later | Running the action's steps; macOS's own `/bin/bash` 3.2 is too old. |
+| GitHub CLI (`gh`) with `gh attestation verify` | Installing and verifying packslip, downloading assets, and uploading the bundle. |
+| `tar` with xz support, or `unzip` on Windows | Unpacking the packslip CLI. |
+| `sha256sum` | Linking build provenance by digest. |
+
+The `jdx/packslip/releases` action also needs `jq`; it publishes the lists
+used for [Host releases on your own domain](/docs/self-hosting/).
 
 ## Action inputs
 

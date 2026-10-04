@@ -7,15 +7,16 @@
 
 packslip is a signed release manifest for software distributed as archives,
 installers, or executables. A release publishes one file,
-`packslip.sigstore.json`, beside its artifacts. A consumer, such as a
-package manager or mirror, verifies that file against the project's signer
+`packslip.sigstore.json`, beside its artifacts. A consumer, such as an
+installer, package manager, or mirror, verifies that file against the project's signer
 and reads three things from it: which artifact suits the host, where the
 executables are inside that artifact, and the digest the download must
 match. The consumer does not have to guess from file names or trust a
 checksum file served next to the binary.
 
 This repository holds the [specification](docs/spec/packslip.md), the
-`packslip` CLI and Rust crate that create and verify packslips, and two
+`packslip` CLI that publishes, verifies, and installs releases, the Rust crate
+for building consumers, and two
 GitHub Actions: `jdx/packslip` publishes a packslip from a release job, and
 `jdx/packslip/releases` builds a signed release list. The format is stable
 at version 1; [Stability](https://packslip.dev/release/v1/#stability) says
@@ -23,6 +24,10 @@ what that fixes and what a revision may add.
 
 ## Start here
 
+- **Install a tool:** [Install a tool with packslip](https://packslip.dev/docs/bootstrap/)
+  discovers and verifies a signed release, installs its complete archive, and
+  links the declared commands. It works for any supported tool that publishes
+  a packslip, including mise.
 - **Try it locally:** [Getting started](https://packslip.dev/docs/getting-started/)
   creates and verifies a sample release with a local key. It needs no CI
   account.
@@ -46,16 +51,46 @@ what that fixes and what a revision may add.
   walks through finding, verifying, and selecting a release in your own
   tool, and shows the Rust crate that implements the verification and
   selection steps.
-  [Use packslip with mise](https://packslip.dev/docs/mise/) shows how mise
-  installs a tool from its packslip and keeps its completions, man pages,
-  and skills matched to the active version.
+  [packslip and mise](https://packslip.dev/docs/mise/) covers installing mise
+  with packslip and using mise to manage tools with packslip releases, including
+  their completions, man pages, and skills.
 
 [How packslip fits a release](https://packslip.dev/docs/release-workflow/)
 shows how the pieces connect, and the
 [documentation index](https://packslip.dev/docs/) lists every guide. For
 exact fields and rules, read the [specification](docs/spec/packslip.md),
 [CLI reference](https://packslip.dev/cli/), or
-[JSON schemas](https://packslip.dev/docs/#reference).
+[JSON schemas](https://packslip.dev/release/v1/#json-schemas).
+
+## Install the CLI
+
+With mise installed and activated:
+
+```sh
+mise use -g packslip
+packslip version
+```
+
+For a standalone install on Linux or macOS, run
+`curl -fsSL https://packslip.sh | sh`. On Windows, run
+`irm https://packslip.sh/install.ps1 | iex` in PowerShell.
+[Installation methods](https://packslip.dev/docs/getting-started/#install-packslip)
+also cover distribution packages, pinned scripts, the container image, direct
+downloads, and source builds. Release executables cover Linux and Windows on
+x64 and ARM64, and macOS on ARM64; Intel Macs need a source build.
+
+With packslip 1.5.1 or newer, install mise's latest stable release:
+
+```sh
+packslip install github.com/jdx/mise --pin ps1_nlhmwtfeufglxv5myvwvronk7a
+```
+
+The pin identifies mise's signing repository. packslip verifies the release
+and download before installing; it runs no downloaded code. It reports the
+command path and any PATH setup needed. See
+[packslip and mise](https://packslip.dev/docs/mise/) for pinned-bootstrapper
+and Docker examples, and the [CLI overview](https://packslip.dev/cli/) for
+other tasks.
 
 ## Add it to a GitHub release
 
@@ -100,21 +135,18 @@ packslip signs its own releases. To check one with the
 download a release's bundle and one of its archives. `packslip verify`
 checks the bundle against the workflow that signs packslip releases, and
 the archive against the digest in the bundle. This example checks the
-Linux x64 archive of 1.4.0; `packslip show packslip.sigstore.json` lists
+Linux x64 archive of 1.5.1; `packslip show packslip.sigstore.json` lists
 the others:
 
 ```sh
-curl -fLO https://packslip.dev/v1.4.0/packslip.sigstore.json
-curl -fLO https://packslip.dev/v1.4.0/packslip-v1.4.0-linux-x64.tar.xz
+curl -fLO https://packslip.dev/v1.5.1/packslip.sigstore.json
+curl -fLO https://packslip.dev/v1.5.1/packslip-v1.5.1-linux-x64.tar.xz
 packslip verify packslip.sigstore.json \
   --identity-prefix https://github.com/jdx/packslip/.github/workflows/release.yml@ \
   --issuer https://token.actions.githubusercontent.com \
   --pin ps1_mcx64bcghek2t4vljgb3lho3ti \
-  --artifact packslip-v1.4.0-linux-x64.tar.xz
+  --artifact packslip-v1.5.1-linux-x64.tar.xz
 ```
-
-packslip 1.4.0 and earlier have no `--pin` flag and reject it as an
-unexpected argument; with those versions, leave that line out.
 
 The bundle's project is `packslip.dev`, a domain rather than a GitHub
 repository name, so `verify` cannot work out the expected signer from it,

@@ -2,19 +2,26 @@
 title: Compatibility and support
 weight: 57
 group: consume
-description: The checked verification baseline, trust-root rotation scenarios, bootstrap platforms, and publisher adoption checks.
+description: Understand what a pinned packslip binary can keep verifying, which platforms are tested, and when an update may be needed.
 ---
 # Compatibility and support
 
-The [version 1 format contract](/release/v1/#stability) fixes the meaning of
-release metadata. A long-lived verifier also depends on bundle and log formats,
-trusted signing material, and fresh discovery metadata. The matrix below records
-what this repository tests. It does not promise that an unchanged binary will
-verify every future release for a fixed number of years.
+You can pin packslip independently of the tools it installs. Ordinary tool
+updates do not require a matching packslip release: the [version 1 format
+contract](/release/v1/#stability) keeps release metadata stable, and
+`packslip install` refreshes authenticated Sigstore trust material without
+replacing the executable. [Install a tool](/docs/bootstrap/) explains the
+install command and its trust state.
 
-This page describes the current development branch. `install` and its platform
-matrix have not shipped in a release. Packslip v1.4.0 is a verification baseline;
-it has no bootstrap installer or TUF refresh command.
+Pinning the binary does not freeze trust or discovery metadata. Installation
+still requires current authenticated metadata, and a security fix or an
+unsupported future signing format may require a new binary. The evidence
+below describes what this repository tests, rather than a promised number
+of years an unchanged binary will work.
+
+`packslip install` ships in v1.5.0 and newer. The older v1.4.0 verifier is
+retained as a compatibility baseline; it has no installation command or
+automatic trust-root refresh.
 
 ## Verification matrix
 
@@ -29,11 +36,11 @@ It runs both against the same documents in `tests/compatibility.rs`:
 | New release with an unknown resource kind | Verification succeeds while the resource remains outside the consumer's known behavior |
 | Modified artifact; signed release/v2 | Artifact verification fails; an unsupported predicate version is rejected |
 
-The unlogged fixtures explicitly opt in to unlogged verification. They do not
-exercise transparency-log integration or authorize unlogged production installs.
-The real hk fixture does exercise authenticated historical log time. The installer
-also accepts a 2020 release in its unlogged fixture when its current list is fresh;
-there is no maximum release age.
+The real hk fixture checks authenticated historical log time. The unlogged
+fixtures explicitly opt in to unlogged verification and test format
+compatibility without relying on a live log. The installer also accepts a
+2020 release in an unlogged fixture when its current list is fresh: the
+age of the software alone does not make it ineligible.
 
 This matrix currently covers bundle v0.3 and Rekor `dsse/0.0.1`. Other bundle or
 log formats are not part of this checked support claim. Add a fixture, its signer
@@ -64,11 +71,11 @@ synthetic TUF repository with distinct keys and root versions 1, 2, and 3:
 - Network failure can reuse a fresh authenticated cache. Expired timestamp
   metadata, rollback, target corruption, and invalid online signatures fail.
 
-These tests establish the rotation mechanism and failure behavior. They do not
-replay the production Sigstore TUF repository's full historical root chain. A
-production starting-root compatibility claim needs a checked historical chain
-and its dates in this matrix. Rotation also depends on the server retaining the
-intermediate roots; a client cannot invent a missing authenticated transition.
+These tests establish root rotation and failure behavior using controlled
+dates and keys. They do not replay the production Sigstore TUF repository's
+full historical root chain. Supporting a particular old production root
+requires checking that chain and recording its dates. The server must
+retain the intermediate roots needed to authenticate each transition.
 
 Old signatures can remain verifiable at their authenticated signing time while
 their historical keys and certificates remain trusted and available. Installation
@@ -76,13 +83,16 @@ also needs an available, eligible release and valid current trust and list
 metadata. Historical compatibility never accepts an expired list, rolls back a
 sequence, or bypasses a security rejection.
 
-## Bootstrap platform and handoff coverage
+## Installation platforms and tool handoff
 
-Required native CI runs extraction, ownership/recovery, command exports, host
-checks, discovery, and installer fixtures on Linux x64/ARM64, macOS ARM64, and
-Windows x64/ARM64. Intel macOS is unsupported. The installer feature includes the
-verifier and excludes publishing, so distributions can maintain that feature
-without taking publisher functionality.
+Required native CI tests installation on Linux x64/ARM64, macOS ARM64,
+and Windows x64/ARM64. It covers discovery, extraction, ownership and
+recovery, command exports, and host checks. Intel macOS is not a supported
+installation target.
+
+Distribution packages use the `install-cli` feature, which includes
+verification and installation without publishing commands; see
+[Distribution packages](/docs/distributions/).
 
 The handoff fixture installs a complete tree containing a command and adjacent
 runtime data, exports only that command, and verifies arguments and exit status.
@@ -96,27 +106,40 @@ the resulting layout is suitable:
 
 | Publisher | Adoption status |
 | --- | --- |
-| mise | Pending real release, setup, and self-update checks |
+| mise | Checked on Linux x64 with packslip 1.5.1: user installation, Bash activation, self-update, and reinstall; system installation and execution in a Debian 13 container |
 | rustup | Pending real release, setup, and self-update checks |
 | uv | Pending real release, setup, and self-update checks |
 | pnpm | Pending real release, bundled-runtime, setup, and self-update checks |
 
-Before publishing instructions for a tool, record its version, bundle digest,
-platform, installation scope, and Packslip version. Verify its ordinary command,
-setup command, and self-update through the exported path in an isolated account.
-Check that the complete runtime survives, setup uses the intended scope, and
-self-update does not leave a launcher pointing to a removed executable. After
-self-update, reinstall through Packslip and check ownership conflicts and recovery.
-Record any deliberate shell or PATH changes made by the tool itself. Do not infer
-adoption from a fixture or from a successful `--version` invocation alone.
+The mise user-scope check installed 2026.9.18 into isolated installation
+and command directories, keeping the archive's `bin`, `man`, and `share`
+trees, README, and license. Through the exported command, Bash activation
+and `mise exec` worked; self-update to 2026.10.1 kept the command working,
+and reinstalling 2026.9.18 with packslip succeeded without `--force`.
+The 2026.9.18 bundle's SHA-256 was
+`f059ba8b18d5e8c4fb3f5e068dd0df72e84f61c3514a2b7ef7776e3cb81eecb2`.
+The [Docker example](/docs/bootstrap/#bootstrap-mise-in-docker) was also
+checked with mise 2026.10.1. These are Linux x64 checks; the other platform
+and scope combinations remain unverified for mise's lifecycle.
+
+Before claiming that a tool's full setup and self-update lifecycle is
+supported, record its version, bundle digest, platform, scope, and packslip
+version. In an isolated account, check its normal command, setup, and
+self-update through the exported path. Confirm that adjacent runtime files
+survive and that setup uses the intended scope.
+
+After self-update, check that the exported command still works, then
+reinstall through packslip to check ownership conflicts and recovery.
+Record shell or PATH changes the tool makes itself. A successful
+`--version` call establishes less than this full lifecycle check.
 
 ## Maintaining packaged verifiers
 
-Authenticated root refresh should not require a new binary when the supported
-formats and algorithms remain usable. New bundle/log formats, missing historical
-material, vulnerabilities, or changed algorithms can require an update. There is
-no fixed annual update cadence, patch-size promise, or guaranteed maintenance
-horizon.
+Authenticated root refresh can keep an existing binary useful while its
+supported formats and algorithms remain usable. New bundle or log
+formats, missing historical material, vulnerabilities, or changed
+algorithms can require an update. Upstream does not promise a fixed
+update cadence or maintenance horizon.
 
 Keep verification and security fixes suitable for backporting to packaged
 verifiers. For a compatibility break, release notes must identify the affected

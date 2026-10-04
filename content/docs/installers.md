@@ -6,16 +6,16 @@ description: Find, verify, and select release artifacts in your own installer or
 ---
 # Build an installer or mirror
 
-This guide is for developers of installers, package managers, and mirrors
-that read packslips. `packslip verify` checks one document at a time. A
-consumer also finds the bundle, chooses the artifact for the host, and
-remembers what it trusted from one install to the next. This page walks
-through one install, summarizes the
-[consumer rules](/release/v1/#consumer-rules), and shows the Rust library,
-which implements the verification and selection steps.
+Build an installer, package manager, or mirror that consumes signed
+packslip releases. The work has three parts: find an eligible release,
+verify and select its files, and preserve trust across later installs.
+This guide follows that sequence and shows the Rust library APIs you
+can reuse.
 
-For a ready-made command that performs discovery, verification, and installation
-with persistent trust state, see [Bootstrap a package manager](/docs/bootstrap/).
+If you need an existing installer, [Install a tool](/docs/bootstrap/)
+covers `packslip install`. For manual checks of downloaded files, use
+[`packslip verify`](/docs/verifying/). The rest of this page is for
+implementing a consumer yourself.
 
 ## Install a release
 
@@ -65,80 +65,26 @@ fingerprints against the
 
 ## Follow the consumer rules
 
-The steps above are the main path. The
-[consumer rules](/release/v1/#consumer-rules) are the complete contract,
-and they also require state that lasts from one install to the next. Each
-item below summarizes one rule, in the specification's order, and links
-that rule by its number. Cite the rules by those numbers.
+Verification is one part of an install. The [consumer
+rules](/release/v1/#consumer-rules) define the complete contract; use this
+checklist to find the parts your implementation still needs.
 
-- **Pin the signer before the first install.** For a forge project, the
-  name gives the first pin: the forge's issuer and an identity under the
-  repository. Remember the repository ID the first accepted certificate
-  records; from then on it pins the project across renames and transfers.
-  A signer fingerprint the project publishes, read apart from its
-  releases, such as in its README, is also part of the first pin, so no
-  release has to be trusted on first use. For other projects, pin a key
-  or identity as the rule describes. Trust a list from another publisher
-  per host, by configuration. Never take a key from the document, and
-  never trust a bundle's key hint. ([rule 1](/release/v1/#consumer-rules))
-- **Verify the bundle, then every file you download.** Check the
-  signature, certificate chain, and log entry, then the statement's
-  structure, then that it names the project you asked for (or, on a
-  forge, the same repository renamed), then the digest of every artifact
-  and asset you downloaded and the size of every artifact. Refuse a bundle
-  without a log entry unless you chose to accept unlogged bundles from
-  this vendor. ([rule 2](/release/v1/#consumer-rules))
-- **Keep signer continuity.** Remember the accepted signer, its scheme,
-  its `attested_by`, its provenance links, its repository ID, and its
-  `pin_workflow` value. Refuse a release whose scheme is weaker than the
-  last accepted one, or that dropped per-artifact provenance the last
-  release carried. Until a person approves it, also refuse one whose
-  signer changed, that went from vendor to repackager (see
-  [Repackager attestation](/release/v1/#repackager-attestation)), or that
-  declares `pin_workflow: false` where you remembered `true`. Compare a
-  keyless signer by workflow path, not ref, and across a rename or
-  transfer only when the repository IDs match. A release that declares
-  `pin_workflow: false` is compared by repository alone.
-  ([rule 3](/release/v1/#consumer-rules))
-- **Measure release age from the log.** Apply any minimum release age to
-  the verified log integration time, and fall back to `published_at` only
-  for an unlogged bundle you chose to accept.
-  ([rule 4](/release/v1/#consumer-rules))
-- **Discover through the release list**, as
-  [rule 5](/release/v1/#consumer-rules) says:
-  - Use GitHub's releases endpoint with the repository's supplementary
-    list if it has one, or the signed list at the well-known URL, and
-    refuse a project that has neither. Once you have accepted a
-    supplementary list, treat its disappearance as an error.
-  - Refuse an expired list or one whose `sequence` is below the last one
-    you accepted, and persist the highest.
-  - Never select a yanked entry, skip prereleases unless asked for them,
-    rank by semver precedence, and take the vendor's recommendation for an
-    unconstrained request as [Latest](/release/v1/#latest) says.
-  - Refuse a packslip whose digest is not the one the list pins, or whose
-    version is not the one its list entry named or, without an entry, its
-    tag named.
-  - If you trust stamping hosts, select only versions one of them lists,
-    unless the user chose the vendor alone for that project.
-- **Select one artifact.** Follow
-  [Selecting an artifact](/release/v1/#selecting-an-artifact), and refuse
-  to guess between two artifacts that tie.
-  ([rule 6](/release/v1/#consumer-rules))
-- **Check host requirements.** Before installing, check the selected
-  artifact's `requires`: refuse when a library, glibc, or OS version means
-  its executables cannot start, warn when a command is missing or too old,
-  and treat a requirement you cannot check as a warning, never a refusal.
-  Requirements do not resolve a tie.
-  ([rule 7](/release/v1/#consumer-rules))
-- **Select resources for the artifact.** For each thing the resources
-  describe, keep the entries that fit the selected artifact and the most
-  specific of those, then take the most verifiable source in the order
-  [Source types](/release/v1/#source-types) gives. Run an `exec`
-  completion on demand and cache it, and run any other `exec` entry only
-  if the user chose to run vendor code at install time. Ignore kinds you
-  do not know. A resource you cannot fetch is reported, not fatal; one
-  whose digest does not match fails the install.
-  ([rule 8](/release/v1/#consumer-rules))
+| Rule | Responsibility | What to implement beyond checking a signature |
+| --- | --- | --- |
+| 1 | Pin the signer | Establish trust from configuration, a public key, a forge identity, or a published signer fingerprint. Never take a trusted key from the bundle itself. Remember forge repository IDs across renames and transfers. |
+| 2 | Verify the bundle and files | Validate the statement, compare its project with the request, and check every downloaded artifact and resource asset. Require log evidence unless the user has explicitly accepted unlogged releases. |
+| 3 | Preserve signer continuity | Refuse a weaker scheme, lost provenance, or a change from vendor to repackager. Require approval for signer changes or relaxed workflow pinning. Compare with the last accepted release, including across repository renames. |
+| 4 | Apply release-age policy | Measure any minimum age from authenticated log integration time; use `published_at` only for deliberately accepted unlogged bundles. |
+| 5 | Discover eligible releases | Verify release lists, enforce expiry and sequence, honor withdrawals and version policy, and check the selected bundle's digest and version. Enforce configured stamping-host policy too. |
+| 6 | Select one artifact | Apply the specified platform and format preferences; fail when two candidates tie. |
+| 7 | Check the host | Check declared libraries, glibc, OS, and commands before installing. Requirements do not break an artifact-selection tie. See [Host requirements](/docs/host-requirements/). |
+| 8 | Select resources | Choose the most specific matching resource and its strongest available source. Run vendor code only as the resource rules permit; missing resources are reported, while digest mismatches fail installation. |
+
+The rule numbers above refer to the specification. In particular,
+[discovery](/release/v1/#discovery), [artifact
+selection](/release/v1/#selecting-an-artifact), and [resource
+selection](/release/v1/#resources) have details that a signature
+verifier cannot enforce for you.
 
 ## Keep trust state between installs
 
@@ -169,18 +115,16 @@ takes it without the parts it will not call:
 cargo add packslip --no-default-features
 ```
 
-That leaves the statement types, `verify`, `verify_release_list`,
+This keeps the statement types, `verify`, `verify_release_list`,
 `verify_forge`, `verify_forge_release_list`, `peek_unverified`,
-`Fingerprint`, `select_artifact`, and `select_resources`, and drops the
-archive readers, the executable decoder that derives `requires.libs`, the
-signing path, the JSON Schema generator, and the CLI: about seventy fewer
-crates in the dependency graph. The features are additive and all on by
-default, so the binary and any dependent that keeps the default features
-are unaffected:
+`Fingerprint`, `select_artifact`, and `select_resources`. It omits archive
+readers, executable inspection, signing, schema generation, and the CLI.
+Enable the features you need; the default `cli` feature includes the
+complete command-line application:
 
 | Feature | Adds |
 | --- | --- |
-| `cli` (default) | The `packslip` binary; implies the rest. |
+| `cli` (default) | The complete binary: installation, verification, publishing, and schema generation. |
 | `verify-cli` | The verifier binary: `verify`, `pin`, `show`, completions, and version, without publishing, archive inspection, or schema generation. |
 | `install-cli` | The verifier commands plus `install`, complete-tree extraction, native command exports, and host checks; excludes publishing and schema generation. |
 | `create` | Build a statement from built artifacts; implies `archive`, `linkage`, and `sign`. |
@@ -211,10 +155,14 @@ cargo add serde_json jiff@0.2
 
 For a GitHub or GitLab project, `verify_forge` verifies a bundle under
 the policy the forge implies and checks it against what the consumer
-remembers, following renames and transfers by repository ID. This sample
-follows steps 2 to 4 for a bundle already downloaded. `load_pins`,
-`load_signer`, `download`, `store_pin`, and `store_signer` stand for the
-consumer's own storage and download code:
+remembers, following renames and transfers by repository ID. The following
+Rust fragment illustrates selected checks from steps 2 to 4 for a bundle
+already downloaded. It does not compare the previous release's `scheme`,
+`attested_by`, or provenance. `load_pins`,
+`load_signer`, `download`, `store_pin`, and `store_signer` stand for your
+own storage and download functions; the fragment is not a complete
+installer. Add host checks and the rest of the checklist above before
+installing the verified file:
 
 ```rust
 use packslip::forge::{Continuity, Expected, ForgePin, PinSource};
@@ -305,7 +253,7 @@ The library provides these pieces for signer continuity:
   consumers hold later releases to the repository instead of one workflow
   file. `continues_signer` then accepts any workflow of the repository.
   Store the value beside the signer and apply the downgrade rule in
-  [Reusable workflows](/release/v1/#reusable-workflows).
+  [Workflow pinning](/release/v1/#workflow-pinning).
   `packslip verify --json` reports `"pin_workflow": false` for such a
   release and omits the field otherwise.
 - `packslip::forge::same_workflow` compares two remembered signers, each

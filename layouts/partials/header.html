@@ -4,9 +4,8 @@
   <nav aria-label="Main">
     <a href="/"{{ if .IsHome }} class="active" aria-current="page"{{ end }}>Overview</a>
     <a href="/docs/"{{ if eq .Section "docs" }} class="active" aria-current="page"{{ end }}>Docs</a>
-    <a href="/release/v1/"{{ if eq .RelPermalink "/release/v1/" }} class="active" aria-current="page"{{ end }}>Spec</a>
+    <a href="/release/v1/"{{ if eq .RelPermalink "/release/v1/" }} class="active" aria-current="page"{{ end }}>Spec &amp; schemas</a>
     <a href="/cli/"{{ if eq .Section "cli" }} class="active" aria-current="page"{{ end }}>CLI</a>
-    <a href="/docs/#reference">Schemas</a>
     {{ partial "github-link.html" . }}
   </nav>
 </header>

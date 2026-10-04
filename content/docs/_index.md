@@ -1,21 +1,22 @@
 ---
 title: Documentation
-description: Guides and reference for publishing and verifying packslip release manifests.
+description: Install tools, publish signed releases, verify downloads, or build a consumer with packslip.
 ---
 # Documentation
 
-This page maps the packslip guides and reference for people who publish
-software, install it, or build a consumer such as an installer or mirror.
-Read the two pages under Start here first, then follow the section for what
-you do.
+Choose a guide for the task you want to do. The CLI can install tools from
+their signed releases, publishers can add a packslip to an existing release
+job, and consumer developers can use the format and Rust crate in their own
+installers or mirrors.
 
-## Start here {#guides}
+## Start here
 
-1. [How packslip fits a release](/docs/release-workflow/): the steps from
-   build to verified installation, and the three files involved.
-2. [Getting started](/docs/getting-started/): create and verify a small
-   release on your machine. It needs no CI account, and once the CLI is
-   installed it runs offline.
+| You want to… | Start here |
+| --- | --- |
+| Get the command on your machine | [Install the CLI](/cli/#install-the-cli) |
+| Install an upstream tool | [Install a tool with packslip](/docs/bootstrap/) |
+| Try creating and verifying a manifest | [Getting started](/docs/getting-started/), an offline local walkthrough |
+| Understand how the pieces connect | [How packslip fits a release](/docs/release-workflow/) |
 
 ## Publish software
 
@@ -40,28 +41,34 @@ guides cover what a release needs beyond the action's defaults.
 
 ## Install software or build a consumer
 
+- [Install a tool with packslip](/docs/bootstrap/): discover and verify a
+  signed upstream release, install it for one user or the system, and keep
+  trust across later installs. Package-manager bootstrapping is one use case.
+- [packslip and mise](/docs/mise/): install mise using a pinned packslip
+  bootstrapper, or use mise to manage packslip-backed tools and the resources
+  for their active versions. Includes Docker examples.
 - [Verify a release](/docs/verifying/): pin a signer (by repository, signer
   fingerprint, or public key), check downloaded files, and see what else a
   consumer must enforce.
 - [Build an installer or mirror](/docs/installers/): find, verify, and
   select releases in your own tool, follow the consumer rules, and use the
   `packslip` crate as a library.
-- [Use packslip with mise](/docs/mise/): how mise installs a tool from its
-  packslip and keeps trusting the same signer across upgrades. It also
-  matches the tool's man pages, completions, and agent skills to the active
-  version.
+- [Distribution packaging](/docs/distributions/): install from the signed
+  APT or RPM repository, or build the installer for a distribution package.
+- [Compatibility and support](/docs/compatibility/): supported builds,
+  verification evidence, and the limits of long-lived bootstrapper support.
 - [Consumer rules](/release/v1/#consumer-rules): the complete contract a
   consumer implements. A successful `packslip verify` alone does not meet
   it.
 
-## Reference {#reference}
+## Reference
 
-- [CLI reference](/cli/): every command, argument, and flag.
+- [CLI overview and reference](/cli/): installation, common tasks, and every
+  command, argument, and flag.
 - [Specification](/release/v1/): release statements, signing, discovery,
   version selection, and consumer requirements.
-- JSON schemas: [release statement](/schema/release-v1.json) and
-  [release list](/schema/releases-v1.json). These describe the decoded
-  in-toto statements, not the enclosing sigstore bundles.
+- [JSON schemas](/release/v1/#json-schemas): download schemas for release
+  statements and release lists, and see what schema validation covers.
 - [Contributing](https://github.com/jdx/packslip/blob/main/CONTRIBUTING.md):
   build the project and edit the documentation.
 

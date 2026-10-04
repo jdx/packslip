@@ -35,6 +35,7 @@ run = [
   "rm -rf content/cli && mkdir -p content/cli",
   "usage generate markdown --multi --file packslip.usage.kdl --out-dir content/cli --url-prefix /cli --html-encode",
   "mv content/cli/index.md content/cli/_index.md",
+  "{ cat docs/cli.md; printf '\\n'; sed -e 's/^## /### /' -e 's/^# /## /' content/cli/_index.md; } > content/cli/overview.tmp && mv content/cli/overview.tmp content/cli/_index.md",
 ]
 
 [tasks.docs]

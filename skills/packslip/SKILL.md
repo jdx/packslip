@@ -54,7 +54,7 @@ flags differ from these examples.
   those jobs instead. Declare it from the first release: a consumer that
   accepted a release without it refuses the first one with it until a person
   approves it, and consumers that predate the field ignore it and still ask. See
-  [Reusable workflows](https://packslip.dev/release/v1/#reusable-workflows).
+  [Workflow pinning](https://packslip.dev/release/v1/#workflow-pinning).
 - Select only installable binaries or archives as artifacts. Declare companion
   files as resources. Inspect archive contents before setting paths: `--bin
   mytool` discovers the executable within an archive, while `--bin
@@ -83,7 +83,7 @@ Use CLI flags for shared metadata and a TOML manifest for per-artifact layouts,
 requirements, or resource scope. See
 [Artifact configuration](https://packslip.dev/docs/describing-releases/) for
 `release.toml` examples, path rules, and
-[every key](https://packslip.dev/docs/describing-releases/#manifest-keys).
+[every key](https://packslip.dev/docs/describing-releases/#keys-in-releasetoml).
 
 ## Declare completions, man pages, CLI specs, skills, and SBOMs
 

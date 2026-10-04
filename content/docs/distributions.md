@@ -1,36 +1,92 @@
 ---
-title: "Distribute the installer"
-description: "Build offline source packages and publish interim distribution repositories."
-weight: 19
+title: Distribution packages
+description: "Install from signed APT/RPM repositories, build offline source packages, or configure PPA and COPR publication."
+weight: 58
+group: consume
 ---
 
-# Distribute the installer
+# Distribution packages
 
-The distribution build includes `packslip install` and verification, with
-publisher commands omitted. It uses the distribution's package manager to
-install Packslip; Packslip can then bootstrap upstream package managers from
-their authenticated releases. See [installation scopes](/docs/bootstrap/) and
-the [support evidence](/docs/compatibility/).
+The distribution build provides `packslip install` and verification
+without the publisher commands. A native package manager installs
+packslip; packslip then installs tools from their signed upstream releases.
+See [Install a tool](/docs/bootstrap/) for usage and
+[Compatibility and support](/docs/compatibility/) for the tested platforms.
 
-The repository contains packaging recipes and publishing workflows for an
-Ubuntu PPA, Fedora COPR, and signed APT/RPM repositories. These are interim upstream repositories, separate
-from admission to a distribution's official archive. Their configuration must
-be completed and their first published packages checked before recommending
-them to users. The recipes do not claim Debian main or Fedora package-policy
-compliance: they bundle Cargo dependencies for offline builds.
+| Task | Start here |
+| --- | --- |
+| Install packslip through APT or DNF | [Signed APT and RPM repositories](#signed-apt-and-rpm-repositories) |
+| Install with mise, a script, or a container image | [Install packslip](/docs/getting-started/#install-packslip) |
+| Build a distribution package | [Build offline packages](#build-offline-packages) |
+| Publish source packages to Launchpad or COPR | [Configure PPA and COPR publication](#configure-ppa-and-copr-publication) |
+
+These upstream repositories are separate from a distribution's official
+archive. The source recipes bundle Cargo dependencies for offline builds;
+they do not claim admission to Debian main or compliance with Fedora's
+package policy.
+
+## Signed APT and RPM repositories
+
+packslip publishes signed APT and RPM repositories for Linux x64 and
+ARM64. The packages contain a static installer and depend on the system's
+CA certificates. You do not need Rust, Cargo, or another language package
+manager to use them.
+
+The dedicated packslip package key has fingerprint
+`2A355C7DF63A62A5851534C583B336958530A3D2` and expires on October 2, 2028.
+Its [public key](/gpg-key.pub) authenticates both APT metadata and RPM packages
+and metadata. It is separate from the keys that upstream publishers use for
+their releases.
+
+For either repository, first download the key and check its fingerprint.
+These commands need `curl` and `gpg`:
+
+```sh
+curl --fail --silent --show-error --output packslip-key.asc https://packslip.dev/gpg-key.pub
+test "$(gpg --show-keys --with-colons packslip-key.asc | awk -F: '$1 == "fpr" {print $10; exit}')" = 2A355C7DF63A62A5851534C583B336958530A3D2
+```
+
+Continue only if the fingerprint check succeeds. On APT systems:
+
+```sh
+gpg --dearmor --output packslip-key.gpg packslip-key.asc
+sudo install -m 644 packslip-key.gpg /usr/share/keyrings/packslip.gpg
+printf '%s\n' 'deb [signed-by=/usr/share/keyrings/packslip.gpg] https://packslip.dev/apt stable main' | sudo tee /etc/apt/sources.list.d/packslip.list
+sudo apt-get update
+sudo apt-get install packslip
+packslip install --help
+```
+
+On RPM systems, import the checked key and add the repository:
+
+```sh
+sudo rpm --import packslip-key.asc
+curl --fail --silent --show-error --output packslip.repo https://packslip.dev/rpm/packslip.repo
+sudo install -m 644 packslip.repo /etc/yum.repos.d/packslip.repo
+sudo dnf install packslip
+packslip install --help
+```
+
+The repository file enables both package and metadata signature checks.
+Keep both enabled. These signatures authenticate packslip's package
+repository; the tools it installs are checked independently against their
+publishers' release signatures and your trust policy.
 
 ## Build offline packages
 
-From a committed checkout, prepare the source archive:
+For local package validation, start with a committed checkout and a Rust
+toolchain compatible with `Cargo.toml`. Source preparation also needs
+Bash, Git, `tar`, and Python 3.11 or newer. Prepare the source archive:
 
 ```sh
 scripts/package-source.sh source
 ```
 
-The archive includes the locked Cargo dependencies with their original
-checksum files and licenses. Collecting sources into this build archive
-preserves the dependencies as separate crates. Platform-specific dependencies
-are compiled only for their applicable targets.
+This exports `HEAD`, then downloads the locked Cargo dependencies into
+the source archive with their original checksum files and licenses. Commit
+changes you want to test before running it. Source preparation needs network
+access; the later package build does not. The archive keeps dependencies
+as separate crates, and only applicable platform dependencies are compiled.
 
 On Linux, with Docker available, build and install each package in its native
 distribution image:
@@ -56,11 +112,14 @@ scripts/package-rpm-source.sh source
 
 The Debian source uses a separate quilt orig archive. The RPM source package
 includes the same vendored source and a spec for the complete installer.
-Neither recipe invokes rustup or another language package manager during the
-distribution build. The distribution must supply a Rust toolchain at least as
-new as `rust-version` in `Cargo.toml`.
+Neither recipe invokes rustup or another language package manager during
+the distribution build. The build environment must supply a Rust toolchain
+at least as new as `rust-version` in `Cargo.toml`.
 
 ## Configure PPA and COPR publication
+
+These workflows are publication recipes. Configure the accounts and
+validate their published packages before directing users to them.
 
 Create a Launchpad PPA and COPR project before enabling publication. Defaults
 are `ppa:jdxcode/packslip`, Ubuntu `resolute`, and COPR `jdxcode/packslip` with
@@ -94,61 +153,26 @@ An accepted PPA upload is not evidence that Launchpad built or published both
 architectures. Check those builds separately. COPR submission waits for its
 build results. Before announcing either repository, install its package on a
 clean native machine, confirm `packslip install --help`, and run the
-[publisher adoption checks](/docs/compatibility/#bootstrap-platform-and-handoff-coverage).
+[publisher adoption checks](/docs/compatibility/#installation-platforms-and-tool-handoff).
 
-The PPA/COPR signature authenticates Packslip's package distribution. It does
+The PPA/COPR signature authenticates packslip's package distribution. It does
 not approve the publishers installed by `packslip install`: their release
 signatures, remembered identities, freshness, and administrator constraints
 are still checked independently.
 
-## Signed APT and RPM repositories
+## Maintain the direct repositories
 
-The direct repositories package native static Linux installers for x64 and
-ARM64. They use the distribution's package manager and CA certificates, with
-no dependency on another language package manager. Their first publication
-requires a stable release that contains the installer and these recipes;
-the commands below are for use after that publication has been verified.
-
-The dedicated Packslip package key has fingerprint
-`2A355C7DF63A62A5851534C583B336958530A3D2` and expires on October 2, 2028.
-Its [public key](/gpg-key.pub) authenticates both APT metadata and RPM packages
-and metadata. It is separate from the keys that upstream publishers use for
-their releases.
-
-For APT, download the key and check its fingerprint before installing it:
-
-```sh
-curl --fail --silent --show-error --output packslip-key.asc https://packslip.dev/gpg-key.pub
-test "$(gpg --show-keys --with-colons packslip-key.asc | awk -F: '$1 == "fpr" {print $10; exit}')" = 2A355C7DF63A62A5851534C583B336958530A3D2
-gpg --dearmor --output packslip-key.gpg packslip-key.asc
-sudo install -m 644 packslip-key.gpg /usr/share/keyrings/packslip.gpg
-printf '%s\n' 'deb [signed-by=/usr/share/keyrings/packslip.gpg] https://packslip.dev/apt stable main' | sudo tee /etc/apt/sources.list.d/packslip.list
-sudo apt-get update
-sudo apt-get install packslip
-packslip install --help
-```
-
-For RPM systems, use the same downloaded key and fingerprint check, then:
-
-```sh
-sudo rpm --import packslip-key.asc
-curl --fail --silent --show-error --output packslip.repo https://packslip.dev/rpm/packslip.repo
-sudo install -m 644 packslip.repo /etc/yum.repos.d/packslip.repo
-sudo dnf install packslip
-packslip install --help
-```
-
-The repository file enables both package and metadata signature checks.
 Repository CI uses an ephemeral key, tests APT and DNF installation on both
 native Linux architectures, and rejects altered metadata, a wrong key, and
 a modified RPM. Publication signs with the dedicated production key; PR
 validation never receives that private key.
 
-Enable `PACKAGE_REPOSITORIES_ENABLED=true` only after the first eligible
-release and deployment of the repository-serving Worker. The release workflow
-then publishes packages, and a weekly refresh keeps APT's fourteen-day signed
-metadata expiry current. `DISTRO_SOURCE_ENABLED=true` separately enables PPA
-and COPR source uploads. Publication jobs use the `package-repositories`,
+`PACKAGE_REPOSITORIES_ENABLED=true` enables direct repository publication
+in the release workflow. It requires the repository-serving Worker and a
+stable release with the installer and packaging recipes. A weekly refresh
+keeps APT's fourteen-day signed metadata expiry current.
+`DISTRO_SOURCE_ENABLED=true` separately enables PPA and COPR source uploads.
+Publication jobs use the `package-repositories`,
 `ppa-publishing`, and `copr-publishing` environments.
 
 APT indices and package payloads have content-addressed names; publication

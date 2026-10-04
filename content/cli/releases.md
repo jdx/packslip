@@ -30,7 +30,7 @@ Publish the list at https://HOST/.well-known/packslip/PATH.json for a project na
 - **`-k --key <KEY>`** — Sign with this secret key instead of a CI identity
 - **`--sign <SIGN>`** — How to sign: oidc (keyless) or key (needs --key). Optional; inferred from whether --key is given
 - **`--no-log`** — With --key: do not record the signature in Rekor. Consumers must then opt in with --allow-unlogged
-- **`--no-pin-workflow`** — Keyless only: write identity.pin_workflow: false into the list, as `packslip create --no-pin-workflow` does for a release. See https://packslip.dev/release/v1/#reusable-workflows
+- **`--no-pin-workflow`** — Keyless only: write identity.pin_workflow: false into the list, as `packslip create --no-pin-workflow` does for a release. See https://packslip.dev/release/v1/#workflow-pinning
 
 ## Examples
 
