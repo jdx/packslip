@@ -17,6 +17,13 @@ flags differ from these examples.
   only the bundle to the release. Upload the artifacts and any `asset:` files
   yourself first. Without the action, `packslip create` writes the signed
   bundle and uploads nothing.
+- The default action checkout contains the SHA-256 of its matching Packslip
+  CLI archive, generated after that CLI release's final assets were uploaded.
+  It checks that archive before provenance verification or extraction. For a
+  different `packslip-version`, pass `packslip-sha256` too when an archive
+  digest check is required; without it the explicit override keeps the
+  provenance-only check and warns. `packslip-path` is a local-binary override
+  and is not covered by an archive digest.
 - Prefer two jobs, so the signing job cannot change the release. Run the
   action with `upload: false` in a job with these permissions:
 

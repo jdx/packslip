@@ -450,6 +450,32 @@ warns about when both are set. A downloaded archive is checked against
 jdx/packslip's build provenance before it runs; a binary supplied this way
 is not checked at all, so the job vouches for where it came from.
 
+The generated action commit pins the downloaded archive's SHA-256 internally.
+Each Packslip release first publishes its final CLI archives, then creates an
+immutable `action-vX.Y.Z` tag whose action source contains the five supported
+platform archive digests. The moving `v1` tag advances to that action commit
+only after the release assets are checked. Pin the generated action commit (or
+`action-vX.Y.Z`) to keep that expected digest in the source you trust.
+
+`packslip-sha256` is for a strict explicit `packslip-version` override. An
+override otherwise retains the older build-provenance check and emits a
+warning, because an action commit can internally lock only the release it was
+prepared for:
+
+```yaml
+- uses: jdx/packslip@<full-action-lock-commit-sha> # action-v1.5.1
+  with:
+    packslip-version: 1.5.1
+    packslip-sha256: d401822be0f4c0494dde170657499fc197709b530e18b547906dafe05c155d45
+    artifacts: dist/*.tar.xz
+    bin: mytool
+```
+
+The digest is checked after download and before provenance verification or
+extraction. It applies only to the action-downloaded archive; when
+`packslip-path` is set, the workflow supplies the executable and neither an
+internal archive lock nor this input can verify it.
+
 ## What the action does
 
 The action installs the packslip CLI released with it, fetches any
@@ -463,11 +489,13 @@ Run it on a release tag, or pass the tag as `tag`. By default `project` is
 The action does not normalize other tag spellings, so for a tag such as
 `mytool-v1.2.3`, pass `version: 1.2.3`.
 
-The action and CLI share a version: `@v1` follows CLI 1.x releases, and
-`@v1.4.0` pins both to 1.4.0. By default, the action installs the CLI
-version from its own commit's `Cargo.toml`. Set `packslip-version` to
-override that selection. `packslip-path` runs a CLI the job already has
-instead of downloading one; see
+The action and CLI share a version: `@v1` follows CLI 1.x releases through a
+post-build action-lock commit, while `action-vX.Y.Z` names the immutable action
+commit that locks that CLI release's platform archives. By default, the action
+installs the CLI version from its own commit's `Cargo.toml` and verifies the
+matching internally pinned archive digest. Set `packslip-version` to override
+that selection; set `packslip-sha256` too when the override needs an archive
+digest check. `packslip-path` runs a CLI the job already has instead of downloading one; see
 [Build the CLI on the runner](#build-the-cli-on-the-runner).
 
 When a step passes an input that the pinned release does not define,
@@ -512,6 +540,7 @@ used for [Host releases on your own domain](/docs/self-hosting/).
 | `upload` | Defaults to `true`, which needs `contents: write`. Set `false` to keep the bundle local, for example to upload it from a separate job. |
 | `packslip-version` | CLI version, such as `1.4.0` without a `v`; defaults to the version in the action's `Cargo.toml`. |
 | `packslip-path` | An existing packslip executable to run instead of downloading a release: a path, or a name on PATH. Takes precedence over `packslip-version`. |
+| `packslip-sha256` | Optional lowercase SHA-256 for an explicit `packslip-version` override; checked before provenance verification and extraction. The default uses the pinned action commit's internal digest lock. Ignored with `packslip-path`. |
 | `token` | Token for installing packslip, `download`, and the upload; defaults to `github.token`. |
 
 Output: `bundle`, the path of the written bundle, such as

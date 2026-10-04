@@ -44,7 +44,7 @@ produces and publishes these outputs:
 | CLI resources | Include the usage spec, man page, and bash, zsh, fish, and PowerShell completions. |
 | Install scripts | Render `install.sh` and `install.ps1` with each executable's SHA-256, and attest all release files. |
 | Signed release manifest | Sign as project `packslip.dev`, upload the files and bundle to R2, and attach the bundle to the GitHub release. |
-| GitHub release and action tag | Create the release as a draft, write notes with Communiqué, then publish it. If note generation fails, retain GitHub's generated notes. Move or create the action's major tag (`v1` for 1.x). |
+| GitHub release and action tag | Create the release as a draft, verify GitHub's five action-download archive digests, and create immutable `action-vX.Y.Z` source containing that lock. Write notes with Communiqué, then publish it. If note generation fails, retain GitHub's generated notes. Move the major action tag (`v1` for 1.x) only to the generated action-lock commit; never move `action-vX.Y.Z`. |
 | Container image | Publish and attest `ghcr.io/jdx/packslip` for linux/amd64 and linux/arm64, using the release's executables. See [Container image](#container-image). |
 | Signed release list | Call `packslip-releases.yml` to publish the list at `https://packslip.dev/.well-known/packslip.json`. |
 

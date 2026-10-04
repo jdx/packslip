@@ -171,6 +171,14 @@ inputs:
       Cargo.toml). Ignored when packslip-path is set.
     required: false
     default: ""
+  packslip-sha256:
+    description: >
+      SHA-256 digest for an explicit packslip-version override. The default
+      version uses the generated action commit's internal archive digest lock.
+      This is checked before build provenance or extraction and ignored with
+      packslip-path, which supplies the executable itself.
+    required: false
+    default: ""
   packslip-path:
     description: >
       An existing packslip executable to run instead of downloading a
@@ -201,6 +209,7 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.token }}
         PACKSLIP_VERSION: ${{ inputs.packslip-version }}
+        PACKSLIP_SHA256: ${{ inputs.packslip-sha256 }}
         PACKSLIP_PATH: ${{ inputs.packslip-path }}
         PACKSLIP_ACTION_ROOT: ${{ github.action_path }}
       run: bash "$PACKSLIP_ACTION_ROOT/scripts/install-packslip.sh"

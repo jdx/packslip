@@ -315,7 +315,7 @@ its own with no counter to keep. Its validity defaults to 30 days.
 | `security` | Releases that fix a vulnerability, one tag or URL per line. Applies to this run's list only; see [Keep withdrawals in the repository](#keep-withdrawals-in-the-repository). |
 | `identity-prefix`, `identity`, `issuer` | The pin the bundles and the list must verify under; default to this repository's workflows through GitHub's issuer. `identity` is an exact certificate identity, ref included; GitHub identities name the ref the workflow ran on, so bundles signed on different tags never share one. Most projects want `identity-prefix`. |
 | `out` | Where to write the list; defaults to `packslip-releases.sigstore.json`. |
-| `packslip-version`, `packslip-path`, `token` | As for the [release action](/docs/publishing/#action-inputs). |
+| `packslip-version`, `packslip-sha256`, `packslip-path`, `token` | As for the [release action](/docs/publishing/#action-inputs). |
 
 Outputs: `list`, the path written, and `count`, how many releases it names.
 The action signs keylessly with the job's identity; a project whose
