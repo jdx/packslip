@@ -7,7 +7,10 @@ case "$target:$(uname -m)" in
   x86_64-unknown-linux-musl:x86_64|aarch64-unknown-linux-musl:aarch64) ;;
   *) echo 'repository installers must be built on their native Linux architecture' >&2; exit 1 ;;
 esac
-test ! -e "$out"
+if [ -e "$out" ]; then
+  echo "repository installer output already exists: $out" >&2
+  exit 1
+fi
 rustup target add "$target"
 export CC_x86_64_unknown_linux_musl=musl-gcc
 export CC_aarch64_unknown_linux_musl=musl-gcc

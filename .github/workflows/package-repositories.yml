@@ -91,11 +91,11 @@ jobs:
           set -euo pipefail
           version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
           test "$RELEASE_TAG" = "v$version"
-          scripts/build-repository-installer.sh "$BUILD_TARGET" installer
+          scripts/build-repository-installer.sh "$BUILD_TARGET" repository-installer
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: repository-installer-${{ matrix.arch }}
-          path: installer/*
+          path: repository-installer/*
           if-no-files-found: error
 
   packages:
