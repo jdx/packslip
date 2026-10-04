@@ -1513,6 +1513,13 @@ This document is final for version 1. The predicate types
 name it, and a document that verifies under them today keeps verifying
 under them for as long as its signing material holds.
 
+That is a format contract, not a guarantee that an unchanged verifier supports
+every future Sigstore bundle or log format. The reference implementation's
+[compatibility matrix](https://packslip.dev/docs/compatibility/) records its tested
+release baselines, historical verification material, and authenticated root
+rotation scenarios. Current security policy and freshness checks still apply;
+a format's stability does not override a security rejection or expired metadata.
+
 Version 1 fixes:
 
 - The meaning of every field defined here. A field is never redefined,

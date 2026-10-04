@@ -120,6 +120,9 @@ the layout.
 
 ## Publisher adoption
 
+The [compatibility and support matrix](/docs/compatibility/) records required CI
+coverage and the checks needed before publishing instructions for a real tool.
+
 Before recommending mise, rustup, uv, or pnpm through this path, record the exact
 upstream release, platform, scope, tree, and command paths; then run the tool's
 normal setup and self-update in an isolated account. Check runtime lookup,

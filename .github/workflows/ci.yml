@@ -106,6 +106,34 @@ jobs:
       - run: cargo clippy --no-default-features --features install-cli --all-targets -- -D warnings
       - run: cargo test --no-default-features --features install-cli --lib install::tests
 
+  compatibility:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: jdx/packslip
+          # Published v1.4.0. Keep this baseline as newer releases are added.
+          ref: 87479dfc6443253dff69601cace5fc6ea07e6df5
+          path: .compatibility/baseline
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: |
+            . -> target
+            .compatibility/baseline -> target
+      - run: cargo build --locked --manifest-path .compatibility/baseline/Cargo.toml
+      - name: Cross-version verification and installer fixtures
+        env:
+          PACKSLIP_BASELINE_BIN: ${{ github.workspace }}/.compatibility/baseline/target/debug/packslip
+        run: |
+          cargo test --locked --no-default-features --features install-cli --test compatibility
+          cargo test --locked --no-default-features --features trust-root --lib trust_root::tests
+          cargo test --locked --no-default-features --features install-cli --lib install::tests
+
   # Both schemes end to end against the public log. Only on main, where the
   # id-token permission is available.
   signing:
@@ -338,6 +366,7 @@ jobs:
       - zizmor
 
       - extraction
+      - compatibility
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions: {}
