@@ -345,7 +345,8 @@ jobs:
 ```
 
 A weekly run against a 30-day validity leaves room for a few failed runs.
-The concurrency group prevents two runs from publishing out of order.
+The concurrency group allows one run at a time. Run order is not guaranteed,
+and a new pending run cancels the existing pending run.
 
 ### Keep withdrawals in the repository
 

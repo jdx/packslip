@@ -156,7 +156,9 @@ cargo add serde_json jiff@0.2
 For a GitHub or GitLab project, `verify_forge` verifies a bundle under
 the policy the forge implies and checks it against what the consumer
 remembers, following renames and transfers by repository ID. The following
-Rust fragment follows steps 2 to 4 for a bundle already downloaded. `load_pins`,
+Rust fragment illustrates selected checks from steps 2 to 4 for a bundle
+already downloaded. It does not compare the previous release's `scheme`,
+`attested_by`, or provenance. `load_pins`,
 `load_signer`, `download`, `store_pin`, and `store_signer` stand for your
 own storage and download functions; the fragment is not a complete
 installer. Add host checks and the rest of the checklist above before
