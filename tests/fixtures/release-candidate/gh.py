@@ -33,6 +33,8 @@ if args[0] == "api":
     elif path.endswith("/releases?per_page=100"):
         releases = [state["release"]] if state["release"] and not os.environ.get("FAKE_GH_READ_ONLY") else []
         save([releases])
+    elif path.endswith("/releases/latest"):
+        save({"tag_name": state["latest"]})
     elif path.endswith("/assets?per_page=100"):
         save([{key: value for key, value in asset.items() if key not in ("content", "source", "attested_digest")}
               for asset in state["assets"].values()])

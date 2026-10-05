@@ -189,7 +189,7 @@ class CandidateTests(unittest.TestCase):
                     candidate.download(dist)
                     attestations = [call for call in calls if call[:3] == ("gh", "attestation", "verify")]
                     self.assertEqual(len(attestations), 18)
-                    write.assert_called_once_with("releases/1", "-X", "PATCH", "-f", "target_commitish=" + "c" * 40)
+                    write.assert_not_called()
 
 
 class CandidateProtocolTests(unittest.TestCase):
@@ -232,6 +232,7 @@ class CandidateProtocolTests(unittest.TestCase):
             "FAKE_GH_STATE": str(self.state_file), "GITHUB_REPOSITORY": candidate.REPO,
             "GITHUB_REF": "refs/heads/release-plz", "GITHUB_SHA": self.source,
             "GITHUB_RUN_ID": "42", "GITHUB_ENV": str(self.root / "github-env"),
+            "GITHUB_OUTPUT": str(self.root / "github-output"),
         }
 
     def git(self, *args):
@@ -291,7 +292,9 @@ class CandidateProtocolTests(unittest.TestCase):
                          {file.name: file.read_bytes() for file in self.dist.iterdir()})
         state = self.state()
         self.assertTrue(state["release"]["draft"])
-        self.assertEqual(state["release"]["target_commitish"], final)
+        # GitHub ignores target_commitish once the tag exists. Promotion
+        # relies on the real tag/source proof even if this field still says B.
+        self.assertEqual(state["release"]["target_commitish"], self.source)
         self.assertIn(self.source, (self.root / "github-env").read_text())
         self.assertEqual(len([call for call in state["calls"] if call[:2] == ["attestation", "verify"]]), 18)
         self.assertEqual(self.git("rev-list", "-n1", "v1.6.0"), final)
@@ -338,6 +341,7 @@ class CandidateProtocolTests(unittest.TestCase):
         self.cli("download", "--directory", str(target))
         data = self.state()
         data["release"]["draft"] = False
+        data["latest"] = "v1.6.0"
         data["fail_tag_update"] = True
         self.write_state(data)
         original_assets = data["assets"]
@@ -351,6 +355,8 @@ class CandidateProtocolTests(unittest.TestCase):
         self.cli("finish", "--directory", str(retry))
         data = self.state()
         self.assertEqual(data["major"]["sha"], final)
+        self.assertIn("current-major=true", (self.root / "github-output").read_text())
+        self.assertIn("current-latest=true", (self.root / "github-output").read_text())
         self.assertEqual(data["assets"], original_assets)
         self.assertFalse(data["release"]["draft"])
         for call in data["calls"][previous_calls:]:
@@ -358,20 +364,24 @@ class CandidateProtocolTests(unittest.TestCase):
             self.assertFalse(call[0] == "api" and "/releases/1" in call and "PATCH" in call)
         # A much later retry of an old version must not downgrade v1.
         data["major"] = {"sha": "f" * 40, "version": "1.7.0"}
+        data["latest"] = "v1.7.0"
         self.write_state(data)
         self.cli("finish", "--directory", str(retry))
         self.assertEqual(self.state()["major"]["sha"], "f" * 40)
+        self.assertTrue((self.root / "github-output").read_text().endswith("current-major=false\ncurrent-latest=false\n"))
 
-    def test_published_release_replaced_bytes_or_wrong_target_cannot_resume(self):
+    def test_published_release_replaced_bytes_or_changed_tag_cannot_resume(self):
         self.stage()
         final = self.merge()
         self.cli("download", "--directory", str(self.root / "first"))
         data = self.state()
         data["release"]["draft"] = False
-        data["release"]["target_commitish"] = "f" * 40
         self.write_state(data)
-        self.cli("download", "--directory", str(self.root / "wrong-target"), success=False)
-        data["release"]["target_commitish"] = final
+        self.git("tag", "-f", "v1.6.0", self.source)
+        self.git("push", "-q", "--force", "origin", "v1.6.0")
+        self.cli("download", "--directory", str(self.root / "wrong-tag"), success=False)
+        self.git("tag", "-f", "v1.6.0", final)
+        self.git("push", "-q", "--force", "origin", "v1.6.0")
         data["assets"]["install.sh"]["content"] = b"tampered".hex()
         self.write_state(data)
         self.cli("download", "--directory", str(self.root / "tampered"), success=False)
@@ -392,6 +402,20 @@ class CandidateProtocolTests(unittest.TestCase):
         self.environment["FAKE_GH_READ_ONLY"] = "1"
         self.cli("check", "--build-run")
         self.assertFalse([call for call in self.state()["calls"][before:] if any("/releases" in arg for arg in call)])
+
+    def test_image_downloads_require_original_candidate_bytes_and_provenance(self):
+        self.stage()
+        self.merge()
+        target = self.root / "image-files"
+        target.mkdir()
+        for arch in ("x64", "arm64"):
+            name = f"packslip-v1.6.0-linux-{arch}"
+            shutil.copyfile(self.dist / name, target / name)
+        self.cli("verify-image", "--directory", str(target))
+        before = len(self.state()["calls"])
+        (target / "packslip-v1.6.0-linux-x64").write_bytes(b"replaced image input")
+        self.cli("verify-image", "--directory", str(target), success=False)
+        self.assertFalse([call for call in self.state()["calls"][before:] if call[:2] == ["attestation", "verify"]])
 
 
 if __name__ == "__main__":

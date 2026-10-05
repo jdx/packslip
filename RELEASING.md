@@ -52,7 +52,7 @@ produces and publishes these outputs:
 | CLI resources | Include the usage spec, man page, and bash, zsh, fish, and PowerShell completions. |
 | Install scripts | Reuse the candidate's attested `install.sh` and `install.ps1`, containing the executable SHA-256 values. |
 | Signed release manifest | Sign as project `packslip.dev`, upload the files and bundle to R2, and attach the bundle to the GitHub release. |
-| GitHub release and action tag | Retarget the verified draft to the final version commit, write notes with Communiqué, then publish it. If note generation fails, retain the candidate notes. Move or create the action's major tag (`v1` for 1.x) at that same commit. |
+| GitHub release and action tag | Verify the actual version tag points to the final release commit, write notes with Communiqué, then publish the draft. If note generation fails, retain the candidate notes. Move or create the action's major tag (`v1` for 1.x) at that same commit. |
 | Container image | Publish and attest `ghcr.io/jdx/packslip` for linux/amd64 and linux/arm64, using the release's executables. See [Container image](#container-image). |
 | Signed release list | Call `packslip-releases.yml` to publish the list at `https://packslip.dev/.well-known/packslip.json`. |
 
@@ -79,6 +79,11 @@ bytes and rerun the failed workflow. If publication succeeded but the major
 action tag update failed, rerun: the job verifies the public files and their
 original attestations, skips all release/bundle writes, then completes the
 missing major-tag update. It never rolls that tag back from a newer release.
+Moving container aliases and package-repository publication are gated on the
+current major/latest release outputs; an old-version retry can recover its
+version-specific image without downgrading global aliases or package indices.
+The image's separately downloaded executables are checked against the same
+candidate digests and provenance before any container build or execution.
 An already published release is not replaceable by this staging flow. Inspect
 partial publication before retrying.
 
@@ -288,9 +293,13 @@ those exact candidate bytes. Never bypass the map/provenance gate. The
 release-pr job closes a stray release PR when nothing is left to release;
 confirm that none is still open.
 
-1.0.0 was cut this way from 0.3.1. On a 0.x version release-plz treats a
+1.0.0 required a manual proposal from 0.3.1, before candidate staging was
+introduced. On a 0.x version release-plz treats a
 breaking change as a minor bump, so it would have proposed 0.4.0, and no
 configuration overrides that.
+
+Manual dispatch of `release-plz.yml` is supported only from `main`; a
+dispatch from an unmerged branch cannot publish the crate or create its tag.
 
 ## Withdraw a release or mark a security fix
 

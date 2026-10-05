@@ -94,9 +94,9 @@ def check_tree(data):
         raise ValueError("release checkout has tracked modifications")
 
 
-def files(directory, value):
+def files(directory, value, subset=None):
     paths = {file.name: file for file in Path(directory).iterdir()}
-    if set(paths) != names(value):
+    if set(paths) != (names(value) if subset is None else subset):
         raise ValueError("local release files do not match the required asset inventory")
     result = {}
     for name, file in sorted(paths.items()):
@@ -188,10 +188,8 @@ def stage(directory):
 def download(directory):
     data = load()
     check_tree(data)
-    head = check_tag(data)
+    check_tag(data)
     item = check_remote(data, allow_published=True)
-    if not item["draft"] and item["target_commitish"] != head:
-        raise ValueError("published release target does not match the immutable version tag")
     target = Path(directory)
     target.mkdir(exist_ok=True)
     if any(target.iterdir()):
@@ -200,16 +198,30 @@ def download(directory):
     run("gh", "release", "download", f"v{data['version']}", "-R", REPO, "-D", str(target), *patterns)
     if files(target, data["version"]) != data["assets"]:
         raise ValueError("downloaded candidate bytes differ from the committed digests")
-    for name in sorted(data["assets"]):
-        run("gh", "attestation", "verify", str(target / name), "-R", REPO,
-            "--source-digest", data["source_commit"], "--source-ref", "refs/heads/release-plz",
-            "--signer-workflow", WORKFLOW, "--signer-digest", data["source_commit"],
-            "--deny-self-hosted-runners")
-    if item["draft"]:
-        api(f"releases/{item['id']}", "-X", "PATCH", "-f", f"target_commitish={head}")
+    verify_attestations(data, target, set(data["assets"]))
+    # target_commitish is ignored once the version tag exists. The actual
+    # peeled local/remote tag above, not that release field, proves identity.
     with open(os.environ["GITHUB_ENV"], "a") as output:
         output.write(f"CANDIDATE_SOURCE={data['source_commit']}\n")
         output.write(f"CANDIDATE_PUBLISHED={str(not item['draft']).lower()}\n")
+
+
+def verify_attestations(data, directory, selected):
+    for name in sorted(selected):
+        run("gh", "attestation", "verify", str(Path(directory) / name), "-R", REPO,
+            "--source-digest", data["source_commit"], "--source-ref", "refs/heads/release-plz",
+            "--signer-workflow", WORKFLOW, "--signer-digest", data["source_commit"],
+            "--deny-self-hosted-runners")
+
+
+def verify_image(directory):
+    data = load()
+    check_tree(data)
+    check_tag(data)
+    selected = {f"packslip-v{data['version']}-linux-{arch}" for arch in ("x64", "arm64")}
+    if files(directory, data["version"], selected) != {name: data["assets"][name] for name in selected}:
+        raise ValueError("image executables differ from the original candidate bytes")
+    verify_attestations(data, directory, selected)
 
 
 def check_tag(data):
@@ -234,7 +246,7 @@ def finish(directory):
     check_tree(data)
     head = check_tag(data)
     item = check_remote(data, allow_published=True)
-    if item["draft"] or item["target_commitish"] != head or files(directory, data["version"]) != data["assets"]:
+    if item["draft"] or files(directory, data["version"]) != data["assets"]:
         raise ValueError("major tag requires the verified, published release and its original bytes")
     major = f"v{data['version'].split('.')[0]}"
     refs = api("git/matching-refs/tags/" + major)
@@ -246,6 +258,7 @@ def finish(directory):
         if current["type"] != "commit":
             raise ValueError("major tag does not resolve to a commit")
         if current["sha"] == head:
+            alias_outputs(data, True)
             return
         manifest = api("contents/Cargo.toml?ref=" + current["sha"])
         old = tomllib.loads(base64.b64decode(manifest["content"]).decode())["package"]["version"]
@@ -253,17 +266,28 @@ def finish(directory):
             raise ValueError("major tag has an unsupported version")
         if tuple(map(int, old.split("."))) > tuple(map(int, data["version"].split("."))):
             print("major tag already tracks a newer release; leaving it unchanged")
+            alias_outputs(data, False)
             return
         if old == data["version"]:
             raise ValueError("major tag has this version at a different commit")
         api("git/refs/tags/" + major, "-X", "PATCH", "-f", f"sha={head}", "-F", "force=true")
     else:
         api("git/refs", "-X", "POST", "-f", "ref=refs/tags/" + major, "-f", f"sha={head}")
+    alias_outputs(data, True)
+
+
+def alias_outputs(data, current_major):
+    latest = api("releases/latest")
+    current_latest = latest["tag_name"] == f"v{data['version']}"
+    if os.environ.get("GITHUB_OUTPUT"):
+        with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+            output.write(f"current-major={str(current_major).lower()}\n")
+            output.write(f"current-latest={str(current_latest).lower()}\n")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("mode", "check", "stage", "download", "gate", "finish"))
+    parser.add_argument("command", choices=("mode", "check", "stage", "download", "gate", "finish", "verify-image"))
     parser.add_argument("--directory", default="dist")
     parser.add_argument("--remote", action="store_true")
     parser.add_argument("--build-run", action="store_true")
@@ -283,6 +307,8 @@ def main():
         download(args.directory)
     elif args.command == "finish":
         finish(args.directory)
+    elif args.command == "verify-image":
+        verify_image(args.directory)
     elif args.command == "gate":
         latest = run("gh", "release", "view", "-R", REPO, "--json", "tagName", "--jq", ".tagName")
         if latest != f"v{version()}":

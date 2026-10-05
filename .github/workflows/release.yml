@@ -334,6 +334,9 @@ jobs:
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      current-major: ${{ steps.finish.outputs.current-major }}
+      current-latest: ${{ steps.finish.outputs.current-latest }}
     permissions:
       contents: write
       id-token: write
@@ -389,6 +392,7 @@ jobs:
       # binaries are public. A push made with
       # the built-in token starts no workflow, so this cannot recurse.
       - name: Move the shared major action tag
+        id: finish
         env:
           GH_TOKEN: ${{ github.token }}
         # A rerun verifies published bytes but never overwrites public assets.
@@ -431,21 +435,30 @@ jobs:
         run: |
           gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" -D dist \
             -p "packslip-${GITHUB_REF_NAME}-linux-x64" -p "packslip-${GITHUB_REF_NAME}-linux-arm64"
+          python3 scripts/release-candidate.py verify-image
       - name: Push the image
         id: push
         env:
           GH_TOKEN: ${{ github.token }}
+          CURRENT_MAJOR: ${{ needs.release.outputs.current-major }}
+          CURRENT_LATEST: ${{ needs.release.outputs.current-latest }}
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
           image="ghcr.io/${GITHUB_REPOSITORY}"
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           docker buildx create --use --driver docker-container >/dev/null
+          tags=(--tag "$image:$version")
+          if [ "$CURRENT_MAJOR" = true ]; then
+            tags+=(--tag "$image:${version%.*}" --tag "$image:${version%%.*}")
+          fi
+          if [ "$CURRENT_LATEST" = true ]; then
+            tags+=(--tag "$image:latest")
+          fi
           container/build.sh "$version" \
             "dist/packslip-v${version}-linux-x64" "dist/packslip-v${version}-linux-arm64" \
             --push --metadata-file meta.json \
-            --tag "$image:$version" --tag "$image:${version%.*}" \
-            --tag "$image:${version%%.*}" --tag "$image:latest"
+            "${tags[@]}"
           digest=$(jq -r '."containerimage.digest"' meta.json)
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
           docker buildx imagetools inspect "$image@$digest"
@@ -459,7 +472,7 @@ jobs:
 
   distro-source:
     needs: release
-    if: vars.DISTRO_SOURCE_ENABLED == 'true'
+    if: vars.DISTRO_SOURCE_ENABLED == 'true' && needs.release.outputs.current-latest == 'true'
     uses: $/.github/workflows/distro-source.yml
     with:
       tag: ${{ github.ref_name }}
@@ -470,7 +483,7 @@ jobs:
 
   package-repositories:
     needs: release
-    if: vars.PACKAGE_REPOSITORIES_ENABLED == 'true'
+    if: vars.PACKAGE_REPOSITORIES_ENABLED == 'true' && needs.release.outputs.current-latest == 'true'
     uses: $/.github/workflows/package-repositories.yml
     with:
       tag: ${{ github.ref_name }}

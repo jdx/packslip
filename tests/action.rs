@@ -154,6 +154,14 @@ fn release_promotions_queue_without_replacing_pending_runs() {
         workflow["concurrency"]["cancel-in-progress"].as_bool(),
         Some(false)
     );
+    for name in ["distro-source", "package-repositories"] {
+        assert!(
+            workflow["jobs"][name]["if"]
+                .as_str()
+                .unwrap()
+                .contains("needs.release.outputs.current-latest == 'true'")
+        );
+    }
     for step in workflow["jobs"]["release"]["steps"].as_sequence().unwrap() {
         if matches!(
             step["name"].as_str(),
@@ -166,6 +174,109 @@ fn release_promotions_queue_without_replacing_pending_runs() {
                 Some("env.CANDIDATE_PUBLISHED != 'true'")
             );
         }
+    }
+    let release_plz_path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/workflows/release-plz.yml");
+    let release_plz: Value =
+        serde_yaml_bw::from_str(&fs::read_to_string(release_plz_path).unwrap()).unwrap();
+    for name in ["release", "release-pr"] {
+        assert!(
+            release_plz["jobs"][name]["if"]
+                .as_str()
+                .unwrap()
+                .contains("github.ref == 'refs/heads/main'")
+        );
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn old_release_recovery_never_pushes_moving_image_aliases() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/workflows/release.yml");
+    if !path.exists() {
+        return;
+    }
+    let workflow: Value = serde_yaml_bw::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+    let step = workflow["jobs"]["image"]["steps"]
+        .as_sequence()
+        .unwrap()
+        .iter()
+        .find(|step| step["id"].as_str() == Some("push"))
+        .unwrap();
+    for (major, latest, expected) in [
+        (false, false, vec!["ghcr.io/jdx/packslip:1.6.0"]),
+        (
+            true,
+            false,
+            vec![
+                "ghcr.io/jdx/packslip:1.6.0",
+                "ghcr.io/jdx/packslip:1.6",
+                "ghcr.io/jdx/packslip:1",
+            ],
+        ),
+        (
+            true,
+            true,
+            vec![
+                "ghcr.io/jdx/packslip:1.6.0",
+                "ghcr.io/jdx/packslip:1.6",
+                "ghcr.io/jdx/packslip:1",
+                "ghcr.io/jdx/packslip:latest",
+            ],
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir(root.join("container")).unwrap();
+        fs::create_dir(root.join("bin")).unwrap();
+        let builder = root.join("container/build.sh");
+        fs::write(
+            &builder,
+            "#!/usr/bin/env bash\nprintf '%s\\0' \"$@\" > \"$CALL_LOG\"\nprintf '{\"containerimage.digest\":\"sha256:fixture\"}' > meta.json\n",
+        )
+        .unwrap();
+        fs::set_permissions(&builder, fs::Permissions::from_mode(0o755)).unwrap();
+        let docker = root.join("bin/docker");
+        fs::write(
+            &docker,
+            "#!/usr/bin/env bash\nif [ \"$1\" = login ]; then cat >/dev/null; fi\nif [ \"$1\" = run ]; then printf 'packslip 1.6.0\\n'; fi\n",
+        )
+        .unwrap();
+        fs::set_permissions(&docker, fs::Permissions::from_mode(0o755)).unwrap();
+        let mut paths = vec![root.join("bin")];
+        paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+        let result = Command::new("bash")
+            .args(["-eu", "-c", step["run"].as_str().unwrap()])
+            .current_dir(root)
+            .env("PATH", std::env::join_paths(paths).unwrap())
+            .env("GH_TOKEN", "credential-free-fixture")
+            .env("GITHUB_REF_NAME", "v1.6.0")
+            .env("GITHUB_REPOSITORY", "jdx/packslip")
+            .env("GITHUB_ACTOR", "fixture")
+            .env("GITHUB_OUTPUT", root.join("output"))
+            .env("CURRENT_MAJOR", major.to_string())
+            .env("CURRENT_LATEST", latest.to_string())
+            .env("CALL_LOG", root.join("arguments"))
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let arguments = fs::read(root.join("arguments")).unwrap();
+        let args: Vec<&str> = arguments
+            .split(|byte| *byte == 0)
+            .filter(|part| !part.is_empty())
+            .map(|part| std::str::from_utf8(part).unwrap())
+            .collect();
+        let tags: Vec<&str> = args
+            .windows(2)
+            .filter(|pair| pair[0] == "--tag")
+            .map(|pair| pair[1])
+            .collect();
+        assert_eq!(tags, expected);
     }
 }
 
