@@ -17,11 +17,15 @@ flags differ from these examples.
   only the bundle to the release. Upload the artifacts and any `asset:` files
   yourself first. Without the action, `packslip create` writes the signed
   bundle and uploads nothing.
-- Pin the action to the full commit of its `vX.Y.Z` release. For an archive
-  digest check in addition to build provenance, set `packslip-sha256` to the
-  lowercase SHA-256 of the Packslip archive for the runner's OS and architecture.
-  The check runs before provenance verification, extraction, or execution.
-  `packslip-path` supplies a local executable and ignores this archive digest.
+- Pin the action to the full commit of its `vX.Y.Z` release. Its default CLI
+  download is internally SHA-256 locked for every supported platform, then
+  checked against the actual candidate build source and release-workflow
+  provenance. The CLI/action tag still shares the final release commit.
+  `packslip-version` explicitly overrides this internal lock (with a warning);
+  set `packslip-sha256` for a strict archive pin with that override. Checks run
+  before extraction/execution. `packslip-path` supplies a local executable and
+  bypasses archive/provenance checks. A source checkout without a release map
+  requires one of these explicit trust overrides.
 - Prefer two jobs, so the signing job cannot change the release. Run the
   action with `upload: false` in a job with these permissions:
 

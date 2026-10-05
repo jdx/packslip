@@ -44,6 +44,31 @@ else
   esac
   if [ "$os" = windows ]; then ext=zip; else ext=tar.xz; fi
   asset="packslip-v${version}-${os}-${arch}.${ext}"
+  source_commit=""
+  expected="${PACKSLIP_SHA256:-}"
+  if [ -n "$expected" ] && ! [[ "$expected" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "packslip-sha256 must be a 64-character lowercase hexadecimal SHA-256 digest" >&2
+    exit 1
+  fi
+  if [ -z "${PACKSLIP_VERSION:-}" ]; then
+    # These hashes are in the pinned action checkout, never fetched alongside
+    # mutable release assets. The release PR committed them before its tag.
+    lock="${PACKSLIP_ACTION_ROOT}/action/release.json"
+    [ -f "$lock" ] || { echo "the action checkout has no release digest map; use a published action commit" >&2; exit 1; }
+    pinned="$(jq -er --arg version "$version" --arg asset "$asset" \
+      'select(.schema == 1 and .version == $version) | .assets[$asset].sha256 | select(type == "string")' "$lock")"
+    source_commit="$(jq -er '.source_commit | select(type == "string")' "$lock")"
+    [[ "$pinned" =~ ^[0-9a-f]{64}$ ]] && [[ "$source_commit" =~ ^[0-9a-f]{40}$ ]] || {
+      echo "invalid internal release digest or source commit" >&2; exit 1;
+    }
+    if [ -n "$expected" ] && [ "$expected" != "$pinned" ]; then
+      echo "packslip-sha256 disagrees with the pinned action's release digest" >&2
+      exit 1
+    fi
+    expected="$pinned"
+  else
+    echo "::warning::packslip-version overrides the internal release lock; using repository provenance and any explicit packslip-sha256" >&2
+  fi
   if ! gh release download "v${version}" -R jdx/packslip -p "$asset" -D "$dir" --clobber; then
     echo "could not download $asset from jdx/packslip v${version}" >&2
     if [ "$os" = darwin ] && [ "$arch" = x64 ]; then
@@ -52,11 +77,7 @@ else
     fi
     exit 1
   fi
-  if [ -n "${PACKSLIP_SHA256:-}" ]; then
-    if ! [[ "$PACKSLIP_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
-      echo "packslip-sha256 must be a 64-character lowercase hexadecimal SHA-256 digest" >&2
-      exit 1
-    fi
+  if [ -n "$expected" ]; then
     if command -v sha256sum >/dev/null 2>&1; then
       actual="$(sha256sum "$dir/$asset" | awk '{print $1}')"
     elif command -v shasum >/dev/null 2>&1; then
@@ -65,13 +86,19 @@ else
       echo "packslip-sha256 was set but neither sha256sum nor shasum is available" >&2
       exit 1
     fi
-    if [ "$actual" != "$PACKSLIP_SHA256" ]; then
-      echo "packslip archive SHA-256 mismatch: expected $PACKSLIP_SHA256, got $actual" >&2
+    if [ "$actual" != "$expected" ]; then
+      echo "packslip archive SHA-256 mismatch: expected $expected, got $actual" >&2
       exit 1
     fi
   fi
   # The archive was built by jdx/packslip's release workflow; check that before running it.
-  gh attestation verify "$dir/$asset" -R jdx/packslip
+  policy=()
+  if [ -n "$source_commit" ]; then
+    policy=(--source-digest "$source_commit" --source-ref refs/heads/release-plz
+      --signer-workflow jdx/packslip/.github/workflows/release.yml
+      --signer-digest "$source_commit" --deny-self-hosted-runners)
+  fi
+  gh attestation verify "$dir/$asset" -R jdx/packslip "${policy[@]}"
   if [ "$ext" = zip ]; then
     # -j drops the archive's directory so the executable lands in $dir.
     (cd "$dir" && unzip -ojq "$asset")

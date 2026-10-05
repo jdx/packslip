@@ -141,6 +141,16 @@ fn both_actions_wire_the_optional_download_digest_to_the_installer() {
 
 #[cfg(target_os = "linux")]
 fn run_install(expected_digest: Option<&str>, version_override: &str) -> std::process::Output {
+    run_install_fixture(expected_digest, version_override, None, true)
+}
+
+#[cfg(target_os = "linux")]
+fn run_install_fixture(
+    expected_digest: Option<&str>,
+    version_override: &str,
+    lock_digest: Option<&str>,
+    write_lock: bool,
+) -> std::process::Output {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let fixture = root.join("packslip-fixture");
@@ -187,12 +197,31 @@ fn run_install(expected_digest: Option<&str>, version_override: &str) -> std::pr
     .unwrap()
     .to_owned();
 
+    let action_root = root.join("action-root");
+    fs::create_dir_all(action_root.join("action")).unwrap();
+    fs::write(
+        action_root.join("Cargo.toml"),
+        format!("[package]\nversion = \"{version}\"\n"),
+    )
+    .unwrap();
+    if write_lock {
+        let metadata = serde_json::json!({
+            "schema": 1, "version": version, "source_commit": "a".repeat(40),
+            "assets": {asset.clone(): {"sha256": lock_digest.unwrap_or(&actual)}}
+        });
+        fs::write(
+            action_root.join("action/release.json"),
+            serde_json::to_vec(&metadata).unwrap(),
+        )
+        .unwrap();
+    }
+
     let bin = root.join("bin");
     fs::create_dir(&bin).unwrap();
     let gh = bin.join("gh");
     fs::write(
         &gh,
-        "#!/usr/bin/env bash\nset -eu\nif [ \"$1\" = release ]; then\n  while [ \"$#\" -gt 0 ]; do\n    if [ \"$1\" = -D ]; then\n      cp \"$FIXTURE\" \"$2/$ASSET\"\n      exit 0\n    fi\n    shift\n  done\nfi\nif [ \"$1\" = attestation ]; then exit 0; fi\nexit 88\n",
+        "#!/usr/bin/env bash\nset -eu\nif [ \"$1\" = release ]; then\n  while [ \"$#\" -gt 0 ]; do\n    if [ \"$1\" = -D ]; then\n      cp \"$FIXTURE\" \"$2/$ASSET\"\n      exit 0\n    fi\n    shift\n  done\nfi\nif [ \"$1\" = attestation ]; then printf 'attested %s\\n' \"$*\"; exit 0; fi\nexit 88\n",
     )
     .unwrap();
     fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
@@ -204,7 +233,7 @@ fn run_install(expected_digest: Option<&str>, version_override: &str) -> std::pr
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .env("RUNNER_TEMP", root)
         .env("GITHUB_PATH", root.join("github-path"))
-        .env("PACKSLIP_ACTION_ROOT", env!("CARGO_MANIFEST_DIR"))
+        .env("PACKSLIP_ACTION_ROOT", action_root)
         .env("PACKSLIP_VERSION", version_override)
         .env("PACKSLIP_SHA256", expected_digest.unwrap_or(&actual))
         .env("PACKSLIP_PATH", "")
@@ -239,11 +268,12 @@ fn install_rejects_a_tampered_pinned_archive_before_provenance_or_execution() {
         String::from_utf8_lossy(&rejected.stderr).contains("packslip archive SHA-256 mismatch")
     );
     assert!(!String::from_utf8_lossy(&rejected.stdout).contains("invoked"));
+    assert!(!String::from_utf8_lossy(&rejected.stdout).contains("attested"));
 }
 
 #[cfg(target_os = "linux")]
 #[test]
-fn source_checkout_defaults_work_without_a_digest_lock() {
+fn default_uses_internal_digest_and_actual_candidate_provenance() {
     let accepted = run_install(Some(""), "");
     assert!(
         accepted.status.success(),
@@ -253,4 +283,23 @@ fn source_checkout_defaults_work_without_a_digest_lock() {
     assert!(String::from_utf8_lossy(&accepted.stdout).contains("invoked"));
     let pinned = run_install(None, "");
     assert!(pinned.status.success());
+    let output = String::from_utf8_lossy(&accepted.stdout);
+    assert!(output.contains("--source-digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+    assert!(output.contains("--source-ref refs/heads/release-plz"));
+    assert!(output.contains("--signer-digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+    assert!(output.contains("--signer-workflow jdx/packslip/.github/workflows/release.yml"));
+    assert!(output.contains("--deny-self-hosted-runners"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn default_rejects_missing_lock_and_tampered_bytes_before_attesting() {
+    let missing = run_install_fixture(Some(""), "", None, false);
+    assert!(!missing.status.success());
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("no release digest map"));
+    let tampered = run_install_fixture(Some(""), "", Some(&"0".repeat(64)), true);
+    assert!(!tampered.status.success());
+    assert!(String::from_utf8_lossy(&tampered.stderr).contains("SHA-256 mismatch"));
+    assert!(!String::from_utf8_lossy(&tampered.stdout).contains("attested"));
+    assert!(!String::from_utf8_lossy(&tampered.stdout).contains("invoked"));
 }

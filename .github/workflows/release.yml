@@ -1,10 +1,11 @@
 name: release
 
-# Runs when release-plz pushes a version tag after its release PR is
-# merged (see RELEASING.md). Moving major tags (v0, v1, ...) must not
-# start releases of their own.
+# Build/stage the release PR candidate, then promote the same bytes when
+# release-plz tags the merged PR (see RELEASING.md). Major action tags do
+# not start releases of their own.
 on:
   push:
+    branches: [release-plz]
     tags: ["v[0-9]+.[0-9]+.[0-9]+"]
   # A release that shipped before packslip.dev served its own can be
   # described again under that name; see the backfill job.
@@ -17,6 +18,11 @@ on:
 permissions:
   contents: read
 
+# Candidate builds and tag promotion must not mutate the same draft concurrently.
+concurrency:
+  group: packslip-release
+  cancel-in-progress: false
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -26,10 +32,13 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       major-tag: ${{ steps.version.outputs.major-tag }}
+      tag: ${{ steps.version.outputs.tag }}
+      mode: ${{ steps.mode.outputs.mode }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Check the shared action and CLI version
         id: version
         shell: python
@@ -43,13 +52,18 @@ jobs:
           if not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version):
               raise SystemExit(f"unsupported release version: {version}")
           tag = os.environ["GITHUB_REF_NAME"]
-          if tag != f"v{version}":
+          if os.environ["GITHUB_REF_TYPE"] == "tag" and tag != f"v{version}":
               raise SystemExit(f"release tag {tag} does not match Cargo.toml v{version}")
           with open(os.environ["GITHUB_OUTPUT"], "a") as output:
               output.write(f"major-tag=v{version.split('.')[0]}\n")
+              output.write(f"tag=v{version}\n")
+      - name: Detect a staged candidate
+        id: mode
+        run: echo "mode=$(python3 scripts/release-candidate.py mode)" >> "$GITHUB_OUTPUT"
 
   build:
     needs: version
+    if: github.ref == 'refs/heads/release-plz' && needs.version.outputs.mode == 'build'
     strategy:
       fail-fast: false
       matrix:
@@ -80,6 +94,7 @@ jobs:
             runner: windows-11-arm
             asset: windows-arm64
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -182,9 +197,10 @@ jobs:
         shell: bash
         env:
           PACKAGE_TARGET: ${{ matrix.target }}
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
+          version="${RELEASE_TAG#v}"
           name="packslip-v${version}-${{ matrix.asset }}"
           mkdir -p "dist/$name"
           if [[ "$PACKAGE_TARGET" == *windows* ]]; then
@@ -210,29 +226,23 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
-  release:
+  stage:
     needs: [version, build]
+    if: github.ref == 'refs/heads/release-plz'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
       id-token: write
       attestations: write
+    env:
+      RELEASE_TAG: ${{ needs.version.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-          # Communiqué compares this tag with the previous release and needs
-          # the intervening commits and tags to write accurate notes.
+          # Compare the candidate source with the subsequent metadata commit.
           fetch-depth: 0
-      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
-        continue-on-error: true
-        with:
-          cache: false
-          install_args: communique
-        env:
-          # A stale lock must fail instead of silently changing the release-
-          # note generator selected by `communique = "latest"`.
-          MISE_LOCKED: "1"
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: dist
@@ -253,7 +263,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p bin
-          tar -xJf "dist/packslip-${GITHUB_REF_NAME}-linux-x64.tar.xz" --strip-components=1 -C bin
+          tar -xJf "dist/packslip-${RELEASE_TAG}-linux-x64.tar.xz" --strip-components=1 -C bin
           bin/packslip usage > dist/packslip.usage.kdl
           cp packslip.1 dist/packslip.1
           test -s dist/packslip.1
@@ -279,34 +289,81 @@ jobs:
       # attested, attached to the release, and copied to R2 for packslip.sh
       # with every other release file.
       - name: Write the install scripts
-        run: installer/render.sh "${GITHUB_REF_NAME#v}" dist
+        run: installer/render.sh "${RELEASE_TAG#v}" dist
       - name: Attest the release files
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/*
-      # Keep the release private until its narrative notes and signed packslip
-      # are ready. If Communiqué fails, the generated GitHub notes remain as a
-      # serviceable fallback and the release can still proceed.
-      - name: Create the draft release
+      - name: Stage and checksum the draft release
         env:
           GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/release-candidate.py stage
+      # This existing PAT only pushes the metadata commit, so PR CI runs again.
+      # It is not passed to a binary, signing action, or attestation step.
+      - name: Commit the verified digest map to the release PR
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
         run: |
           set -euo pipefail
-          gh release create "$GITHUB_REF_NAME" --draft --verify-tag --generate-notes dist/*
+          git add action/release.json
+          git -c user.name='release-plz[bot]' -c user.email='release-plz+bot@users.noreply.github.com' \
+            commit -m "chore: pin release candidate archives"
+          # A normal fast-forward push rejects a newer release-plz refresh.
+          git -c credential.helper='!gh auth git-credential' push origin HEAD:refs/heads/release-plz
+
+  ready:
+    needs: version
+    if: github.ref == 'refs/heads/release-plz' && needs.version.outputs.mode == 'ready'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verify the staged candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/release-candidate.py check --remote
+
+  release:
+    needs: version
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verify and download the original candidate bytes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/release-candidate.py download
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        continue-on-error: true
+        with:
+          cache: false
+          install_args: communique
+        env:
+          MISE_LOCKED: "1"
       - name: Rewrite the release body with Communiqué
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: communique generate "$GITHUB_REF_NAME" --github-release
-      # Dogfood: the binary just built signs its own release manifest with
+      # Dogfood: the verified candidate binary signs its release manifest with
       # this job's identity, as the project packslip.dev, and publishes the
       # files and the bundle where that name says they are. The bundle is
       # attached to the GitHub release too, for anyone reading it there.
       - name: Publish this release's packslip
         env:
           TAG: ${{ github.ref_name }}
-          COMMIT: ${{ github.sha }}
+          # The manifest names the actual build source, not a fictional tag build.
+          COMMIT: ${{ env.CANDIDATE_SOURCE }}
           AWS_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
@@ -376,11 +433,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          pattern: linux-*
-          path: dist
-          merge-multiple: true
+      - name: Download the published Linux executables
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" -D dist \
+            -p "packslip-${GITHUB_REF_NAME}-linux-x64" -p "packslip-${GITHUB_REF_NAME}-linux-arm64"
       - name: Push the image
         id: push
         env:
@@ -449,10 +507,11 @@ jobs:
       - name: Install packslip
         env:
           GH_TOKEN: ${{ github.token }}
-          PACKSLIP_VERSION: ""
           PACKSLIP_PATH: ""
           PACKSLIP_ACTION_ROOT: .
-        run: bash scripts/install-packslip.sh
+        run: |
+          tag=$(gh release view -R "$GITHUB_REPOSITORY" --json tagName -q .tagName)
+          PACKSLIP_VERSION="${tag#v}" bash scripts/install-packslip.sh
       - name: Download the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -464,7 +523,11 @@ jobs:
           rm -f dist/packslip*.sigstore.json
           ls -la dist
           echo "published_at=$(gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json publishedAt -q .publishedAt)" >> "$GITHUB_ENV"
-          echo "commit=$(git rev-list -n1 "$TAG")" >> "$GITHUB_ENV"
+          commit=$(git rev-list -n1 "$TAG")
+          if git cat-file -e "$TAG:action/release.json" 2>/dev/null; then
+            commit=$(git show "$TAG:action/release.json" | jq -er .source_commit)
+          fi
+          echo "commit=$commit" >> "$GITHUB_ENV"
       - name: Publish the release's packslip
         env:
           COMMIT: ${{ env.commit }}

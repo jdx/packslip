@@ -26,12 +26,20 @@ For local builds and documentation generation, see
    to the `release-plz` branch, creating or updating the
    `chore: release vX.Y.Z` PR. The version bump and generated CLI reference
    are committed together so the published documentation matches the release.
-2. A maintainer reviews and merges the PR.
-3. If `RELEASE_PLZ_RELEASE` is `true`, the `release` job in
+2. The branch push runs `release.yml`: build all five platforms, sign and
+   notarize macOS, generate resources/installers, and attest the final files.
+   Stage those 18 files in an unpublished draft and commit their checked
+   SHA-256 digests, sizes, build source, and run ID in `action/release.json`.
+   This metadata push reruns PR CI without rebuilding the candidate. A
+   release-plz refresh removes the map and builds a new candidate.
+3. A maintainer reviews and merges the PR after the `staged-release` check
+   passes. Its merge tree must differ from the candidate only in that map.
+4. If `RELEASE_PLZ_RELEASE` is `true`, the `release` job in
    `release-plz.yml` publishes the crate to crates.io and then creates the
    `vX.Y.Z` tag.
-4. The tag starts `release.yml`, which builds, signs, and publishes the
-   release files, container image, and discovery metadata described below.
+5. The tag starts `release.yml`, which verifies and promotes the same draft
+   bytes, signs the release manifest, and publishes the container image and
+   discovery metadata. It does not rebuild or re-attest the candidate files.
 
 ### What the tag workflow publishes
 
@@ -40,13 +48,35 @@ produces and publishes these outputs:
 
 | Output | Publication behavior |
 | --- | --- |
-| Executables and archives | Build all five [platforms](#platforms); sign and notarize the macOS executable. |
+| Executables and archives | Reuse the draft's five [platforms](#platforms), including the signed/notarized macOS executable. Check the committed hashes and original attestations before extraction. |
 | CLI resources | Include the usage spec, man page, and bash, zsh, fish, and PowerShell completions. |
-| Install scripts | Render `install.sh` and `install.ps1` with each executable's SHA-256, and attest all release files. |
+| Install scripts | Reuse the candidate's attested `install.sh` and `install.ps1`, containing the executable SHA-256 values. |
 | Signed release manifest | Sign as project `packslip.dev`, upload the files and bundle to R2, and attach the bundle to the GitHub release. |
-| GitHub release and action tag | Create the release as a draft, write notes with Communiqué, then publish it. If note generation fails, retain GitHub's generated notes. Move or create the action's major tag (`v1` for 1.x). |
+| GitHub release and action tag | Retarget the verified draft to the final version commit, write notes with Communiqué, then publish it. If note generation fails, retain the candidate notes. Move or create the action's major tag (`v1` for 1.x) at that same commit. |
 | Container image | Publish and attest `ghcr.io/jdx/packslip` for linux/amd64 and linux/arm64, using the release's executables. See [Container image](#container-image). |
 | Signed release list | Call `packslip-releases.yml` to publish the list at `https://packslip.dev/.well-known/packslip.json`. |
+
+### Candidate provenance and failure recovery
+
+The original build provenance identifies the candidate commit on
+`refs/heads/release-plz`, not the later release tag. Promotion verifies the
+exact source digest, that branch, the `release.yml` signer workflow, hosted
+runners, and a successful candidate run. The signed manifest records this
+actual build commit too, and omits a source tag that did not build the files.
+Consumers requiring a tag-built attestation will not accept this branch-built
+release; do not re-attest the old bytes as if they were compiled at the tag.
+
+The final action commit includes the hashes for all five download platforms.
+The map is excluded from the Cargo package and is the only permitted tree
+difference from the build source. Both `vX.Y.Z` and the default action point
+to the final release commit. No separate action version tag is created.
+
+Missing/stale metadata, a source change, a failed build, replaced draft bytes,
+or provenance mismatch holds publication. A stale candidate can be rebuilt
+by refreshing the release PR before merging; never move a version tag. If a
+tag promotion fails, repair the draft only with the already pinned original
+bytes and rerun the failed workflow. An already published release is not
+replaceable by this staging flow. Inspect partial publication before retrying.
 
 The list workflow also refreshes the signature every Monday before its
 30-day validity runs out. Every rebuild retains withdrawals committed in

@@ -450,15 +450,24 @@ warns about when both are set. A downloaded archive is checked against
 jdx/packslip's build provenance before it runs; a binary supplied this way
 is not checked at all, so the job vouches for where it came from.
 
-For defense in depth, `packslip-sha256` can additionally pin the downloaded
-release archive. Get the archive digest from the Packslip release's GitHub
-asset metadata and use lowercase hexadecimal:
+Released action commits include the SHA-256 digests of their CLI archives.
+With the default CLI version, the action checks that internal digest before
+provenance verification or extraction, then verifies the exact candidate build
+source and the Packslip release workflow. Pinning the action's full commit
+therefore pins its CLI download on every supported platform without copying
+hashes into the calling workflow.
 
 The digest must match the runner's OS and architecture. A workflow matrix
 needs the corresponding digest for each platform. The action's `vX.Y.Z` tag
 and the CLI release tag identify the same commit; `v1` advances to that commit
-after publication. Without a digest input, the action retains its existing
-build-provenance verification.
+after publication. The candidate archives were built and attested before the
+digest map was committed to the release PR; their provenance truthfully names
+that candidate commit, not a build at the final tag.
+
+An explicit `packslip-version` overrides this internal lock, with a warning,
+and retains repository-level build-provenance verification. For that override,
+use `packslip-sha256` to pin the downloaded archive too. Obtain the digest from
+the release's GitHub asset metadata and use lowercase hexadecimal:
 
 ```yaml
 - uses: jdx/packslip@<full-commit-sha> # v1.5.1
@@ -469,6 +478,7 @@ build-provenance verification.
     bin: mytool
 ```
 
+An optional digest for the default version must agree with the internal map.
 The digest is checked after download and before provenance verification or
 extraction. It applies only to the action-downloaded archive; when
 `packslip-path` is set, the workflow supplies the executable and the digest
@@ -507,9 +517,10 @@ macOS or self-hosted runners, check these before adding the action:
 | bash 4 or later | Running the action's steps; macOS's own `/bin/bash` 3.2 is too old. |
 | GitHub CLI (`gh`) with `gh attestation verify` | Installing and verifying packslip, downloading assets, and uploading the bundle. |
 | `tar` with xz support, or `unzip` on Windows | Unpacking the packslip CLI. |
-| `sha256sum` | Linking build provenance by digest. |
+| `sha256sum` | Linking build provenance by digest and verifying downloads (`shasum` is also supported for download verification). |
+| `jq` | Reading the pinned action's internal release digest map. |
 
-The `jdx/packslip/releases` action also needs `jq`; it publishes the lists
+The `jdx/packslip/releases` action also uses `jq` to publish the lists
 used for [Host releases on your own domain](/docs/self-hosting/).
 
 ## Action inputs

@@ -168,12 +168,16 @@ inputs:
     description: >
       The packslip version to run, such as 1.4.0, without a leading v;
       defaults to the version this action was released with (read from its
-      Cargo.toml). Ignored when packslip-path is set.
+      Cargo.toml). An explicit override bypasses the internal release digest
+      map with a warning; use packslip-sha256 for an explicit archive pin.
+      Ignored when packslip-path is set.
     required: false
     default: ""
   packslip-sha256:
     description: >
       SHA-256 digest of the packslip release archive the action downloads.
+      The default version is internally pinned. A supplied digest must agree
+      with that map, or pin an explicit packslip-version override.
       When set, the action checks the downloaded archive before verifying its
       build provenance or extracting it. It is ignored when packslip-path is
       set, because the workflow then supplies the executable itself.
