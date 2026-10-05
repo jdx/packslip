@@ -140,10 +140,10 @@ def check_run(data):
         raise ValueError("candidate build run is not a successful trusted release-plz push")
 
 
-def check_remote(data):
+def check_remote(data, allow_published=False):
     check_run(data)
     item = release(data["version"])
-    if not item or not item["draft"]:
+    if not item or (not item["draft"] and not allow_published):
         raise ValueError("matching unpublished draft release is required")
     check_assets(data, item, allow_bundle=True)
     return item
@@ -188,7 +188,10 @@ def stage(directory):
 def download(directory):
     data = load()
     check_tree(data)
-    item = check_remote(data)
+    head = check_tag(data)
+    item = check_remote(data, allow_published=True)
+    if not item["draft"] and item["target_commitish"] != head:
+        raise ValueError("published release target does not match the immutable version tag")
     target = Path(directory)
     target.mkdir(exist_ok=True)
     if any(target.iterdir()):
@@ -202,16 +205,68 @@ def download(directory):
             "--source-digest", data["source_commit"], "--source-ref", "refs/heads/release-plz",
             "--signer-workflow", WORKFLOW, "--signer-digest", data["source_commit"],
             "--deny-self-hosted-runners")
-    api(f"releases/{item['id']}", "-X", "PATCH", "-f", f"target_commitish={run('git', 'rev-parse', 'HEAD')}")
+    if item["draft"]:
+        api(f"releases/{item['id']}", "-X", "PATCH", "-f", f"target_commitish={head}")
     with open(os.environ["GITHUB_ENV"], "a") as output:
         output.write(f"CANDIDATE_SOURCE={data['source_commit']}\n")
+        output.write(f"CANDIDATE_PUBLISHED={str(not item['draft']).lower()}\n")
+
+
+def check_tag(data):
+    tag = f"v{data['version']}"
+    if os.environ.get("GITHUB_REF") != f"refs/tags/{tag}":
+        raise ValueError("promotion requires the matching version-tag event")
+    head = run("git", "rev-parse", "HEAD")
+    if run("git", "rev-list", "-n1", tag) != head:
+        raise ValueError("local version tag does not identify the release checkout")
+    remote = dict((ref, sha) for sha, ref in (line.split() for line in
+        run("git", "ls-remote", "origin", f"refs/tags/{tag}", f"refs/tags/{tag}^{{}}").splitlines()))
+    if remote.get(f"refs/tags/{tag}^{{}}", remote.get(f"refs/tags/{tag}")) != head:
+        raise ValueError("remote version tag does not identify the release checkout")
+    return head
+
+
+def finish(directory):
+    """Complete a missed major-tag update without overwriting release assets."""
+    import base64
+
+    data = load()
+    check_tree(data)
+    head = check_tag(data)
+    item = check_remote(data, allow_published=True)
+    if item["draft"] or item["target_commitish"] != head or files(directory, data["version"]) != data["assets"]:
+        raise ValueError("major tag requires the verified, published release and its original bytes")
+    major = f"v{data['version'].split('.')[0]}"
+    refs = api("git/matching-refs/tags/" + major)
+    match = [ref for ref in refs if ref["ref"] == "refs/tags/" + major]
+    if match:
+        current = match[0]["object"]
+        while current["type"] == "tag":
+            current = api("git/tags/" + current["sha"])["object"]
+        if current["type"] != "commit":
+            raise ValueError("major tag does not resolve to a commit")
+        if current["sha"] == head:
+            return
+        manifest = api("contents/Cargo.toml?ref=" + current["sha"])
+        old = tomllib.loads(base64.b64decode(manifest["content"]).decode())["package"]["version"]
+        if not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", old):
+            raise ValueError("major tag has an unsupported version")
+        if tuple(map(int, old.split("."))) > tuple(map(int, data["version"].split("."))):
+            print("major tag already tracks a newer release; leaving it unchanged")
+            return
+        if old == data["version"]:
+            raise ValueError("major tag has this version at a different commit")
+        api("git/refs/tags/" + major, "-X", "PATCH", "-f", f"sha={head}", "-F", "force=true")
+    else:
+        api("git/refs", "-X", "POST", "-f", "ref=refs/tags/" + major, "-f", f"sha={head}")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("mode", "check", "stage", "download", "gate"))
+    parser.add_argument("command", choices=("mode", "check", "stage", "download", "gate", "finish"))
     parser.add_argument("--directory", default="dist")
     parser.add_argument("--remote", action="store_true")
+    parser.add_argument("--build-run", action="store_true")
     args = parser.parse_args()
     if args.command == "mode":
         mode = "build"
@@ -226,6 +281,8 @@ def main():
         stage(args.directory)
     elif args.command == "download":
         download(args.directory)
+    elif args.command == "finish":
+        finish(args.directory)
     elif args.command == "gate":
         latest = run("gh", "release", "view", "-R", REPO, "--json", "tagName", "--jq", ".tagName")
         if latest != f"v{version()}":
@@ -237,6 +294,8 @@ def main():
         check_tree(data)
         if args.remote:
             check_remote(data)
+        elif args.build_run:
+            check_run(data)
 
 
 if __name__ == "__main__":

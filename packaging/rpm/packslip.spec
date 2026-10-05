@@ -15,6 +15,7 @@ BuildRequires: cargo
 BuildRequires: gcc
 BuildRequires: cmake
 BuildRequires: pkgconf-pkg-config
+BuildRequires: jq
 Requires: ca-certificates
 
 %description

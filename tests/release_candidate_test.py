@@ -6,7 +6,9 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -175,7 +177,8 @@ class CandidateTests(unittest.TestCase):
                 return "c" * 40 if args[0] == "git" else ""
 
             with patch.object(candidate, "load", return_value=self.data), patch.object(candidate, "check_tree"), \
-                    patch.object(candidate, "check_remote", return_value={"id": 1}), \
+                    patch.object(candidate, "check_remote", return_value={"id": 1, "draft": True}), \
+                    patch.object(candidate, "check_tag", return_value="c" * 40), \
                     patch.object(candidate, "run", side_effect=command), patch.object(candidate, "api") as write, \
                     patch.dict(os.environ, {"GITHUB_ENV": str(Path(directory) / "env")}):
                 if fail_attestation:
@@ -187,6 +190,208 @@ class CandidateTests(unittest.TestCase):
                     attestations = [call for call in calls if call[:3] == ("gh", "attestation", "verify")]
                     self.assertEqual(len(attestations), 18)
                     write.assert_called_once_with("releases/1", "-X", "PATCH", "-f", "target_commitish=" + "c" * 40)
+
+
+class CandidateProtocolTests(unittest.TestCase):
+    """Run the real CLI entry point with real Git and a local fake forge."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.checkout = self.root / "checkout"
+        self.checkout.mkdir()
+        self.remote = self.root / "origin.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(self.remote)], check=True)
+        self.git("init", "--initial-branch=main", "-q")
+        self.git("config", "user.name", "Test")
+        self.git("config", "user.email", "test@example.invalid")
+        self.git("remote", "add", "origin", str(self.remote))
+        (self.checkout / "Cargo.toml").write_text('[package]\nversion = "1.5.1"\n')
+        (self.checkout / "source.rs").write_text("build input")
+        self.commit("base")
+        self.git("push", "-q", "origin", "main")
+        self.git("checkout", "-qb", "release-plz")
+        (self.checkout / "Cargo.toml").write_text('[package]\nversion = "1.6.0"\n')
+        self.source = self.commit("release candidate")
+        self.git("push", "-q", "origin", "release-plz")
+        self.dist = self.root / "candidate-files"
+        self.dist.mkdir()
+        for name in candidate.names("1.6.0"):
+            (self.dist / name).write_bytes(f"original {name}".encode())
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        fixture = Path(__file__).parent / "fixtures/release-candidate/gh.py"
+        shutil.copyfile(fixture, bin_dir / "gh")
+        (bin_dir / "gh").chmod(0o755)
+        self.state_file = self.root / "forge.json"
+        self.state_file.write_text(json.dumps({"calls": [], "release": None, "assets": {},
+                                               "latest": "v1.5.1", "run": self.build_run(self.source)}))
+        self.environment = os.environ | {
+            "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
+            "FAKE_GH_STATE": str(self.state_file), "GITHUB_REPOSITORY": candidate.REPO,
+            "GITHUB_REF": "refs/heads/release-plz", "GITHUB_SHA": self.source,
+            "GITHUB_RUN_ID": "42", "GITHUB_ENV": str(self.root / "github-env"),
+        }
+
+    def git(self, *args):
+        return subprocess.check_output(["git", *args], cwd=self.checkout, text=True).strip()
+
+    def commit(self, message):
+        self.git("add", ".")
+        self.git("commit", "-qm", message)
+        return self.git("rev-parse", "HEAD")
+
+    def build_run(self, source):
+        return {"head_sha": source, "event": "push", "head_branch": "release-plz", "conclusion": "success",
+                "head_repository": {"full_name": candidate.REPO}, "workflow_id": 3}
+
+    def state(self):
+        return json.loads(self.state_file.read_text())
+
+    def write_state(self, data):
+        self.state_file.write_text(json.dumps(data))
+
+    def cli(self, command, *args, success=True):
+        result = subprocess.run([sys.executable, str(SPEC.origin), command, *args], cwd=self.checkout,
+                                env=self.environment, text=True, capture_output=True)
+        self.assertEqual(result.returncode == 0, success, result.stdout + result.stderr)
+        return result
+
+    def stage(self):
+        self.cli("stage", "--directory", str(self.dist))
+        self.commit("release digest map")
+        self.git("push", "-q", "origin", "release-plz")
+
+    def merge(self):
+        self.git("checkout", "-q", "main")
+        self.git("merge", "--squash", "release-plz")
+        final = self.commit("chore: release v1.6.0")
+        self.git("tag", "v1.6.0")
+        self.git("push", "-q", "origin", "main", "v1.6.0")
+        self.environment["GITHUB_REF"] = "refs/tags/v1.6.0"
+        self.environment["GITHUB_SHA"] = final
+        return final
+
+    def test_stage_merge_promote_keeps_exact_bytes_and_candidate_source(self):
+        self.assertEqual(self.cli("mode").stdout.strip(), "build")
+        self.stage()
+        self.assertFalse(self.git("ls-remote", "origin", "refs/tags/v1.6.0"))
+        self.assertEqual(self.cli("mode").stdout.strip(), "ready")
+        self.cli("check", "--remote")
+        final = self.merge()
+        self.assertNotEqual(final, self.source)
+        # Squash merge preserves the tree proof without pretending B == T.
+        ancestry = subprocess.run(["git", "merge-base", "--is-ancestor", self.source, final], cwd=self.checkout)
+        self.assertNotEqual(ancestry.returncode, 0)
+        self.cli("gate")
+        target = self.root / "downloaded"
+        self.cli("download", "--directory", str(target))
+        self.assertEqual({file.name: file.read_bytes() for file in target.iterdir()},
+                         {file.name: file.read_bytes() for file in self.dist.iterdir()})
+        state = self.state()
+        self.assertTrue(state["release"]["draft"])
+        self.assertEqual(state["release"]["target_commitish"], final)
+        self.assertIn(self.source, (self.root / "github-env").read_text())
+        self.assertEqual(len([call for call in state["calls"] if call[:2] == ["attestation", "verify"]]), 18)
+        self.assertEqual(self.git("rev-list", "-n1", "v1.6.0"), final)
+
+    def test_input_refresh_invalidates_then_restages_same_version(self):
+        self.stage()
+        (self.checkout / "source.rs").write_text("new build input")
+        self.commit("changed input")
+        self.assertEqual(self.cli("mode").stdout.strip(), "build")
+        self.cli("check", success=False)
+        (self.checkout / str(candidate.LOCK)).unlink()
+        new_source = self.commit("refresh without stale map")
+        self.git("push", "-q", "origin", "release-plz")
+        self.environment["GITHUB_SHA"] = new_source
+        data = self.state()
+        data["run"] = self.build_run(new_source)
+        self.write_state(data)
+        for file in self.dist.iterdir():
+            file.write_bytes(f"refreshed {file.name}".encode())
+        self.stage()
+        self.cli("check", "--remote")
+        metadata = json.loads((self.checkout / str(candidate.LOCK)).read_text())
+        self.assertEqual(metadata["source_commit"], new_source)
+        self.assertEqual(self.state()["release"]["target_commitish"], new_source)
+
+    def test_asset_replacement_during_download_fails_before_attestation(self):
+        self.stage()
+        self.merge()
+        data = self.state()
+        # Forge metadata still advertises the signed hash, but download bytes
+        # differ: the local digest must catch this before any verifier/execution.
+        data["assets"]["install.sh"]["content"] = b"tampered download".hex()
+        before = data["release"]["target_commitish"]
+        self.write_state(data)
+        self.cli("download", "--directory", str(self.root / "downloaded"), success=False)
+        data = self.state()
+        self.assertEqual(data["release"]["target_commitish"], before)
+        self.assertFalse([call for call in data["calls"] if call[:2] == ["attestation", "verify"]])
+
+    def test_failure_after_publication_resumes_without_public_asset_writes(self):
+        self.stage()
+        final = self.merge()
+        target = self.root / "downloaded"
+        self.cli("download", "--directory", str(target))
+        data = self.state()
+        data["release"]["draft"] = False
+        data["fail_tag_update"] = True
+        self.write_state(data)
+        original_assets = data["assets"]
+        self.cli("finish", "--directory", str(target), success=False)
+        self.assertIsNone(self.state().get("major"))
+        previous_calls = len(self.state()["calls"])
+        retry = self.root / "retry-download"
+        self.cli("download", "--directory", str(retry))
+        self.assertIn("CANDIDATE_PUBLISHED=true", (self.root / "github-env").read_text())
+        self.cli("finish", "--directory", str(retry))
+        self.cli("finish", "--directory", str(retry))
+        data = self.state()
+        self.assertEqual(data["major"]["sha"], final)
+        self.assertEqual(data["assets"], original_assets)
+        self.assertFalse(data["release"]["draft"])
+        for call in data["calls"][previous_calls:]:
+            self.assertNotEqual(call[:2], ["release", "upload"])
+            self.assertFalse(call[0] == "api" and "/releases/1" in call and "PATCH" in call)
+        # A much later retry of an old version must not downgrade v1.
+        data["major"] = {"sha": "f" * 40, "version": "1.7.0"}
+        self.write_state(data)
+        self.cli("finish", "--directory", str(retry))
+        self.assertEqual(self.state()["major"]["sha"], "f" * 40)
+
+    def test_published_release_replaced_bytes_or_wrong_target_cannot_resume(self):
+        self.stage()
+        final = self.merge()
+        self.cli("download", "--directory", str(self.root / "first"))
+        data = self.state()
+        data["release"]["draft"] = False
+        data["release"]["target_commitish"] = "f" * 40
+        self.write_state(data)
+        self.cli("download", "--directory", str(self.root / "wrong-target"), success=False)
+        data["release"]["target_commitish"] = final
+        data["assets"]["install.sh"]["content"] = b"tampered".hex()
+        self.write_state(data)
+        self.cli("download", "--directory", str(self.root / "tampered"), success=False)
+        self.assertIsNone(self.state().get("major"))
+
+    def test_queued_old_candidate_cannot_stage_over_refreshed_remote(self):
+        (self.checkout / "source.rs").write_text("newer queued input")
+        self.commit("newer candidate")
+        self.git("push", "-q", "origin", "release-plz")
+        self.git("checkout", "-q", self.source)
+        self.cli("stage", "--directory", str(self.dist), success=False)
+        self.assertIsNone(self.state()["release"])
+        self.assertFalse(self.state()["assets"])
+
+    def test_ready_check_needs_no_draft_listing_or_write_access(self):
+        self.stage()
+        before = len(self.state()["calls"])
+        self.environment["FAKE_GH_READ_ONLY"] = "1"
+        self.cli("check", "--build-run")
+        self.assertFalse([call for call in self.state()["calls"][before:] if any("/releases" in arg for arg in call)])
 
 
 if __name__ == "__main__":

@@ -139,6 +139,36 @@ fn both_actions_wire_the_optional_download_digest_to_the_installer() {
     }
 }
 
+#[test]
+fn release_promotions_queue_without_replacing_pending_runs() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/workflows/release.yml");
+    // Workflows are deliberately excluded from the crates.io/distro source
+    // package. Assert repository wiring where the workflow is available.
+    if !path.exists() {
+        return;
+    }
+    let workflow: Value = serde_yaml_bw::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+    assert_eq!(workflow["concurrency"]["queue"].as_str(), Some("max"));
+    assert_eq!(
+        workflow["concurrency"]["cancel-in-progress"].as_bool(),
+        Some(false)
+    );
+    for step in workflow["jobs"]["release"]["steps"].as_sequence().unwrap() {
+        if matches!(
+            step["name"].as_str(),
+            Some("Rewrite the release body with Communiqué")
+                | Some("Publish this release's packslip")
+                | Some("Publish the release")
+        ) {
+            assert_eq!(
+                step["if"].as_str(),
+                Some("env.CANDIDATE_PUBLISHED != 'true'")
+            );
+        }
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn run_install(expected_digest: Option<&str>, version_override: &str) -> std::process::Output {
     run_install_fixture(expected_digest, version_override, None, true)

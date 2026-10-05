@@ -75,8 +75,18 @@ Missing/stale metadata, a source change, a failed build, replaced draft bytes,
 or provenance mismatch holds publication. A stale candidate can be rebuilt
 by refreshing the release PR before merging; never move a version tag. If a
 tag promotion fails, repair the draft only with the already pinned original
-bytes and rerun the failed workflow. An already published release is not
-replaceable by this staging flow. Inspect partial publication before retrying.
+bytes and rerun the failed workflow. If publication succeeded but the major
+action tag update failed, rerun: the job verifies the public files and their
+original attestations, skips all release/bundle writes, then completes the
+missing major-tag update. It never rolls that tag back from a newer release.
+An already published release is not replaceable by this staging flow. Inspect
+partial publication before retrying.
+
+The shared concurrency group uses GitHub's `queue: max` so a subsequent
+candidate push does not replace a pending tag promotion. This queues up to
+100 pending runs; monitor saturation and rerun a canceled promotion if that
+limit is ever reached. Queued stale candidates still fail the remote branch
+check before staging and cannot fast-forward over a newer metadata commit.
 
 The list workflow also refreshes the signature every Monday before its
 30-day validity runs out. Every rebuild retains withdrawals committed in
@@ -257,11 +267,11 @@ at version 1 either way.
 
 ### Publishing a version release-plz would not propose
 
-To publish a version release-plz would not propose, open one pull request
-that carries all three of the following. A version bump alone is not
-enough: the `release` job publishes any version on `main` that crates.io
-does not have yet, so a bare bump would publish with a changelog that
-stops at the previous release.
+To publish a version release-plz would not propose, prepare the proposal on
+the same `release-plz` branch used by the ordinary release PR, carrying all
+three of the following. Coordinate with the automatic refresh: an intervening
+push to `main` can replace this proposal. Do not merge a direct version-bump
+PR from another branch: without candidate metadata, the publication gate fails.
 
 1. `version` in `Cargo.toml`, and `Cargo.lock` updated with
    `cargo update -p packslip`.
@@ -269,9 +279,14 @@ stops at the previous release.
    renders: the compare link, the date, and one line per change.
 3. The change that calls for the new version.
 
-Merging that PR publishes the version and pushes its tag, with no release
-PR in between. The release-pr job closes a stray release PR when nothing
-is left to release; confirm that none is still open.
+Regenerate the CLI documentation against this version before pushing. The
+branch push must finish the same candidate build, draft staging, and digest
+map commit as an ordinary release. Review and merge only after the
+`staged-release` and other required checks pass. The merged proposal then
+publishes the crate and creates the tag; tag promotion verifies and reuses
+those exact candidate bytes. Never bypass the map/provenance gate. The
+release-pr job closes a stray release PR when nothing is left to release;
+confirm that none is still open.
 
 1.0.0 was cut this way from 0.3.1. On a 0.x version release-plz treats a
 breaking change as a minor bump, so it would have proposed 0.4.0, and no

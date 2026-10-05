@@ -28,7 +28,7 @@ jobs:
           cache: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - run: cargo fmt --all -- --check
-      - run: python3 -m unittest discover -s tests -p 'release_candidate_test.py'
+      - run: python3 -B -m unittest discover -s tests -p 'release_candidate_test.py'
       - run: cargo clippy --all-features --all-targets -- -D warnings
       - run: cargo build --all-features
       - run: cargo test --all-features

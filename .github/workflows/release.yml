@@ -21,6 +21,7 @@ permissions:
 # Candidate builds and tag promotion must not mutate the same draft concurrently.
 concurrency:
   group: packslip-release
+  queue: max
   cancel-in-progress: false
 
 env:
@@ -323,7 +324,10 @@ jobs:
       - name: Verify the staged candidate
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/release-candidate.py check --remote
+        # Draft listings need push access. Keep this job read-only: validate
+        # the tree and successful build; the write-scoped publication gate
+        # validates the private draft inventory before crate/tag publication.
+        run: python3 scripts/release-candidate.py check --build-run
 
   release:
     needs: version
@@ -343,6 +347,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/release-candidate.py download
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        if: env.CANDIDATE_PUBLISHED != 'true'
         continue-on-error: true
         with:
           cache: false
@@ -350,6 +355,7 @@ jobs:
         env:
           MISE_LOCKED: "1"
       - name: Rewrite the release body with Communiqué
+        if: env.CANDIDATE_PUBLISHED != 'true'
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -360,6 +366,7 @@ jobs:
       # files and the bundle where that name says they are. The bundle is
       # attached to the GitHub release too, for anyone reading it there.
       - name: Publish this release's packslip
+        if: env.CANDIDATE_PUBLISHED != 'true'
         env:
           TAG: ${{ github.ref_name }}
           # The manifest names the actual build source, not a fictional tag build.
@@ -374,6 +381,7 @@ jobs:
           PATH="$PWD/bin:$PATH" scripts/describe-release.sh
           gh release upload "$TAG" packslip/packslip.sigstore.json --clobber
       - name: Publish the release
+        if: env.CANDIDATE_PUBLISHED != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release edit "$GITHUB_REF_NAME" --draft=false
@@ -382,26 +390,10 @@ jobs:
       # the built-in token starts no workflow, so this cannot recurse.
       - name: Move the shared major action tag
         env:
-          MAJOR_TAG: ${{ needs.version.outputs.major-tag }}
           GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          # Moved through the refs API rather than `git push -f`. A push
-          # sends the tag's tree, and GitHub refuses one from the built-in
-          # token when that tree touches .github/workflows -- which any
-          # release since the last major-tag move may well do, and there is
-          # no `workflows` key in a job's permissions to grant. The commit
-          # is already on the default branch, so updating the ref pushes no
-          # objects and the check does not apply.
-          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${MAJOR_TAG}" >/dev/null 2>&1; then
-            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${MAJOR_TAG}" \
-              -f sha="$GITHUB_SHA" -F force=true >/dev/null
-            echo "moved $MAJOR_TAG to $GITHUB_SHA"
-          else
-            gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
-              -f ref="refs/tags/${MAJOR_TAG}" -f sha="$GITHUB_SHA" >/dev/null
-            echo "created $MAJOR_TAG at $GITHUB_SHA"
-          fi
+        # A rerun verifies published bytes but never overwrites public assets.
+        # It can finish this update, or leave a newer major-tag release intact.
+        run: python3 scripts/release-candidate.py finish
 
   # The release list at https://packslip.dev/.well-known/packslip.json,
   # rebuilt once the release above is public so the action can install the

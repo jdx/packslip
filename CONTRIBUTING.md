@@ -26,7 +26,9 @@ other tools at the versions recorded in `mise.toml` and `mise.lock`:
 
 The wrapper makes `target/` a symlink into `~/.cache/mbx`. The documentation
 check also needs Python 3.9 or newer, a POSIX shell, and `tar`; the Worker
-tests need Node.js 20 or newer.
+tests need Node.js 20 or newer. Linux action integration tests also require
+`jq` to read the action's release digest map (a build/test dependency only
+for the distro packages, not a dependency of the installed CLI).
 
 ```sh
 mise install
