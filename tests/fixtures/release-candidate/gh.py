@@ -92,11 +92,14 @@ if args[0] == "api":
                 assert "make_latest=false" in args
             save(state["release"])
             sys.exit(0)
-        field = option("-f")
-        key, value = field.split("=", 1)
-        assert key == "target_commitish"
+        fields = dict(args[index + 1].split("=", 1) for index, value in enumerate(args) if value == "-f")
+        assert "target_commitish" in fields
         assert state["release"]["draft"], "never patch an already published release"
-        state["release"][key] = value
+        state["release"]["target_commitish"] = fields["target_commitish"]
+        # Model the observed forge response when tag_name is omitted while
+        # retargeting an unpublished draft; it must remain discoverable.
+        state["release"]["tag_name"] = ("untagged-test" if state.get("wrong_retarget_tag")
+                                        else fields.get("tag_name", "untagged-test"))
         save(state["release"])
     elif "-X" in args and option("-X") == "DELETE":
         identifier = int(path.rsplit("/", 1)[1])
