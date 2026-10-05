@@ -317,6 +317,9 @@ class CandidateProtocolTests(unittest.TestCase):
         lists = [call for call in data["calls"] if any("releases?per_page=100" in arg for arg in call)]
         self.assertEqual(len(lists), 1)
         self.assertTrue(any("draft=true" in call and "POST" in call for call in data["calls"]))
+        uploads = [call for call in data["calls"] if any(arg.startswith("https://uploads.github.com/repos/jdx/packslip/releases/1/assets?name=") for arg in call)]
+        self.assertEqual(len(uploads), 18)
+        self.assertFalse(any(call[:2] == ["release", "upload"] for call in data["calls"]))
         self.assertFalse(self.git("ls-remote", "origin", "refs/tags/v1.6.0"))
 
     def test_staging_waits_for_uploaded_asset_metadata(self):
@@ -326,6 +329,21 @@ class CandidateProtocolTests(unittest.TestCase):
         self.stage()
         self.assertEqual(self.state()["asset_lag_remaining"], 0)
         self.assertEqual(len(self.state()["assets"]), 18)
+
+    def test_empty_existing_draft_recovery_preserves_identity_and_notes(self):
+        data = self.state()
+        data["release"] = {"id": 7, "tag_name": "v1.6.0", "draft": True,
+                           "target_commitish": "0" * 40, "body": "review notes", "name": "reviewed draft"}
+        self.write_state(data)
+        self.stage()
+        data = self.state()
+        self.assertEqual(data["release"]["id"], 7)
+        self.assertEqual(data["release"]["body"], "review notes")
+        self.assertEqual(data["release"]["name"], "reviewed draft")
+        self.assertEqual(data["release"]["target_commitish"], self.source)
+        self.assertEqual(len(data["assets"]), 18)
+        self.assertFalse(any("repos/jdx/packslip/releases" in call and "POST" in call for call in data["calls"]))
+        self.assertFalse(self.git("ls-remote", "origin", "refs/tags/v1.6.0"))
 
     def test_input_refresh_invalidates_then_restages_same_version(self):
         self.stage()

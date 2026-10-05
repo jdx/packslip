@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import sys
+from urllib.parse import parse_qs, urlsplit
 
 args = sys.argv[1:]
 file = Path(os.environ["FAKE_GH_STATE"])
@@ -25,8 +26,24 @@ def save(value=None):
 
 
 if args[0] == "api":
-    path = next(value for value in args if value.startswith("repos/"))
-    if "/actions/runs/" in path:
+    path = next(value for value in args if value.startswith(("repos/", "https://uploads.github.com/")))
+    if path.startswith("https://uploads.github.com/"):
+        assert urlsplit(path).path == f'/repos/jdx/packslip/releases/{state["release"]["id"]}/assets'
+        assert state["release"]["draft"] and option("-X") == "POST"
+        name = parse_qs(urlsplit(path).query)["name"][0]
+        source = Path(option("--input"))
+        content = source.read_bytes()
+        assert name == source.name and name not in state["assets"]
+        assert "Content-Type: application/octet-stream" in args
+        assert f"Content-Length: {len(content)}" in args
+        digest = "sha256:" + hashlib.sha256(content).hexdigest()
+        state["assets"][name] = {"id": len(state["assets"]) + 1, "name": name, "size": len(content),
+                                 "digest": digest, "attested_digest": digest,
+                                 "source": os.environ["GITHUB_SHA"], "content": content.hex()}
+        state["asset_lag_remaining"] = state.get("asset_lag_after_upload", 0)
+        save({key: value for key, value in state["assets"][name].items()
+              if key not in ("content", "source", "attested_digest")})
+    elif "/actions/runs/" in path:
         save(state["run"])
     elif "/actions/workflows/" in path:
         save({"path": ".github/workflows/release.yml"})
@@ -92,6 +109,8 @@ elif args[:2] == ["release", "create"]:
     state["release"] = {"id": 1, "tag_name": args[2], "draft": True, "target_commitish": option("--target")}
     save()
 elif args[:2] == ["release", "upload"]:
+    if state.get("hide_created_draft"):
+        sys.exit("release not found: tag-based CLI discovery cannot see the new draft")
     assert state["release"]["draft"]
     for path in args[args.index("--clobber") + 1:]:
         source = Path(path)

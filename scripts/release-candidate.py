@@ -228,12 +228,15 @@ def stage(directory):
         api(f"releases/{item['id']}", "-X", "PATCH", "-f", f"target_commitish={source}")
     if run("git", "ls-remote", "origin", f"refs/tags/v{value}"):
         raise ValueError("draft creation unexpectedly created a version tag; publication held")
-    # Only a draft is replaceable. Delete stale extras rather than accepting them.
+    # Only a draft is replaceable. Replace its assets by ID, avoiding every
+    # tag-based CLI discovery path while a new draft is not yet list-visible.
     for asset in api(f"releases/{item['id']}/assets?per_page=100"):
-        if asset["name"] not in data["assets"]:
-            run("gh", "api", "-X", "DELETE", f"repos/{REPO}/releases/assets/{asset['id']}")
-    run("gh", "release", "upload", f"v{value}", "-R", REPO, "--clobber",
-        *(str(Path(directory) / name) for name in sorted(data["assets"])))
+        run("gh", "api", "-X", "DELETE", f"repos/{REPO}/releases/assets/{asset['id']}")
+    for name in sorted(data["assets"]):
+        run("gh", "api", "-X", "POST", "--input", str(Path(directory) / name),
+            "-H", "Content-Type: application/octet-stream",
+            "-H", f"Content-Length: {data['assets'][name]['size']}",
+            f"https://uploads.github.com/repos/{REPO}/releases/{item['id']}/assets?name={name}")
     wait_for_staged_assets(data, item)
     LOCK.parent.mkdir(exist_ok=True)
     LOCK.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
