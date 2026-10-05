@@ -225,7 +225,13 @@ def stage(directory):
                    "-f", f"target_commitish={source}", "-f", f"name=v{value}",
                    "-f", "body=Candidate release; awaiting release PR review and verification.")
     else:
-        api(f"releases/{item['id']}", "-X", "PATCH", "-f", f"target_commitish={source}")
+        # Retargeting a draft without tag_name can reset it to untagged-*.
+        # Keep the proposed tag explicit without creating that Git ref.
+        item = api(f"releases/{item['id']}", "-X", "PATCH", "-f", f"target_commitish={source}",
+                   "-f", f"tag_name=v{value}")
+    if (not item["draft"] or item["tag_name"] != f"v{value}"
+            or item["target_commitish"] != source):
+        raise ValueError("draft response identity mismatch; staging held")
     if run("git", "ls-remote", "origin", f"refs/tags/v{value}"):
         raise ValueError("draft creation unexpectedly created a version tag; publication held")
     # Only a draft is replaceable. Replace its assets by ID, avoiding every

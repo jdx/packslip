@@ -341,9 +341,23 @@ class CandidateProtocolTests(unittest.TestCase):
         self.assertEqual(data["release"]["body"], "review notes")
         self.assertEqual(data["release"]["name"], "reviewed draft")
         self.assertEqual(data["release"]["target_commitish"], self.source)
+        self.assertEqual(data["release"]["tag_name"], "v1.6.0")
         self.assertEqual(len(data["assets"]), 18)
         self.assertFalse(any("repos/jdx/packslip/releases" in call and "POST" in call for call in data["calls"]))
         self.assertFalse(self.git("ls-remote", "origin", "refs/tags/v1.6.0"))
+
+    def test_retarget_response_tag_mismatch_holds_asset_replacement(self):
+        data = self.state()
+        data["release"] = {"id": 7, "tag_name": "v1.6.0", "draft": True,
+                           "target_commitish": "0" * 40}
+        data["assets"] = {"preserved": {"id": 99}}
+        data["wrong_retarget_tag"] = True
+        self.write_state(data)
+        result = self.cli("stage", "--directory", str(self.dist), success=False)
+        self.assertIn("draft response identity mismatch", result.stderr)
+        self.assertEqual(self.state()["assets"], data["assets"])
+        self.assertFalse(any("DELETE" in call for call in self.state()["calls"]))
+        self.assertFalse((self.checkout / str(candidate.LOCK)).exists())
 
     def test_input_refresh_invalidates_then_restages_same_version(self):
         self.stage()
