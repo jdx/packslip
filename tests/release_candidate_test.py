@@ -146,6 +146,14 @@ class CandidateTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 candidate.files(root, "1.6.0")
 
+    def test_staging_metadata_retry_is_bounded_and_fails_closed(self):
+        with patch.object(candidate, "check_assets", side_effect=ValueError("wrong digest")) as verify, \
+                patch.object(candidate.time, "sleep") as delay:
+            with self.assertRaisesRegex(ValueError, "wrong digest"):
+                candidate.wait_for_staged_assets(self.data, {"id": 1})
+            self.assertEqual(verify.call_count, 30)
+            self.assertEqual(delay.call_count, 29)
+
     def test_promotion_checks_all_original_attestations_before_retargeting(self):
         self.check_promotion(fail_attestation=False)
 
@@ -298,6 +306,44 @@ class CandidateProtocolTests(unittest.TestCase):
         self.assertIn(self.source, (self.root / "github-env").read_text())
         self.assertEqual(len([call for call in state["calls"] if call[:2] == ["attestation", "verify"]]), 18)
         self.assertEqual(self.git("rev-list", "-n1", "v1.6.0"), final)
+
+    def test_creation_response_survives_stale_release_listing(self):
+        data = self.state()
+        data["hide_created_draft"] = True
+        self.write_state(data)
+        self.stage()
+        data = self.state()
+        self.assertEqual(len(data["assets"]), 18)
+        lists = [call for call in data["calls"] if any("releases?per_page=100" in arg for arg in call)]
+        self.assertEqual(len(lists), 1)
+        self.assertTrue(any("draft=true" in call and "POST" in call for call in data["calls"]))
+        uploads = [call for call in data["calls"] if any(arg.startswith("https://uploads.github.com/repos/jdx/packslip/releases/1/assets?name=") for arg in call)]
+        self.assertEqual(len(uploads), 18)
+        self.assertFalse(any(call[:2] == ["release", "upload"] for call in data["calls"]))
+        self.assertFalse(self.git("ls-remote", "origin", "refs/tags/v1.6.0"))
+
+    def test_staging_waits_for_uploaded_asset_metadata(self):
+        data = self.state()
+        data["asset_lag_after_upload"] = 2
+        self.write_state(data)
+        self.stage()
+        self.assertEqual(self.state()["asset_lag_remaining"], 0)
+        self.assertEqual(len(self.state()["assets"]), 18)
+
+    def test_empty_existing_draft_recovery_preserves_identity_and_notes(self):
+        data = self.state()
+        data["release"] = {"id": 7, "tag_name": "v1.6.0", "draft": True,
+                           "target_commitish": "0" * 40, "body": "review notes", "name": "reviewed draft"}
+        self.write_state(data)
+        self.stage()
+        data = self.state()
+        self.assertEqual(data["release"]["id"], 7)
+        self.assertEqual(data["release"]["body"], "review notes")
+        self.assertEqual(data["release"]["name"], "reviewed draft")
+        self.assertEqual(data["release"]["target_commitish"], self.source)
+        self.assertEqual(len(data["assets"]), 18)
+        self.assertFalse(any("repos/jdx/packslip/releases" in call and "POST" in call for call in data["calls"]))
+        self.assertFalse(self.git("ls-remote", "origin", "refs/tags/v1.6.0"))
 
     def test_input_refresh_invalidates_then_restages_same_version(self):
         self.stage()

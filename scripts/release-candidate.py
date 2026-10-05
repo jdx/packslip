@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 import tomllib
 
 REPO = "jdx/packslip"
@@ -168,6 +169,19 @@ def check_assets(data, item, allow_bundle=False):
             raise ValueError(f"draft asset digest/size mismatch: {asset['name']}")
 
 
+def wait_for_staged_assets(data, item):
+    # GitHub metadata reads can lag successful writes. Never commit a map
+    # until the exact inventory, sizes and SHA-256 values have converged.
+    for attempt in range(30):
+        try:
+            check_assets(data, item)
+            return
+        except ValueError:
+            if attempt == 29:
+                raise
+            time.sleep(1)
+
+
 def check_run(data):
     item = api(f"actions/runs/{data['run_id']}")
     workflow = api(f"actions/workflows/{item['workflow_id']}")
@@ -205,20 +219,25 @@ def stage(directory):
     if item and not item["draft"]:
         raise ValueError("cannot replace a published release")
     if not item:
-        run("gh", "release", "create", f"v{value}", "-R", REPO, "--draft", "--target", source,
-            "--title", f"v{value}", "--notes", "Candidate release; awaiting release PR review and verification.")
-        item = release(value)
+        # Use the creation response, not a release-list read that may still
+        # hide the draft immediately after successful creation.
+        item = api("releases", "-X", "POST", "-f", f"tag_name=v{value}", "-F", "draft=true",
+                   "-f", f"target_commitish={source}", "-f", f"name=v{value}",
+                   "-f", "body=Candidate release; awaiting release PR review and verification.")
     else:
         api(f"releases/{item['id']}", "-X", "PATCH", "-f", f"target_commitish={source}")
     if run("git", "ls-remote", "origin", f"refs/tags/v{value}"):
         raise ValueError("draft creation unexpectedly created a version tag; publication held")
-    # Only a draft is replaceable. Delete stale extras rather than accepting them.
+    # Only a draft is replaceable. Replace its assets by ID, avoiding every
+    # tag-based CLI discovery path while a new draft is not yet list-visible.
     for asset in api(f"releases/{item['id']}/assets?per_page=100"):
-        if asset["name"] not in data["assets"]:
-            run("gh", "api", "-X", "DELETE", f"repos/{REPO}/releases/assets/{asset['id']}")
-    run("gh", "release", "upload", f"v{value}", "-R", REPO, "--clobber",
-        *(str(Path(directory) / name) for name in sorted(data["assets"])))
-    check_assets(data, item)
+        run("gh", "api", "-X", "DELETE", f"repos/{REPO}/releases/assets/{asset['id']}")
+    for name in sorted(data["assets"]):
+        run("gh", "api", "-X", "POST", "--input", str(Path(directory) / name),
+            "-H", "Content-Type: application/octet-stream",
+            "-H", f"Content-Length: {data['assets'][name]['size']}",
+            f"https://uploads.github.com/repos/{REPO}/releases/{item['id']}/assets?name={name}")
+    wait_for_staged_assets(data, item)
     LOCK.parent.mkdir(exist_ok=True)
     LOCK.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
 
