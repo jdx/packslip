@@ -418,6 +418,27 @@ class CandidateProtocolTests(unittest.TestCase):
         self.assertTrue(self.state()["release"]["draft"])
         self.assertTrue((self.root / "github-output").read_text().endswith("publish=false\n"))
 
+    def test_image_proof_fetches_missing_squashed_candidate_without_credentials(self):
+        self.stage()
+        self.merge()
+        # The source is not a tag ancestor and the release branch may be
+        # deleted. Its PR ref keeps the attested source available by SHA.
+        self.git("push", "-q", "origin", "release-plz:refs/pull/193/head")
+        self.git("push", "-q", "origin", ":refs/heads/release-plz")
+        shallow = self.root / "shallow"
+        subprocess.run(["git", "clone", "-q", "--depth=1", "--single-branch", "--branch", "v1.6.0",
+                        self.remote.as_uri(), str(shallow)], check=True, capture_output=True)
+        absent = subprocess.run(["git", "cat-file", "-e", self.source], cwd=shallow, capture_output=True)
+        self.assertNotEqual(absent.returncode, 0)
+        self.checkout = shallow
+        target = self.root / "shallow-image"
+        target.mkdir()
+        for arch in ("x64", "arm64"):
+            name = f"packslip-v1.6.0-linux-{arch}"
+            shutil.copyfile(self.dist / name, target / name)
+        self.cli("verify-image", "--directory", str(target))
+        self.assertTrue(self.git("cat-file", "-t", self.source) == "commit")
+
     def test_published_release_replaced_bytes_or_changed_tag_cannot_resume(self):
         self.stage()
         final = self.merge()
