@@ -34,6 +34,11 @@ for f in dist/*; do
   esac
 done
 args=()
+# A staged release was built on a branch, not from the later version tag.
+# Preserve its actual source commit and omit a misleading source.tag.
+if [ "$(git rev-list -n1 "$TAG")" = "$COMMIT" ]; then
+  args+=(--tag "$TAG")
+fi
 if [ -n "${PUBLISHED_AT:-}" ]; then
   args+=(--published-at "$PUBLISHED_AT")
 fi
@@ -72,7 +77,6 @@ packslip create \
   --url-base "https://${host}/${TAG}" \
   --notes-url "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}" \
   --source-repo "https://github.com/${GITHUB_REPOSITORY}" \
-  --tag "$TAG" \
   --commit "$COMMIT" \
   --bin packslip \
   --resource cli-spec/usage=asset:dist/packslip.usage.kdl \

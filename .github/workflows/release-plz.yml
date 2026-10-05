@@ -25,7 +25,7 @@ jobs:
   # was merged 18s after release-plz refreshed it. Driving `release-plz
   # update` directly means the PR never has a state without the docs.
   release-pr:
-    if: github.repository_owner == 'jdx'
+    if: github.repository_owner == 'jdx' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -83,6 +83,9 @@ jobs:
             | jq -r '.packages[] | select(.name == "packslip") | .version')
           echo "bump=true" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          # Every refreshed candidate is built afresh. The next candidate build
+          # commits its own digest map; never carry a prior build's map forward.
+          rm -f action/release.json
       # A clean tree means every packaged change is already released or
       # already in a merged release commit, so an open release PR can only
       # be a stray: one that a run holding a pre-merge checkout pushed
@@ -143,7 +146,7 @@ jobs:
   # is manual, then Trusted Publishing is registered, then the variable
   # is set (RELEASING.md).
   release:
-    if: github.repository_owner == 'jdx' && vars.RELEASE_PLZ_RELEASE == 'true'
+    if: github.repository_owner == 'jdx' && github.ref == 'refs/heads/main' && vars.RELEASE_PLZ_RELEASE == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -153,9 +156,16 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Gate new publication on the staged release
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/release-candidate.py gate
       - uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+        if: steps.gate.outputs.publish == 'true'
         id: crates-io-auth
       - uses: release-plz/action@b8d6b54b02889ff2ae2bb82e8b57c3a8fc1683a5 # v0.5.139
+        if: steps.gate.outputs.publish == 'true'
         with:
           command: release
         env:

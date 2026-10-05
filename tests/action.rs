@@ -139,11 +139,214 @@ fn both_actions_wire_the_optional_download_digest_to_the_installer() {
     }
 }
 
+#[test]
+fn release_promotions_queue_without_replacing_pending_runs() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/workflows/release.yml");
+    // Workflows are deliberately excluded from the crates.io/distro source
+    // package. Assert repository wiring where the workflow is available.
+    if !path.exists() {
+        return;
+    }
+    let workflow: Value = serde_yaml_bw::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(workflow["concurrency"]["queue"].as_str(), Some("max"));
+    assert_eq!(
+        workflow["concurrency"]["cancel-in-progress"].as_bool(),
+        Some(false)
+    );
+    assert!(
+        !fs::read_to_string(&path)
+            .unwrap()
+            .contains("needs.release.outputs.current-")
+    );
+    for step in workflow["jobs"]["release"]["steps"].as_sequence().unwrap() {
+        if matches!(
+            step["name"].as_str(),
+            Some("Rewrite the release body with Communiqué")
+                | Some("Publish this release's packslip")
+                | Some("Publish the release")
+        ) {
+            assert_eq!(
+                step["if"].as_str(),
+                Some("env.CANDIDATE_PUBLISHED != 'true'")
+            );
+        }
+    }
+    let release_plz_path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/workflows/release-plz.yml");
+    let release_plz: Value =
+        serde_yaml_bw::from_str(&fs::read_to_string(release_plz_path).unwrap()).unwrap();
+    for name in ["release", "release-pr"] {
+        assert!(
+            release_plz["jobs"][name]["if"]
+                .as_str()
+                .unwrap()
+                .contains("github.ref == 'refs/heads/main'")
+        );
+    }
+    for step in release_plz["jobs"]["release"]["steps"]
+        .as_sequence()
+        .unwrap()
+    {
+        if step["uses"].as_str().is_some_and(|value| {
+            value.starts_with("rust-lang/crates-io-auth-action@")
+                || value.starts_with("release-plz/action@")
+        }) {
+            assert_eq!(
+                step["if"].as_str(),
+                Some("steps.gate.outputs.publish == 'true'")
+            );
+        }
+    }
+    for (file, jobs) in [
+        ("distro-source.yml", vec!["ppa", "copr"]),
+        ("package-repositories.yml", vec!["publish"]),
+    ] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(".github/workflows")
+            .join(file);
+        let guarded: Value = serde_yaml_bw::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(guarded["concurrency"]["queue"].as_str(), Some("max"));
+        assert!(
+            guarded["concurrency"]["group"]
+                .as_str()
+                .unwrap()
+                .contains("packslip-release")
+        );
+        for job in jobs {
+            let steps = guarded["jobs"][job]["steps"].as_sequence().unwrap();
+            let guard = steps
+                .iter()
+                .position(|step| step["id"].as_str() == Some("freshness"))
+                .unwrap();
+            assert!(
+                steps[guard]["run"]
+                    .as_str()
+                    .unwrap()
+                    .contains("freshness --tag")
+            );
+            assert_eq!(
+                steps[guard + 1]["if"].as_str(),
+                Some("steps.freshness.outputs.current-latest == 'true'")
+            );
+        }
+    }
+}
+
 #[cfg(target_os = "linux")]
-fn run_install(
-    version_override: Option<&str>,
-    caller_digest: Option<&str>,
-    locked_digest: Option<&str>,
+#[test]
+fn old_release_recovery_never_pushes_moving_image_aliases() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/workflows/release.yml");
+    if !path.exists() {
+        return;
+    }
+    let workflow: Value = serde_yaml_bw::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+    let step = workflow["jobs"]["image"]["steps"]
+        .as_sequence()
+        .unwrap()
+        .iter()
+        .find(|step| step["id"].as_str() == Some("push"))
+        .unwrap();
+    for (major, latest, expected) in [
+        (false, false, vec!["ghcr.io/jdx/packslip:1.6.0"]),
+        (
+            true,
+            false,
+            vec![
+                "ghcr.io/jdx/packslip:1.6.0",
+                "ghcr.io/jdx/packslip:1.6",
+                "ghcr.io/jdx/packslip:1",
+            ],
+        ),
+        (
+            true,
+            true,
+            vec![
+                "ghcr.io/jdx/packslip:1.6.0",
+                "ghcr.io/jdx/packslip:1.6",
+                "ghcr.io/jdx/packslip:1",
+                "ghcr.io/jdx/packslip:latest",
+            ],
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir(root.join("container")).unwrap();
+        fs::create_dir(root.join("bin")).unwrap();
+        let builder = root.join("container/build.sh");
+        fs::write(
+            &builder,
+            "#!/usr/bin/env bash\nprintf '%s\\0' \"$@\" > \"$CALL_LOG\"\nprintf '{\"containerimage.digest\":\"sha256:fixture\"}' > meta.json\n",
+        )
+        .unwrap();
+        fs::set_permissions(&builder, fs::Permissions::from_mode(0o755)).unwrap();
+        let docker = root.join("bin/docker");
+        fs::write(
+            &docker,
+            "#!/usr/bin/env bash\nif [ \"$1\" = login ]; then cat >/dev/null; fi\nif [ \"$1\" = run ]; then printf 'packslip 1.6.0\\n'; fi\n",
+        )
+        .unwrap();
+        fs::set_permissions(&docker, fs::Permissions::from_mode(0o755)).unwrap();
+        let mut paths = vec![root.join("bin")];
+        paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+        // Model a fresh forge result, not cached needs outputs, at the exact
+        // image write boundary. Deliberately supply stale true env values.
+        let python = root.join("bin/python3");
+        fs::write(
+            &python,
+            format!(
+                "#!/usr/bin/env bash\nprintf 'CURRENT_MAJOR={}\\nCURRENT_LATEST={}\\n'\n",
+                major, latest
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&python, fs::Permissions::from_mode(0o755)).unwrap();
+        let result = Command::new("bash")
+            .args(["-eu", "-c", step["run"].as_str().unwrap()])
+            .current_dir(root)
+            .env("PATH", std::env::join_paths(paths).unwrap())
+            .env("GH_TOKEN", "credential-free-fixture")
+            .env("GITHUB_REF_NAME", "v1.6.0")
+            .env("GITHUB_REPOSITORY", "jdx/packslip")
+            .env("GITHUB_ACTOR", "fixture")
+            .env("GITHUB_OUTPUT", root.join("output"))
+            .env("CURRENT_MAJOR", "true")
+            .env("CURRENT_LATEST", "true")
+            .env("CALL_LOG", root.join("arguments"))
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let arguments = fs::read(root.join("arguments")).unwrap();
+        let args: Vec<&str> = arguments
+            .split(|byte| *byte == 0)
+            .filter(|part| !part.is_empty())
+            .map(|part| std::str::from_utf8(part).unwrap())
+            .collect();
+        let tags: Vec<&str> = args
+            .windows(2)
+            .filter(|pair| pair[0] == "--tag")
+            .map(|pair| pair[1])
+            .collect();
+        assert_eq!(tags, expected);
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn run_install(expected_digest: Option<&str>, version_override: &str) -> std::process::Output {
+    run_install_fixture(expected_digest, version_override, None, true)
+}
+
+#[cfg(target_os = "linux")]
+fn run_install_fixture(
+    expected_digest: Option<&str>,
+    version_override: &str,
+    lock_digest: Option<&str>,
+    write_lock: bool,
 ) -> std::process::Output {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -158,7 +361,12 @@ fn run_install(
         "aarch64" => "arm64",
         other => panic!("unsupported test architecture: {other}"),
     };
-    let asset = format!("packslip-v1.5.1-linux-{arch}.tar.xz");
+    let version = if version_override.is_empty() {
+        env!("CARGO_PKG_VERSION")
+    } else {
+        version_override
+    };
+    let asset = format!("packslip-v{version}-linux-{arch}.tar.xz");
     let archive = root.join(&asset);
     assert!(
         Command::new("tar")
@@ -187,19 +395,20 @@ fn run_install(
     .to_owned();
 
     let action_root = root.join("action-root");
-    fs::create_dir(&action_root).unwrap();
+    fs::create_dir_all(action_root.join("action")).unwrap();
     fs::write(
         action_root.join("Cargo.toml"),
-        "[package]\nversion = \"1.5.1\"\n",
+        format!("[package]\nversion = \"{version}\"\n"),
     )
     .unwrap();
-    if let Some(digest) = locked_digest {
-        let action_dir = action_root.join("action");
-        fs::create_dir(&action_dir).unwrap();
-        let digest = if digest == "$ACTUAL" { &actual } else { digest };
+    if write_lock {
+        let metadata = serde_json::json!({
+            "schema": 1, "version": version, "source_commit": "a".repeat(40),
+            "assets": {asset.clone(): {"sha256": lock_digest.unwrap_or(&actual)}}
+        });
         fs::write(
-            action_dir.join("archives.sha256"),
-            format!("{digest}  {asset}\n"),
+            action_root.join("action/release.json"),
+            serde_json::to_vec(&metadata).unwrap(),
         )
         .unwrap();
     }
@@ -209,7 +418,7 @@ fn run_install(
     let gh = bin.join("gh");
     fs::write(
         &gh,
-        "#!/usr/bin/env bash\nset -eu\nif [ \"$1\" = release ]; then\n  while [ \"$#\" -gt 0 ]; do\n    if [ \"$1\" = -D ]; then\n      cp \"$FIXTURE\" \"$2/$ASSET\"\n      exit 0\n    fi\n    shift\n  done\nfi\nif [ \"$1\" = attestation ]; then exit 0; fi\nexit 88\n",
+        "#!/usr/bin/env bash\nset -eu\nif [ \"$1\" = release ]; then\n  while [ \"$#\" -gt 0 ]; do\n    if [ \"$1\" = -D ]; then\n      cp \"$FIXTURE\" \"$2/$ASSET\"\n      exit 0\n    fi\n    shift\n  done\nfi\nif [ \"$1\" = attestation ]; then printf 'attested %s\\n' \"$*\"; exit 0; fi\nexit 88\n",
     )
     .unwrap();
     fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
@@ -222,8 +431,8 @@ fn run_install(
         .env("RUNNER_TEMP", root)
         .env("GITHUB_PATH", root.join("github-path"))
         .env("PACKSLIP_ACTION_ROOT", action_root)
-        .env("PACKSLIP_VERSION", version_override.unwrap_or(""))
-        .env("PACKSLIP_SHA256", caller_digest.unwrap_or(""))
+        .env("PACKSLIP_VERSION", version_override)
+        .env("PACKSLIP_SHA256", expected_digest.unwrap_or(&actual))
         .env("PACKSLIP_PATH", "")
         .env("FIXTURE", archive)
         .env("ASSET", asset)
@@ -234,54 +443,60 @@ fn run_install(
 
 #[cfg(target_os = "linux")]
 #[test]
-fn install_uses_the_checked_out_action_lock_before_running_the_archive() {
-    let accepted = run_install(None, None, Some("$ACTUAL"));
+fn install_checks_the_pinned_archive_digest_before_running_it() {
+    let accepted = run_install(None, "1.5.1");
     assert!(
         accepted.status.success(),
         "{}",
         String::from_utf8_lossy(&accepted.stderr)
     );
     assert!(String::from_utf8_lossy(&accepted.stdout).contains("invoked"));
-    let rejected = run_install(None, None, Some("not-a-digest"));
+    let rejected = run_install(Some("not-a-digest"), "1.5.1");
     assert!(!rejected.status.success());
-    assert!(String::from_utf8_lossy(&rejected.stderr).contains("internal archive digest lock"));
-
-    let missing = run_install(None, None, None);
-    assert!(!missing.status.success());
-    assert!(String::from_utf8_lossy(&missing.stderr).contains("no internal archive digest lock"));
-
-    let disagreement = run_install(None, Some(&"0".repeat(64)), Some("$ACTUAL"));
-    assert!(!disagreement.status.success());
-    assert!(
-        String::from_utf8_lossy(&disagreement.stderr)
-            .contains("disagrees with the action's internal archive digest lock")
-    );
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("packslip-sha256 must be"));
 }
 
 #[cfg(target_os = "linux")]
 #[test]
-fn install_rejects_a_mismatched_internal_lock_before_provenance_or_execution() {
-    let rejected = run_install(None, None, Some(&"0".repeat(64)));
+fn install_rejects_a_tampered_pinned_archive_before_provenance_or_execution() {
+    let rejected = run_install(Some(&"0".repeat(64)), "1.5.1");
     assert!(!rejected.status.success());
     assert!(
         String::from_utf8_lossy(&rejected.stderr).contains("packslip archive SHA-256 mismatch")
     );
     assert!(!String::from_utf8_lossy(&rejected.stdout).contains("invoked"));
+    assert!(!String::from_utf8_lossy(&rejected.stdout).contains("attested"));
 }
 
 #[cfg(target_os = "linux")]
 #[test]
-fn explicit_version_override_keeps_compatibility_and_can_add_a_strict_digest() {
-    let accepted = run_install(Some("1.5.1"), None, None);
-    assert!(accepted.status.success());
+fn default_uses_internal_digest_and_actual_candidate_provenance() {
+    let accepted = run_install(Some(""), "");
     assert!(
+        accepted.status.success(),
+        "{}",
         String::from_utf8_lossy(&accepted.stderr)
-            .contains("verifying build provenance without an archive SHA-256")
     );
+    assert!(String::from_utf8_lossy(&accepted.stdout).contains("invoked"));
+    let pinned = run_install(None, "");
+    assert!(pinned.status.success());
+    let output = String::from_utf8_lossy(&accepted.stdout);
+    assert!(output.contains("--source-digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+    assert!(output.contains("--source-ref refs/heads/release-plz"));
+    assert!(output.contains("--signer-digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+    assert!(output.contains("--signer-workflow jdx/packslip/.github/workflows/release.yml"));
+    assert!(output.contains("--deny-self-hosted-runners"));
+}
 
-    let rejected = run_install(Some("1.5.1"), Some(&"0".repeat(64)), None);
-    assert!(!rejected.status.success());
-    assert!(
-        String::from_utf8_lossy(&rejected.stderr).contains("packslip archive SHA-256 mismatch")
-    );
+#[cfg(target_os = "linux")]
+#[test]
+fn default_rejects_missing_lock_and_tampered_bytes_before_attesting() {
+    let missing = run_install_fixture(Some(""), "", None, false);
+    assert!(!missing.status.success());
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("no release digest map"));
+    let tampered = run_install_fixture(Some(""), "", Some(&"0".repeat(64)), true);
+    assert!(!tampered.status.success());
+    assert!(String::from_utf8_lossy(&tampered.stderr).contains("SHA-256 mismatch"));
+    assert!(!String::from_utf8_lossy(&tampered.stdout).contains("attested"));
+    assert!(!String::from_utf8_lossy(&tampered.stdout).contains("invoked"));
 }

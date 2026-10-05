@@ -2,7 +2,7 @@ Source: packslip
 Section: utils
 Priority: optional
 Maintainer: Jeff Dickey <jdx@jdx.dev>
-Build-Depends: debhelper-compat (= 13), rustc (>= 1.93), cargo, build-essential, cmake, pkg-config
+Build-Depends: debhelper-compat (= 13), rustc (>= 1.93), cargo, build-essential, cmake, pkg-config, jq
 Standards-Version: 4.7.2
 Homepage: https://packslip.dev
 Vcs-Git: https://github.com/jdx/packslip.git

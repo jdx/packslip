@@ -80,27 +80,24 @@ jobs:
           set -euo pipefail
           aws s3 sync s3://jdx-releases/packslip/ lists/ --exclude '*' --include '*/packslip.sigstore.json'
           ls lists
-      # This workflow runs the checked-out source action, rather than a
-      # generated action-lock commit. Make that intentional escape hatch
-      # explicit: the installer still verifies the release provenance, but
-      # only consumers pinning an action-lock commit receive its archive map.
-      - name: Read the Packslip version
-        id: packslip-version
-        shell: bash
+      - name: Resolve the published CLI for maintenance runs
+        id: cli
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-          version="$(sed -nE 's/^version *= *"([^"]+)".*/\1/p' Cargo.toml | head -n1)"
-          [ -n "$version" ] || { echo "could not read Packslip version" >&2; exit 1; }
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          tag=$(gh release view -R "$GITHUB_REPOSITORY" --json tagName -q .tagName)
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
       - uses: ./releases
         id: list
         with:
           project: packslip.dev
+          # main may be newer than the most recent digest map. This explicit
+          # maintenance override retains the existing provenance verification.
+          packslip-version: ${{ steps.cli.outputs.version }}
           dir: lists
           url-base: https://packslip.dev
           yank: ${{ steps.withdrawn.outputs.yank }}
           security: ${{ steps.withdrawn.outputs.security }}
-          packslip-version: ${{ steps.packslip-version.outputs.version }}
       - name: Publish the list
         env:
           LIST: ${{ steps.list.outputs.list }}

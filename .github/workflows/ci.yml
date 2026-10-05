@@ -28,6 +28,7 @@ jobs:
           cache: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - run: cargo fmt --all -- --check
+      - run: python3 -B -m unittest discover -s tests -p 'release_candidate_test.py'
       - run: cargo clippy --all-features --all-targets -- -D warnings
       - run: cargo build --all-features
       - run: cargo test --all-features
@@ -504,6 +505,18 @@ jobs:
           printf 'FROM debian:stable-slim\nCOPY --from=packslip:test /packslip /usr/local/bin/packslip\nRUN packslip version\n' |
             docker buildx build --builder default -
 
+  staged-release:
+    if: github.event_name == 'pull_request' && github.head_ref == 'release-plz' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      # Check the merge tree, so a main change cannot slip past the source proof.
+      # Remote attestation and draft checks happen again before publication.
+      - run: python3 scripts/release-candidate.py check
+
   # Aggregator that required-status-checks can target. If any upstream job
   # failed, was cancelled, or was unexpectedly skipped, this step exits non-zero
   # so the PR is blocked. Lets the branch-protection rule depend on one name
@@ -525,6 +538,7 @@ jobs:
       - repository-packages
       - repository-install
       - repository-worker
+      - staged-release
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions: {}
@@ -543,7 +557,7 @@ jobs:
 
           # `signing` only runs on a push, where id-token is available; being
           # skipped on a pull request is expected, not a failure.
-          ALLOW_SKIPPED = {"signing"}
+          ALLOW_SKIPPED = {"signing", "staged-release"}
 
           needs = json.loads(os.environ["NEEDS_JSON"])
           failed = False
