@@ -24,7 +24,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: distro-source-${{ inputs.tag }}
+  group: ${{ github.workflow == 'release' && 'release-distro-source-child' || 'packslip-release' }}
+  queue: max
   cancel-in-progress: false
 
 jobs:
@@ -93,7 +94,20 @@ jobs:
       - uses: crazy-max/ghaction-import-gpg@2dc316deee8e90f13e1a351ab510b4d5bc0c82cd # v7
         with:
           gpg_private_key: ${{ secrets.PACKSLIP_GPG_KEY }}
+      - name: Check out the publishing workflow's guard
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: release-tools
+          persist-credentials: false
+      - name: Recheck freshness immediately before submitting
+        id: freshness
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: python3 release-tools/scripts/release-candidate.py freshness --tag "$RELEASE_TAG"
       - name: Sign and submit the source package
+        if: steps.freshness.outputs.current-latest == 'true'
         env:
           GPG_FINGERPRINT: ${{ vars.PACKSLIP_GPG_FINGERPRINT }}
           PPA_NAME: ${{ vars.PPA_NAME || 'ppa:jdxcode/packslip' }}
@@ -120,7 +134,20 @@ jobs:
           # copr-cli 2.5 imports rich but omits it from its package dependencies.
           "$RUNNER_TEMP/copr-cli/bin/pip" install copr-cli==2.5 rich==14.2.0
           "$RUNNER_TEMP/copr-cli/bin/copr-cli" --version
+      - name: Check out the publishing workflow's guard
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: release-tools
+          persist-credentials: false
+      - name: Recheck freshness immediately before submitting
+        id: freshness
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: python3 release-tools/scripts/release-candidate.py freshness --tag "$RELEASE_TAG"
       - name: Submit and wait for both architecture builds
+        if: steps.freshness.outputs.current-latest == 'true'
         env:
           COPR_API_LOGIN: ${{ secrets.COPR_API_LOGIN }}
           COPR_API_TOKEN: ${{ secrets.COPR_API_TOKEN }}

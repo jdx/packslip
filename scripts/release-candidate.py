@@ -109,11 +109,49 @@ def files(directory, value, subset=None):
 
 
 def release(value):
-    pages = json.loads(run("gh", "api", "--paginate", "--slurp", f"repos/{REPO}/releases?per_page=100"))
-    matches = [item for page in pages for item in page if item["tag_name"] == f"v{value}"]
+    matches = [item for item in releases() if item["tag_name"] == f"v{value}"]
     if len(matches) > 1:
         raise ValueError("multiple releases for the candidate version")
     return matches[0] if matches else None
+
+
+def releases():
+    pages = json.loads(run("gh", "api", "--paginate", "--slurp", f"repos/{REPO}/releases?per_page=100"))
+    return [item for page in pages for item in page]
+
+
+def freshness(tag):
+    if not re.fullmatch(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", tag):
+        raise ValueError("freshness requires a stable version tag")
+    wanted = tuple(map(int, tag[1:].split(".")))
+    stable = [tuple(map(int, item["tag_name"][1:].split("."))) for item in releases()
+              if not item["draft"] and not item.get("prerelease", False)
+              and re.fullmatch(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", item["tag_name"])]
+    # GitHub's mutable latest flag is not a monotonic version ordering.
+    return (not any(value[0] == wanted[0] and value > wanted for value in stable),
+            not any(value > wanted for value in stable))
+
+
+def output_freshness(tag):
+    major, latest = freshness(tag)
+    values = f"CURRENT_MAJOR={str(major).lower()}\nCURRENT_LATEST={str(latest).lower()}\n"
+    if os.environ.get("GITHUB_ENV"):
+        with open(os.environ["GITHUB_ENV"], "a") as output:
+            output.write(values)
+    if os.environ.get("GITHUB_OUTPUT"):
+        with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+            output.write(f"current-major={str(major).lower()}\ncurrent-latest={str(latest).lower()}\n")
+    print(values, end="")
+
+
+def publish():
+    data = load()
+    check_tree(data)
+    check_tag(data)
+    item = check_remote(data)
+    _, latest = freshness(f"v{data['version']}")
+    api(f"releases/{item['id']}", "-X", "PATCH", "-F", "draft=false",
+        "-f", f"make_latest={str(latest).lower()}")
 
 
 def check_assets(data, item, allow_bundle=False):
@@ -277,8 +315,7 @@ def finish(directory):
 
 
 def alias_outputs(data, current_major):
-    latest = api("releases/latest")
-    current_latest = latest["tag_name"] == f"v{data['version']}"
+    _, current_latest = freshness(f"v{data['version']}")
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a") as output:
             output.write(f"current-major={str(current_major).lower()}\n")
@@ -287,10 +324,11 @@ def alias_outputs(data, current_major):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("mode", "check", "stage", "download", "gate", "finish", "verify-image"))
+    parser.add_argument("command", choices=("mode", "check", "stage", "download", "gate", "finish", "verify-image", "publish", "freshness"))
     parser.add_argument("--directory", default="dist")
     parser.add_argument("--remote", action="store_true")
     parser.add_argument("--build-run", action="store_true")
+    parser.add_argument("--tag")
     args = parser.parse_args()
     if args.command == "mode":
         mode = "build"
@@ -309,12 +347,24 @@ def main():
         finish(args.directory)
     elif args.command == "verify-image":
         verify_image(args.directory)
+    elif args.command == "publish":
+        publish()
+    elif args.command == "freshness":
+        output_freshness(args.tag)
     elif args.command == "gate":
+        tag = f"v{version()}"
+        # Existing tags mean no new publication is authorized. Do not merely
+        # skip verification and continue into the publishing action.
+        tagged = bool(run("git", "ls-remote", "origin", f"refs/tags/{tag}"))
         latest = run("gh", "release", "view", "-R", REPO, "--json", "tagName", "--jq", ".tagName")
-        if latest != f"v{version()}":
+        needed = not tagged and latest != tag
+        if needed:
             data = load()
             check_tree(data)
             check_remote(data)
+        if os.environ.get("GITHUB_OUTPUT"):
+            with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+                output.write(f"publish={str(needed).lower()}\n")
     else:
         data = load()
         check_tree(data)

@@ -370,6 +370,54 @@ class CandidateProtocolTests(unittest.TestCase):
         self.assertEqual(self.state()["major"]["sha"], "f" * 40)
         self.assertTrue((self.root / "github-output").read_text().endswith("current-major=false\ncurrent-latest=false\n"))
 
+    def test_failed_downstream_only_retry_rechecks_after_newer_publication(self):
+        self.stage()
+        self.merge()
+        data = self.state()
+        data["release"]["draft"] = False
+        data["latest"] = "v1.6.0"
+        self.write_state(data)
+        self.cli("freshness", "--tag", "v1.6.0")
+        self.assertTrue((self.root / "github-output").read_text().endswith("current-major=true\ncurrent-latest=true\n"))
+        # No rerun of release/finish: failed downstream jobs retain old needs
+        # outputs. Even a stale GitHub latest flag must not enable aliases.
+        data = self.state()
+        data["published"] = ["v1.5.1", "v1.7.0", "v2.0.0"]
+        self.write_state(data)
+        self.cli("freshness", "--tag", "v1.6.0")
+        self.assertTrue((self.root / "github-output").read_text().endswith("current-major=false\ncurrent-latest=false\n"))
+
+    def test_old_draft_promotion_never_resets_latest(self):
+        self.stage()
+        self.merge()
+        self.cli("download", "--directory", str(self.root / "downloaded"))
+        data = self.state()
+        data["published"] = ["v1.5.1", "v1.7.0"]
+        data["latest"] = "v1.7.0"
+        self.write_state(data)
+        self.cli("publish")
+        data = self.state()
+        self.assertFalse(data["release"]["draft"])
+        self.assertEqual(data["latest"], "v1.7.0")
+        self.assertTrue(any("make_latest=false" in call for call in data["calls"]))
+
+    def test_current_draft_promotion_explicitly_sets_latest(self):
+        self.stage()
+        self.merge()
+        self.cli("publish")
+        self.assertEqual(self.state()["latest"], "v1.6.0")
+        self.assertTrue(any("make_latest=true" in call for call in self.state()["calls"]))
+
+    def test_existing_tag_gate_disables_publishing_on_later_main_push(self):
+        self.stage()
+        self.merge()
+        (self.checkout / "source.rs").write_text("unreleased change while draft remains")
+        self.commit("next main input")
+        self.environment["GITHUB_REF"] = "refs/heads/main"
+        self.cli("gate")
+        self.assertTrue(self.state()["release"]["draft"])
+        self.assertTrue((self.root / "github-output").read_text().endswith("publish=false\n"))
+
     def test_published_release_replaced_bytes_or_changed_tag_cannot_resume(self):
         self.stage()
         final = self.merge()

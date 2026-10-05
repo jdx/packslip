@@ -31,7 +31,11 @@ if args[0] == "api":
     elif "/actions/workflows/" in path:
         save({"path": ".github/workflows/release.yml"})
     elif path.endswith("/releases?per_page=100"):
-        releases = [state["release"]] if state["release"] and not os.environ.get("FAKE_GH_READ_ONLY") else []
+        releases = [{"tag_name": tag, "draft": False, "prerelease": False}
+                    for tag in state.get("published", [state["latest"]])
+                    if not state["release"] or tag != state["release"]["tag_name"]]
+        if state["release"] and (not state["release"]["draft"] or not os.environ.get("FAKE_GH_READ_ONLY")):
+            releases.append(state["release"])
         save([releases])
     elif path.endswith("/releases/latest"):
         save({"tag_name": state["latest"]})
@@ -52,6 +56,15 @@ if args[0] == "api":
         state["major"] = {"sha": fields["sha"], "version": "1.6.0"}
         save({"object": {"sha": fields["sha"], "type": "commit"}})
     elif "-X" in args and option("-X") == "PATCH":
+        if "draft=false" in args:
+            assert state["release"]["draft"]
+            state["release"]["draft"] = False
+            if "make_latest=true" in args:
+                state["latest"] = state["release"]["tag_name"]
+            else:
+                assert "make_latest=false" in args
+            save(state["release"])
+            sys.exit(0)
         field = option("-f")
         key, value = field.split("=", 1)
         assert key == "target_commitish"

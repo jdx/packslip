@@ -79,9 +79,14 @@ bytes and rerun the failed workflow. If publication succeeded but the major
 action tag update failed, rerun: the job verifies the public files and their
 original attestations, skips all release/bundle writes, then completes the
 missing major-tag update. It never rolls that tag back from a newer release.
-Moving container aliases and package-repository publication are gated on the
-current major/latest release outputs; an old-version retry can recover its
-version-specific image without downgrading global aliases or package indices.
+Moving container aliases and package-repository publication recheck the complete
+published stable version list immediately before writing, under shared release
+serialization. They never trust cached job outputs or GitHub's mutable latest
+flag; an old-version retry can recover its version-specific image without
+downgrading global aliases or package indices. Publishing an older draft
+explicitly leaves GitHub's latest release unchanged. Standalone package and
+distro publishing share the outer lock; called workflows use separate nested
+groups to avoid deadlocking their release caller.
 The image's separately downloaded executables are checked against the same
 candidate digests and provenance before any container build or execution.
 An already published release is not replaceable by this staging flow. Inspect

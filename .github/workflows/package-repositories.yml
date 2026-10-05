@@ -26,7 +26,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: package-repositories
+  # Called runs are already serialized by release.yml. Standalone runs share
+  # that outer lock; using it again in a called workflow would deadlock.
+  group: ${{ github.workflow == 'release' && 'release-package-repositories-child' || 'packslip-release' }}
+  queue: max
   cancel-in-progress: false
 
 jobs:
@@ -149,7 +152,20 @@ jobs:
         run: |
           scripts/package-repositories.sh packages repository
           scripts/verify-package-repositories.sh repository "$PACKSLIP_GPG_FINGERPRINT"
+      - name: Check out the publishing workflow's guard
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: release-tools
+          persist-credentials: false
+      - name: Recheck freshness immediately before publishing
+        id: freshness
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.release-commit.outputs.tag }}
+        run: python3 release-tools/scripts/release-candidate.py freshness --tag "$RELEASE_TAG"
       - name: Publish payloads before signed indices
+        if: steps.freshness.outputs.current-latest == 'true'
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_SECRET_ACCESS_KEY }}

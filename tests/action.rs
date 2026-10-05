@@ -148,20 +148,17 @@ fn release_promotions_queue_without_replacing_pending_runs() {
     if !path.exists() {
         return;
     }
-    let workflow: Value = serde_yaml_bw::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+    let workflow: Value = serde_yaml_bw::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(workflow["concurrency"]["queue"].as_str(), Some("max"));
     assert_eq!(
         workflow["concurrency"]["cancel-in-progress"].as_bool(),
         Some(false)
     );
-    for name in ["distro-source", "package-repositories"] {
-        assert!(
-            workflow["jobs"][name]["if"]
-                .as_str()
-                .unwrap()
-                .contains("needs.release.outputs.current-latest == 'true'")
-        );
-    }
+    assert!(
+        !fs::read_to_string(&path)
+            .unwrap()
+            .contains("needs.release.outputs.current-")
+    );
     for step in workflow["jobs"]["release"]["steps"].as_sequence().unwrap() {
         if matches!(
             step["name"].as_str(),
@@ -186,6 +183,53 @@ fn release_promotions_queue_without_replacing_pending_runs() {
                 .unwrap()
                 .contains("github.ref == 'refs/heads/main'")
         );
+    }
+    for step in release_plz["jobs"]["release"]["steps"]
+        .as_sequence()
+        .unwrap()
+    {
+        if step["uses"].as_str().is_some_and(|value| {
+            value.starts_with("rust-lang/crates-io-auth-action@")
+                || value.starts_with("release-plz/action@")
+        }) {
+            assert_eq!(
+                step["if"].as_str(),
+                Some("steps.gate.outputs.publish == 'true'")
+            );
+        }
+    }
+    for (file, jobs) in [
+        ("distro-source.yml", vec!["ppa", "copr"]),
+        ("package-repositories.yml", vec!["publish"]),
+    ] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(".github/workflows")
+            .join(file);
+        let guarded: Value = serde_yaml_bw::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(guarded["concurrency"]["queue"].as_str(), Some("max"));
+        assert!(
+            guarded["concurrency"]["group"]
+                .as_str()
+                .unwrap()
+                .contains("packslip-release")
+        );
+        for job in jobs {
+            let steps = guarded["jobs"][job]["steps"].as_sequence().unwrap();
+            let guard = steps
+                .iter()
+                .position(|step| step["id"].as_str() == Some("freshness"))
+                .unwrap();
+            assert!(
+                steps[guard]["run"]
+                    .as_str()
+                    .unwrap()
+                    .contains("freshness --tag")
+            );
+            assert_eq!(
+                steps[guard + 1]["if"].as_str(),
+                Some("steps.freshness.outputs.current-latest == 'true'")
+            );
+        }
     }
 }
 
@@ -246,6 +290,18 @@ fn old_release_recovery_never_pushes_moving_image_aliases() {
         fs::set_permissions(&docker, fs::Permissions::from_mode(0o755)).unwrap();
         let mut paths = vec![root.join("bin")];
         paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+        // Model a fresh forge result, not cached needs outputs, at the exact
+        // image write boundary. Deliberately supply stale true env values.
+        let python = root.join("bin/python3");
+        fs::write(
+            &python,
+            format!(
+                "#!/usr/bin/env bash\nprintf 'CURRENT_MAJOR={}\\nCURRENT_LATEST={}\\n'\n",
+                major, latest
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&python, fs::Permissions::from_mode(0o755)).unwrap();
         let result = Command::new("bash")
             .args(["-eu", "-c", step["run"].as_str().unwrap()])
             .current_dir(root)
@@ -255,8 +311,8 @@ fn old_release_recovery_never_pushes_moving_image_aliases() {
             .env("GITHUB_REPOSITORY", "jdx/packslip")
             .env("GITHUB_ACTOR", "fixture")
             .env("GITHUB_OUTPUT", root.join("output"))
-            .env("CURRENT_MAJOR", major.to_string())
-            .env("CURRENT_LATEST", latest.to_string())
+            .env("CURRENT_MAJOR", "true")
+            .env("CURRENT_LATEST", "true")
             .env("CALL_LOG", root.join("arguments"))
             .output()
             .unwrap();

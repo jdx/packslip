@@ -334,9 +334,6 @@ jobs:
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    outputs:
-      current-major: ${{ steps.finish.outputs.current-major }}
-      current-latest: ${{ steps.finish.outputs.current-latest }}
     permissions:
       contents: write
       id-token: write
@@ -387,7 +384,7 @@ jobs:
         if: env.CANDIDATE_PUBLISHED != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release edit "$GITHUB_REF_NAME" --draft=false
+        run: python3 scripts/release-candidate.py publish
       # The action follows releases of the same CLI major, only after the
       # binaries are public. A push made with
       # the built-in token starts no workflow, so this cannot recurse.
@@ -440,10 +437,12 @@ jobs:
         id: push
         env:
           GH_TOKEN: ${{ github.token }}
-          CURRENT_MAJOR: ${{ needs.release.outputs.current-major }}
-          CURRENT_LATEST: ${{ needs.release.outputs.current-latest }}
         run: |
           set -euo pipefail
+          # Re-run failed jobs preserves old needs outputs. Query again while
+          # this workflow holds the shared release serialization lock.
+          python3 scripts/release-candidate.py freshness --tag "$GITHUB_REF_NAME" > freshness.env
+          source freshness.env
           version="${GITHUB_REF_NAME#v}"
           image="ghcr.io/${GITHUB_REPOSITORY}"
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
@@ -472,7 +471,7 @@ jobs:
 
   distro-source:
     needs: release
-    if: vars.DISTRO_SOURCE_ENABLED == 'true' && needs.release.outputs.current-latest == 'true'
+    if: vars.DISTRO_SOURCE_ENABLED == 'true'
     uses: $/.github/workflows/distro-source.yml
     with:
       tag: ${{ github.ref_name }}
@@ -483,7 +482,7 @@ jobs:
 
   package-repositories:
     needs: release
-    if: vars.PACKAGE_REPOSITORIES_ENABLED == 'true' && needs.release.outputs.current-latest == 'true'
+    if: vars.PACKAGE_REPOSITORIES_ENABLED == 'true'
     uses: $/.github/workflows/package-repositories.yml
     with:
       tag: ${{ github.ref_name }}
