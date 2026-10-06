@@ -303,7 +303,7 @@ async fn run_in(request: Request, scope: Scope) -> Result<Report> {
         crate::trust_root::refresh(
             repository,
             failed,
-            sigstore_trust_root::PRODUCTION_TUF_ROOT,
+            sigstore_trust_root::SigstoreInstance::PublicGood.tuf_root(),
             &scope.state.join("tuf.json"),
             request.offline,
             jiff::Timestamp::now(),

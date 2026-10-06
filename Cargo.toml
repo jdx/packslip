@@ -69,7 +69,7 @@ schema = ["dep:schemars"]
 
 [dependencies]
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"], optional = true }
-sigstore-tuf = { version = "0.13", default-features = false, optional = true }
+sigstore-tuf = { version = "0.14", default-features = false, optional = true }
 tempfile = { version = "3", optional = true }
 base64 = "0.23"
 blake2 = "0.11"
@@ -82,21 +82,21 @@ getrandom = { version = "0.4", optional = true }
 goblin = { version = "0.10", optional = true }
 hex = "0.4"
 jiff = "0.2"
-lzma-rust2 = { version = "0.20", default-features = false, features = ["std", "xz"], optional = true }
+lzma-rust2 = { version = "0.21", default-features = false, features = ["std", "xz"], optional = true }
 lzma-rs = { version = "0.3", optional = true }
 schemars = { version = "1", optional = true }
 semver = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"
-sigstore-bundle = { version = "0.13", default-features = false }
-sigstore-oidc = { version = "0.13", default-features = false, features = ["rustls"], optional = true }
-sigstore-rekor = { version = "0.13", default-features = false, features = ["rustls"] }
-sigstore-sign = { version = "0.13", default-features = false, features = ["rustls"], optional = true }
-sigstore-trust-root = { version = "0.13", default-features = false, features = ["rustls"] }
-sigstore-types = "0.13"
+sigstore-bundle = { version = "0.14", default-features = false }
+sigstore-oidc = { version = "0.14", default-features = false, features = ["rustls"], optional = true }
+sigstore-rekor = { version = "0.14", default-features = false, features = ["rustls"] }
+sigstore-sign = { version = "0.14", default-features = false, features = ["rustls"], optional = true }
+sigstore-trust-root = { version = "0.14", default-features = false, features = ["rustls"] }
+sigstore-types = "0.14"
 ruzstd = { version = "0.9", optional = true }
-sigstore-verify = { version = "0.13", default-features = false, features = ["rustls"] }
+sigstore-verify = { version = "0.14", default-features = false, features = ["rustls"] }
 tar = { version = "0.4", optional = true }
 thiserror = "2"
 tokio = { version = "1", features = ["rt"] }
