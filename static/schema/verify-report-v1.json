@@ -201,7 +201,8 @@
       "required": [
         "name",
         "size",
-        "sha256"
+        "sha256",
+        "format"
       ],
       "type": "object"
     }

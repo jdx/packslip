@@ -1779,6 +1779,14 @@ pub fn verify_report_schema() -> serde_json::Value {
         .into_generator();
     let mut schema = serde_json::to_value(generator.into_root_schema_for::<crate::Verified>())
         .expect("schema serialises");
+    // `Artifact::format` is `Option` only so `validate` can name a document that
+    // omits it; a verified report is built after `validate`, so it always has one.
+    if let Some(required) = schema
+        .pointer_mut("/$defs/VerifiedArtifact/required")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        required.push("format".into());
+    }
     set_schema_id(&mut schema, VERIFY_REPORT_SCHEMA_URL);
     schema
 }
