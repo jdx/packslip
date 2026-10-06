@@ -282,8 +282,8 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: '22'
-      - run: node --experimental-default-type=module --test cloudflare/worker.test.mjs
+          node-version: '24'
+      - run: node --test cloudflare/worker.test.mjs
 
   # Both schemes end to end against the public log. Only on main, where the
   # id-token permission is available.
