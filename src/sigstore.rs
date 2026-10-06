@@ -420,6 +420,7 @@ const SOURCE_REPOSITORY_OWNER_ID: &str = "1.3.6.1.4.1.57264.1.17";
 /// certificates Fulcio issued before it recorded them, and those for other
 /// identities, carry none.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[non_exhaustive]
 pub struct SourceRepository {
     /// The repository's URL when the certificate was issued:

@@ -85,6 +85,17 @@ pub struct Verified {
     pub artifacts: Vec<VerifiedArtifact>,
 }
 
+/// What `packslip verify --json` prints for a release: the verified report,
+/// plus the repository the signing certificate records, when it records one.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct VerifyReport<'a> {
+    #[serde(flatten)]
+    pub verified: &'a Verified,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_repository: Option<&'a sigstore::SourceRepository>,
+}
+
 /// What verifying a release list established.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedList {

@@ -1638,14 +1638,7 @@ impl RunWith<BinInfo> for Verify {
                     std::process::exit(1)
                 }
                 if self.json {
-                    #[derive(serde::Serialize)]
-                    struct Report<'a> {
-                        #[serde(flatten)]
-                        verified: &'a packslip::Verified,
-                        #[serde(skip_serializing_if = "Option::is_none")]
-                        source_repository: Option<&'a sigstore::SourceRepository>,
-                    }
-                    let report = Report {
+                    let report = packslip::VerifyReport {
                         verified: &verified,
                         source_repository: source.as_ref(),
                     };

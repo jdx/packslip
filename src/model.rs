@@ -15,7 +15,7 @@ pub const SCHEMA_URL: &str = "https://packslip.dev/schema/release-v1.json";
 /// Where the JSON schema for [`ReleaseListStatement`] is published.
 pub const RELEASES_SCHEMA_URL: &str = "https://packslip.dev/schema/releases-v1.json";
 
-/// Where the JSON schema for [`crate::Verified`], the report `verify --json`
+/// Where the JSON schema for [`crate::VerifyReport`], the report `verify --json`
 /// prints for a release, is published.
 pub const VERIFY_REPORT_SCHEMA_URL: &str = "https://packslip.dev/schema/verify-report-v1.json";
 
@@ -1777,8 +1777,9 @@ pub fn verify_report_schema() -> serde_json::Value {
     let generator = schemars::generate::SchemaSettings::default()
         .for_serialize()
         .into_generator();
-    let mut schema = serde_json::to_value(generator.into_root_schema_for::<crate::Verified>())
-        .expect("schema serialises");
+    let mut schema =
+        serde_json::to_value(generator.into_root_schema_for::<crate::VerifyReport<'_>>())
+            .expect("schema serialises");
     // `Artifact::format` is `Option` only so `validate` can name a document that
     // omits it; a verified report is built after `validate`, so it always has one.
     if let Some(required) = schema
