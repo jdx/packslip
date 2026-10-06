@@ -59,6 +59,8 @@ pub mod verify;
 pub use fingerprint::Fingerprint;
 #[cfg(feature = "manifest")]
 pub use manifest::Manifest;
+#[cfg(feature = "schema")]
+pub use model::verify_report_schema;
 pub use model::{
     Artifact, Attestor, Bin, Evidence, Host, Identity, Predicate, ReleaseList,
     ReleaseListStatement, ReleaseRef, ReleaseStatus, Requires, Resource, ResourceIdentity,
@@ -69,8 +71,8 @@ pub use model::{
 pub use sigstore::Signer;
 pub use sigstore::{Policy, Trust};
 pub use verify::{
-    Claimed, ForgeError, ForgeVerified, Options, Verified, VerifiedList, peek_unverified, verify,
-    verify_forge, verify_forge_release_list, verify_release_list,
+    Claimed, ForgeError, ForgeVerified, Options, Verified, VerifiedArtifact, VerifiedList,
+    peek_unverified, verify, verify_forge, verify_forge_release_list, verify_release_list,
 };
 
 /// The sha256 of a file, lowercase hex, and its size.

@@ -334,9 +334,10 @@ cmd schema help="Print the JSON schema for a decoded release statement" {
     long_help #"""
 Print the JSON schema for a decoded release statement
 
-Use --releases for the release-list statement schema. These schemas describe the in-toto payload, not the enclosing sigstore bundle. Both are published at https://packslip.dev/schema/release-v1.json and https://packslip.dev/schema/releases-v1.json.
+Use --releases for the release-list statement schema, or --report for the report `verify --json` prints for a release. The statement schemas describe the in-toto payload, not the enclosing sigstore bundle. All are published at https://packslip.dev/schema/release-v1.json, https://packslip.dev/schema/releases-v1.json, and https://packslip.dev/schema/verify-report-v1.json.
 """#
     flag --releases help="Print the releases/v1 list schema instead of the release/v1 statement schema"
+    flag --report help="Print the schema of the report `verify --json` prints for a release"
     flag "-h --help" help="Print help" action=help builtin=#true
 }
 cmd show help="Print the statement inside a bundle, without verifying it" {
@@ -385,7 +386,7 @@ Then match the verified project and version to what you meant to install. For a 
     flag "-a --artifact" help="A downloaded artifact or resource asset to check against the bundle, matched by file name, so keep the name it was published under (repeatable)" var=#true {
         arg <ARTIFACT>
     }
-    flag "-J --json" help="Print the verified report as JSON, with source_repository when the signing certificate records one; for a release list, print the verified list statement" help_heading=Output
+    flag "-J --json" help="Print the verified report as JSON, including every listed artifact with its signed digest and source_repository when the signing certificate records one; for a release list, print the verified list statement" help_heading=Output
     flag "-h --help" help="Print help" action=help builtin=#true
     arg <BUNDLE> help="Local release bundle or signed release list to verify"
     complete bundle type=path

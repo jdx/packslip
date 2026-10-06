@@ -15,6 +15,10 @@ pub const SCHEMA_URL: &str = "https://packslip.dev/schema/release-v1.json";
 /// Where the JSON schema for [`ReleaseListStatement`] is published.
 pub const RELEASES_SCHEMA_URL: &str = "https://packslip.dev/schema/releases-v1.json";
 
+/// Where the JSON schema for [`crate::Verified`], the report `verify --json`
+/// prints for a release, is published.
+pub const VERIFY_REPORT_SCHEMA_URL: &str = "https://packslip.dev/schema/verify-report-v1.json";
+
 /// What the specification has no field for, keyed by who defines it: a
 /// consumer by its name (`mise`), a vendor by a domain it controls
 /// (`example.com`). packslip assigns no meaning to anything inside, so a
@@ -1763,6 +1767,15 @@ impl ReleaseListStatement {
         set_schema_id(&mut schema, RELEASES_SCHEMA_URL);
         schema
     }
+}
+
+/// The JSON schema of the report `verify --json` prints for a release.
+#[cfg(feature = "schema")]
+pub fn verify_report_schema() -> serde_json::Value {
+    let mut schema =
+        serde_json::to_value(schemars::schema_for!(crate::Verified)).expect("schema serialises");
+    set_schema_id(&mut schema, VERIFY_REPORT_SCHEMA_URL);
+    schema
 }
 
 /// Name a generated schema by the URL it is published at, so a

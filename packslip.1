@@ -462,7 +462,7 @@ packslip releases \\
 .SH "PACKSLIP SCHEMA"
 Print the JSON schema for a decoded release statement
 
-Use \-\-releases for the release\-list statement schema. These schemas describe the in\-toto payload, not the enclosing sigstore bundle. Both are published at https://packslip.dev/schema/release\-v1.json and https://packslip.dev/schema/releases\-v1.json.
+Use \-\-releases for the release\-list statement schema, or \-\-report for the report `verify \-\-json` prints for a release. The statement schemas describe the in\-toto payload, not the enclosing sigstore bundle. All are published at https://packslip.dev/schema/release\-v1.json, https://packslip.dev/schema/releases\-v1.json, and https://packslip.dev/schema/verify\-report\-v1.json.
 .PP
 \fBUsage:\fR packslip schema [OPTIONS]
 .PP
@@ -471,6 +471,9 @@ Use \-\-releases for the release\-list statement schema. These schemas describe 
 .TP
 \fB\-\-releases\fR
 Print the releases/v1 list schema instead of the release/v1 statement schema
+.TP
+\fB\-\-report\fR
+Print the schema of the report `verify \-\-json` prints for a release
 .TP
 \fB\-h, \-\-help\fR
 Print help
@@ -531,7 +534,7 @@ A sigstore trusted_root.json to use instead of the embedded one
 A downloaded artifact or resource asset to check against the bundle, matched by file name, so keep the name it was published under (repeatable)
 .TP
 \fB\-J, \-\-json\fR
-Print the verified report as JSON, with source_repository when the signing certificate records one; for a release list, print the verified list statement
+Print the verified report as JSON, including every listed artifact with its signed digest and source_repository when the signing certificate records one; for a release list, print the verified list statement
 .TP
 \fB\-h, \-\-help\fR
 Print help

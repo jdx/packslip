@@ -7,7 +7,7 @@ use std::path::Path;
 use sigstore_trust_root::TrustedRoot;
 
 use crate::forge;
-use crate::model::{InvalidDocument, ReleaseListStatement, Scheme, Statement};
+use crate::model::{Artifact, InvalidDocument, ReleaseListStatement, Scheme, Statement};
 use crate::sigstore::{self, Policy, SignedBy, Trust};
 
 /// How strict to be.
@@ -19,8 +19,20 @@ pub struct Options<'a> {
     pub trusted_root: &'a TrustedRoot,
 }
 
+/// An artifact the verified statement lists, with the digest the statement
+/// signs for it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct VerifiedArtifact {
+    #[serde(flatten)]
+    pub artifact: Artifact,
+    /// The signed SHA-256 of the file, in lowercase hex.
+    pub sha256: String,
+}
+
 /// What a successful verification established.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Verified {
     pub project: String,
     pub version: String,
@@ -67,6 +79,10 @@ pub struct Verified {
     /// java>=17`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub requires: Vec<String>,
+    /// Every artifact the statement lists, in document order, with its
+    /// signed digest. Whatever the caller passed as `--artifact`, these are
+    /// verified metadata: nothing was downloaded to produce them.
+    pub artifacts: Vec<VerifiedArtifact>,
 }
 
 /// What verifying a release list established.
@@ -253,6 +269,15 @@ pub fn verify(
                 Some(format!("{}: {}", a.name, requires.summary()))
             })
             .collect(),
+        artifacts: statement
+            .predicate
+            .artifacts
+            .iter()
+            .map(|a| VerifiedArtifact {
+                artifact: a.clone(),
+                sha256: statement.digest_of(&a.name).unwrap_or_default().to_string(),
+            })
+            .collect(),
     })
 }
 
@@ -429,6 +454,27 @@ mod tests {
         assert_eq!(source.id.as_deref(), Some("922514152"));
         assert_eq!(source.owner_uri.as_deref(), Some("https://github.com/jdx"));
         assert_eq!(source.owner_id.as_deref(), Some("216188"));
+    }
+
+    #[test]
+    fn a_verified_report_lists_every_artifact_with_its_signed_digest() {
+        let root = sigstore::trusted_root(None).unwrap();
+        let ok =
+            verify_forge(HK, &Expected::new("github.com/jdx/hk"), options(&root), &[]).unwrap();
+        let report = &ok.verified;
+        assert_eq!(report.artifacts.len(), report.artifact_count);
+        let linux = report
+            .artifacts
+            .iter()
+            .find(|a| a.artifact.name == "hk-x86_64-unknown-linux-gnu.tar.gz")
+            .unwrap();
+        assert_eq!(linux.artifact.os.as_deref(), Some("linux"));
+        assert_eq!(linux.artifact.arch.as_deref(), Some("x86_64"));
+        assert_eq!(linux.sha256.len(), 64);
+        let json = serde_json::to_value(report).unwrap();
+        let first = &json["artifacts"][0];
+        assert!(first["name"].is_string() && first["sha256"].is_string());
+        assert!(first["size"].is_u64());
     }
 
     #[test]
