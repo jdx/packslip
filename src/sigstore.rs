@@ -4,15 +4,13 @@
 //! identity, or with a long-lived Ed25519 key; either way the signature is
 //! logged to Rekor, and the bundle carries the log entry.
 
-use std::borrow::Cow;
-
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD as BASE64, URL_SAFE_NO_PAD};
 #[cfg(feature = "sign")]
 use ed25519_dalek::Signer as _;
 use sha2::Digest as _;
 #[cfg(feature = "sign")]
-use sigstore_bundle::{BundleV03, TlogEntryBuilder, VerificationMaterialV03};
+use sigstore_bundle::{BundleV03, VerificationMaterialV03};
 #[cfg(feature = "sign")]
 use sigstore_oidc::IdentityToken;
 #[cfg(feature = "sign")]
@@ -257,10 +255,10 @@ pub fn sign(signer: Signer, statement: &[u8]) -> Result<String, Error> {
             let envelope = DsseEnvelope::new(
                 IN_TOTO_PAYLOAD_TYPE.to_string(),
                 PayloadBytes::from_bytes(statement),
-                vec![DsseSignature {
+                DsseSignature {
                     sig: SignatureBytes::from_bytes(&signature.to_bytes()),
                     keyid: KeyId::default(),
-                }],
+                },
             );
             let public = key.public_key();
             let mut bundle = BundleV03::new(
@@ -286,9 +284,10 @@ pub fn sign(signer: Signer, statement: &[u8]) -> Result<String, Error> {
                 let log_entry = rt
                     .block_on(rekor.create_dsse_entry(entry))
                     .map_err(|e| Error::Log(e.to_string()))?;
-                bundle = bundle.with_tlog_entry(
-                    TlogEntryBuilder::from_log_entry(&log_entry, "dsse", "0.0.1").build(),
-                );
+                let entry = log_entry
+                    .to_bundle_entry(sigstore_types::KindVersion::DsseV001)
+                    .map_err(|e| Error::Log(e.to_string()))?;
+                bundle = bundle.with_tlog_entry(entry);
             }
             bundle.into_bundle()
         }
@@ -573,7 +572,7 @@ pub fn verify(
         .as_str()
         .ok_or_else(|| Error::Payload("no subject with a sha256".into()))?;
     let digest = Sha256Hash::from_hex(first).map_err(|e| Error::Payload(e.to_string()))?;
-    let artifact = Artifact::Digest(Cow::Borrowed(digest.as_bytes()));
+    let artifact = Artifact::from_digest(digest);
     let logged = !bundle.verification_material.tlog_entries.is_empty();
     if require_log && !logged {
         return Err(Error::Unlogged);
@@ -585,9 +584,9 @@ pub fn verify(
             if !has_certificate {
                 return Err(Error::IdentityPinnedForKey);
             }
-            let mut verification = VerificationPolicy::default();
+            let mut verification = VerificationPolicy::any_identity();
             if !require_log {
-                verification = verification.skip_tlog();
+                verification = verification.skip_tlog_unsafe();
             }
             if let Some(issuer) = &policy.issuer {
                 verification = verification.require_issuer(issuer.clone());
@@ -598,10 +597,12 @@ pub fn verify(
             let result = sigstore_verify::verify(artifact, &bundle, &verification, trusted_root)
                 .map_err(|e| Error::Verification(e.to_string()))?;
             let identity = result
-                .identity
+                .identity()
+                .map(str::to_owned)
                 .ok_or_else(|| Error::Verification("certificate has no subject identity".into()))?;
             let issuer = result
-                .issuer
+                .issuer()
+                .map(str::to_owned)
                 .ok_or_else(|| Error::Verification("certificate has no issuer".into()))?;
             if let Some(prefix) = &policy.identity_prefix
                 && !identity.starts_with(prefix)
@@ -614,7 +615,7 @@ pub fn verify(
             Ok(BundleVerified {
                 statement,
                 signed_by: SignedBy::Identity { identity, issuer },
-                integrated_time: result.integrated_time,
+                integrated_time: result.integrated_time().map(|t| t.as_second()),
             })
         }
         Trust::Key(key) => {
@@ -624,14 +625,10 @@ pub fn verify(
             let key_id = key_id_hex(&key.key_id);
             // The signature itself, with our own key type.
             let pae = envelope.pae();
-            let ok = envelope.signatures.iter().any(|s| {
-                <[u8; 64]>::try_from(s.sig.as_bytes())
-                    .ok()
-                    .map(|b| ed25519_dalek::Signature::from_bytes(&b))
-                    .is_some_and(|sig| {
-                        ed25519_dalek::Verifier::verify(&key.key, &pae, &sig).is_ok()
-                    })
-            });
+            let ok = <[u8; 64]>::try_from(envelope.signature.sig.as_bytes())
+                .ok()
+                .map(|b| ed25519_dalek::Signature::from_bytes(&b))
+                .is_some_and(|sig| ed25519_dalek::Verifier::verify(&key.key, &pae, &sig).is_ok());
             if !ok {
                 return Err(Error::BadKeySignature(key_id));
             }
@@ -639,13 +636,20 @@ pub fn verify(
             // consistency with the envelope, by sigstore's verifier.
             let integrated_time = if logged {
                 let der = DerPublicKey::from_bytes(&spki_der(key));
-                sigstore_verify::verify_with_key(artifact, &bundle, &der, trusted_root)
-                    .map_err(|e| Error::Verification(e.to_string()))?;
+                sigstore_verify::verify_with_key(
+                    artifact,
+                    &bundle,
+                    &der,
+                    &sigstore_verify::PublicKeyVerificationPolicy::default(),
+                    trusted_root,
+                )
+                .map_err(|e| Error::Verification(e.to_string()))?;
                 bundle
                     .verification_material
                     .tlog_entries
                     .first()
-                    .map(|e| e.integrated_time)
+                    .and_then(|e| e.integrated_time)
+                    .map(|t| t.as_second())
             } else {
                 None
             };

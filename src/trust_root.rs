@@ -121,7 +121,7 @@ fn validate_cache(cache: &Snapshot, bootstrap: &[u8]) -> Result<BTreeMap<String,
     // Sigstore's verification material is a top-level target. Fail explicitly
     // rather than treating an unauthenticated target cache as a trust anchor.
     let target = trusted
-        .targets()
+        .targets_role("targets")
         .and_then(|t| t.target(TARGET))
         .ok_or_else(|| {
             sigstore_tuf::Error::Malformed("trusted_root.json is not a top-level target".into())
@@ -131,7 +131,10 @@ fn validate_cache(cache: &Snapshot, bootstrap: &[u8]) -> Result<BTreeMap<String,
     let mut floors = BTreeMap::new();
     floors.insert("timestamp".into(), trusted.timestamp().unwrap().version);
     floors.insert("snapshot".into(), trusted.snapshot().unwrap().version);
-    floors.insert("targets".into(), trusted.targets().unwrap().version);
+    floors.insert(
+        "targets".into(),
+        trusted.targets_role("targets").unwrap().version,
+    );
     Ok(floors)
 }
 

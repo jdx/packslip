@@ -69,7 +69,7 @@ schema = ["dep:schemars"]
 
 [dependencies]
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"], optional = true }
-sigstore-tuf = { version = "0.11", default-features = false, optional = true }
+sigstore-tuf = { version = "0.13", default-features = false, optional = true }
 tempfile = { version = "3", optional = true }
 base64 = "0.23"
 blake2 = "0.11"
@@ -89,14 +89,14 @@ semver = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"
-sigstore-bundle = { version = "0.11", default-features = false, features = ["rustls"] }
-sigstore-oidc = { version = "0.11", default-features = false, features = ["rustls"], optional = true }
-sigstore-rekor = { version = "0.11", default-features = false, features = ["rustls"] }
-sigstore-sign = { version = "0.11", default-features = false, features = ["rustls"], optional = true }
-sigstore-trust-root = { version = "0.11", default-features = false, features = ["rustls"] }
-sigstore-types = "0.11"
+sigstore-bundle = { version = "0.13", default-features = false }
+sigstore-oidc = { version = "0.13", default-features = false, features = ["rustls"], optional = true }
+sigstore-rekor = { version = "0.13", default-features = false, features = ["rustls"] }
+sigstore-sign = { version = "0.13", default-features = false, features = ["rustls"], optional = true }
+sigstore-trust-root = { version = "0.13", default-features = false, features = ["rustls"] }
+sigstore-types = "0.13"
 ruzstd = { version = "0.9", optional = true }
-sigstore-verify = { version = "0.11", default-features = false, features = ["rustls"] }
+sigstore-verify = { version = "0.13", default-features = false, features = ["rustls"] }
 tar = { version = "0.4", optional = true }
 thiserror = "2"
 tokio = { version = "1", features = ["rt"] }
