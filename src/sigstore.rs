@@ -636,7 +636,7 @@ pub fn verify(
             // consistency with the envelope, by sigstore's verifier.
             let integrated_time = if logged {
                 let der = DerPublicKey::from_bytes(&spki_der(key));
-                sigstore_verify::verify_with_key(
+                let result = sigstore_verify::verify_with_key(
                     artifact,
                     &bundle,
                     &der,
@@ -644,12 +644,7 @@ pub fn verify(
                     trusted_root,
                 )
                 .map_err(|e| Error::Verification(e.to_string()))?;
-                bundle
-                    .verification_material
-                    .tlog_entries
-                    .first()
-                    .and_then(|e| e.integrated_time)
-                    .map(|t| t.as_second())
+                result.integrated_time().map(|t| t.as_second())
             } else {
                 None
             };
