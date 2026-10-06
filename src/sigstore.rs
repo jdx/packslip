@@ -17,6 +17,8 @@ use sigstore_oidc::IdentityToken;
 use sigstore_rekor::{DsseEntry, RekorClient};
 #[cfg(feature = "sign")]
 use sigstore_sign::SigningContext;
+#[cfg(feature = "sign")]
+use sigstore_trust_root::SigstoreInstance;
 use sigstore_trust_root::{SIGSTORE_PRODUCTION_TRUSTED_ROOT, TrustedRoot};
 use sigstore_types::{Artifact, Bundle, DerPublicKey, Sha256Hash, SignatureContent};
 #[cfg(feature = "sign")]
@@ -29,6 +31,10 @@ use crate::minisign::{PublicKey, key_id_hex};
 
 pub const GITHUB_ISSUER: &str = "https://token.actions.githubusercontent.com";
 pub const GITLAB_ISSUER: &str = "https://gitlab.com";
+/// The public-good Rekor log that key signatures are submitted to; keyless
+/// signing takes its log from the instance's embedded signing config.
+#[cfg(feature = "sign")]
+const PUBLIC_REKOR_URL: &str = "https://rekor.sigstore.dev";
 pub const IN_TOTO_PAYLOAD_TYPE: &str = "application/vnd.in-toto+json";
 
 /// The environment variable a caller may set to hand over an OIDC token
@@ -112,7 +118,7 @@ impl std::fmt::Debug for OidcIdentity {
 #[cfg(feature = "sign")]
 impl OidcIdentity {
     fn from_token(token: IdentityToken) -> Result<OidcIdentity, Error> {
-        let identity = certificate_identity(token.raw())?;
+        let identity = certificate_identity(token.expose_secret())?;
         Ok(OidcIdentity {
             issuer: token.issuer().to_string(),
             identity,
@@ -244,7 +250,8 @@ pub fn sign(signer: Signer, statement: &[u8]) -> Result<String, Error> {
     let rt = runtime()?;
     let bundle = match signer {
         Signer::Oidc(oidc) => {
-            let context = SigningContext::production();
+            let context = SigningContext::from_embedded(SigstoreInstance::PublicGood)
+                .map_err(|e| Error::Sign(e.to_string()))?;
             let signer = context.signer(oidc.token);
             rt.block_on(signer.sign_raw_statement(statement))
                 .map_err(|e| Error::Sign(e.to_string()))?
@@ -255,10 +262,10 @@ pub fn sign(signer: Signer, statement: &[u8]) -> Result<String, Error> {
             let envelope = DsseEnvelope::new(
                 IN_TOTO_PAYLOAD_TYPE.to_string(),
                 PayloadBytes::from_bytes(statement),
-                DsseSignature {
-                    sig: SignatureBytes::from_bytes(&signature.to_bytes()),
-                    keyid: KeyId::default(),
-                },
+                DsseSignature::new(
+                    SignatureBytes::from_bytes(&signature.to_bytes()),
+                    KeyId::default(),
+                ),
             );
             let public = key.public_key();
             let mut bundle = BundleV03::new(
@@ -280,7 +287,8 @@ pub fn sign(signer: Signer, statement: &[u8]) -> Result<String, Error> {
                         signatures: Vec::new(),
                     },
                 };
-                let rekor = RekorClient::public();
+                let rekor =
+                    RekorClient::new(PUBLIC_REKOR_URL).map_err(|e| Error::Log(e.to_string()))?;
                 let log_entry = rt
                     .block_on(rekor.create_dsse_entry(entry))
                     .map_err(|e| Error::Log(e.to_string()))?;
@@ -539,7 +547,7 @@ pub fn peek_statement(bundle_json: &str) -> Result<Vec<u8>, Error> {
     if envelope.payload_type != IN_TOTO_PAYLOAD_TYPE {
         return Err(Error::PayloadType(envelope.payload_type.clone()));
     }
-    Ok(envelope.decode_payload())
+    Ok(envelope.payload.as_bytes().to_vec())
 }
 
 /// Verify a bundle against what the consumer pinned, requiring a Rekor
@@ -563,7 +571,7 @@ pub fn verify(
     if envelope.payload_type != IN_TOTO_PAYLOAD_TYPE {
         return Err(Error::PayloadType(envelope.payload_type.clone()));
     }
-    let statement = envelope.decode_payload();
+    let statement = envelope.payload.as_bytes().to_vec();
     // sigstore binds a DSSE bundle to an artifact by subject digest; the
     // statement's own first subject is that artifact. The caller checks
     // the statement's contents and any real files afterwards.
@@ -599,7 +607,7 @@ pub fn verify(
                 .map_err(|e| Error::Verification(e.to_string()))?;
             let identity = result
                 .identity()
-                .map(str::to_owned)
+                .map(|identity| identity.as_str().to_owned())
                 .ok_or_else(|| Error::Verification("certificate has no subject identity".into()))?;
             let issuer = result
                 .issuer()
