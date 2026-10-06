@@ -207,6 +207,36 @@ to standard output for scripts; on failure that stream is empty and the
 reason goes to standard error. Exit status is 0 for success, 1 for failed
 verification or unusable input, and 2 for a usage error.
 
+## Read the verified artifacts from a script
+
+Build and deployment tooling often needs the verified metadata, not an
+install: which file to fetch for a platform, its digest, and the commands
+it provides. `--json` includes every artifact the signed statement lists,
+whether or not you passed `--artifact`, so one command verifies the bundle
+and returns what to stage:
+
+```sh
+packslip verify packslip.sigstore.json --pin ps1_snirenkjwr7m5ozgcufameodnm --json \
+  | jq -r '.artifacts[] | select(.os == "linux" and .arch == "x86_64") | "\(.name) \(.sha256)"'
+```
+
+For the hk 2.3.0 release, this prints each matching artifact's name and
+signed SHA-256. Each entry in `artifacts` has the statement's fields for
+that artifact (`name`, `size`, `url`, `format`, `os`, `arch`, `libc`,
+`variant`, `bin`, `requires`, `provenance`, `extensions`; absent ones are
+omitted) and the signed `sha256`. Download the file yourself, from the
+signed `url` or a mirror that keeps the file name, then confirm it by
+running `verify` again with `--artifact`, or compare its SHA-256 with the
+signed digest. Where the release lists several builds for a platform, the
+[artifact selection rules](/release/v1/#selecting-an-artifact) decide
+which one a consumer takes; the Rust library's `packslip::select_artifact`
+implements them.
+
+The report follows [`verify-report-v1.json`](/schema/verify-report-v1.json),
+which `packslip schema --report` prints. Within version 1, packslip adds
+report fields but never removes, renames, or changes the meaning of one, so
+ignore fields you do not know.
+
 ## Verify a release list
 
 The same command accepts a signed release list:

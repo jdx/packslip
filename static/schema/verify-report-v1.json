@@ -1,0 +1,375 @@
+{
+  "$defs": {
+    "Attestor": {
+      "description": "Who signed the claim.",
+      "oneOf": [
+        {
+          "const": "vendor",
+          "description": "The project's own publisher.",
+          "type": "string"
+        },
+        {
+          "const": "repackager",
+          "description": "A repository or mirror describing a vendor's artifacts on the\nvendor's behalf, having checked whatever evidence the vendor gave.",
+          "type": "string"
+        }
+      ]
+    },
+    "Bin": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "name"
+          ],
+          "type": "object"
+        }
+      ],
+      "description": "An executable inside an artifact. Serialises as the bare path when the\nPATH name is the file's own name, else as `{ \"path\", \"name\" }`."
+    },
+    "RequiredBin": {
+      "description": "A command an executable needs on PATH.",
+      "properties": {
+        "min": {
+          "description": "The lowest version that works, compared numerically by dot-separated\ncomponents with missing components padded with zero: `17` means\n17.0.0 and later, including 21. Unrecognized spellings are unchecked.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "The name as the executable invokes it, bare: `java`, `python3`,\n`git`. No directory and no `.exe`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "Requires": {
+      "description": "What the host must already provide, by names the operating system\ndefines, so a consumer can check before installing. Nothing here names\nanother project or where to get it; see the specification's Host\nrequirements section.",
+      "properties": {
+        "bin": {
+          "description": "Commands the executables run and cannot work without, by the bare\nname on PATH, with an optional minimum version. Declared by the\nvendor.",
+          "items": {
+            "$ref": "#/$defs/RequiredBin"
+          },
+          "type": "array"
+        },
+        "glibc_min": {
+          "description": "Minimum glibc for a `gnu` Linux build, such as `2.31`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "libs": {
+          "description": "Shared libraries the executables load from the host, by the name\nthe loader resolves: a soname (`libssl.so.3`), a DLL name\n(`vcruntime140.dll`), or a dylib name (`libssl.3.dylib`). Excludes\nthe C runtime baseline that `libc` and `glibc_min` cover and any\nlibrary the artifact ships itself. `packslip create` reads it from\nthe executables; an empty list means they were read and need\nnothing, an absent one that nothing was checked.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "os_min": {
+          "description": "Minimum OS version, in the OS's own terms: `12` for macOS Monterey,\n`10.0.17763` for Windows.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Scheme": {
+      "oneOf": [
+        {
+          "const": "sigstore-oidc",
+          "description": "A sigstore bundle signed keylessly with a workload or human OIDC\nidentity, certified by Fulcio and logged to Rekor.",
+          "type": "string"
+        },
+        {
+          "const": "sigstore-key",
+          "description": "A sigstore bundle signed with a long-lived Ed25519 key, logged to\nRekor.",
+          "type": "string"
+        }
+      ]
+    },
+    "SourceRepository": {
+      "description": "The repository a keyless signer's CI run was based on, as Fulcio\nrecorded it in the certificate from the forge's OIDC token.\n\nA forge's numeric repository ID does not change when a repository is\nrenamed or transferred to another owner, so it tells the same repository\nfrom a new one that took its old name. [`crate::forge::check`] compares\nonly that ID; the owner's fields describe who owned the repository when\nthe certificate was issued and are not part of a project's identity.\nGitHub Actions and GitLab CI certificates carry all four fields;\ncertificates Fulcio issued before it recorded them, and those for other\nidentities, carry none.",
+      "properties": {
+        "id": {
+          "description": "The forge's immutable repository ID, a decimal string on GitHub and\nGitLab.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "owner_id": {
+          "description": "The forge's immutable ID of the repository's owner (a GitHub user or\norganization, a GitLab namespace).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "owner_uri": {
+          "description": "The owner's URL when the certificate was issued:\n`https://github.com/owner`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "uri": {
+          "description": "The repository's URL when the certificate was issued:\n`https://github.com/owner/repo`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "uri"
+      ],
+      "type": "object"
+    },
+    "VerifiedArtifact": {
+      "description": "An artifact the verified statement lists, with the digest the statement\nsigns for it.",
+      "properties": {
+        "arch": {
+          "description": "`x86_64`, `aarch64`, `armv7`, `armv6`, `riscv64`, `i686`,\n`powerpc64le`, `s390x`, `loongarch64`. Absent when the artifact\nruns on any architecture.",
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bin": {
+          "description": "Executables inside the artifact, as paths relative to the archive\nroot, or the artifact's own name (minus any compression suffix)\nwhen it is a bare executable. A consumer puts these on PATH under\n`name`.",
+          "items": {
+            "$ref": "#/$defs/Bin"
+          },
+          "type": "array"
+        },
+        "extensions": {
+          "additionalProperties": true,
+          "description": "Vendor- or consumer-defined data about this artifact. See\n[`Extensions`].",
+          "type": "object"
+        },
+        "format": {
+          "description": "The archive type (`tar.xz`, `tar.gz`, `tar.zst`, `tar.bz2`, `tgz`,\n`tar`, `zip`, `7z`), a single compressed executable (`gz`, `xz`,\n`zst`, `bz2`), an installer (`deb`, `rpm`, `dmg`, `pkg`, `msi`,\n`msix`, `exe`, `appimage`), or `raw` for a bare executable. Two\nartifacts that differ only in format carry the same build, and a\nconsumer takes whichever it prefers. Required: an artifact whose\nformat is unknown is one no consumer can select.\n\n`Option` so that a document leaving it out still parses and is\nthen refused by `validate`, which can name the artifact. The field\nis not optional: no `serde(default)`, so the schema demands it.",
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "type": "string"
+        },
+        "libc": {
+          "description": "`gnu` or `musl`, for a Linux build. Absent when the artifact does\nnot depend on one.",
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "os": {
+          "description": "`linux`, `darwin`, `windows`, `freebsd`, `netbsd`, `openbsd`,\n`illumos`, `android`, `ios`. Absent when the artifact runs on any\nOS.",
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provenance": {
+          "description": "URLs of build provenance statements (SLSA) for this artifact.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "requires": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Requires"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the artifact needs from the host."
+        },
+        "sha256": {
+          "description": "The signed SHA-256 of the file, in lowercase hex.",
+          "type": "string"
+        },
+        "size": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "variant": {
+          "description": "Tells apart builds that share os, arch, and libc: `fips`,\n`baseline`, `debug`, `installer`, `source`. A consumer selects only\nartifacts without a variant unless asked for one.",
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "size",
+        "sha256",
+        "format"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://packslip.dev/schema/verify-report-v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What `packslip verify --json` prints for a release: the verified report,\nplus the repository the signing certificate records, when it records one.",
+  "properties": {
+    "artifact_count": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "artifacts": {
+      "description": "Every artifact the statement lists, in document order, with its\nsigned digest. Whatever the caller passed as `--artifact`, these are\nverified metadata: nothing was downloaded to produce them.",
+      "items": {
+        "$ref": "#/$defs/VerifiedArtifact"
+      },
+      "type": "array"
+    },
+    "asset_count": {
+      "description": "How many assets the document lists besides its artifacts.",
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "attested_by": {
+      "$ref": "#/$defs/Attestor",
+      "description": "Whether the vendor or a repackager made the claim."
+    },
+    "channel": {
+      "description": "The channel the version's prerelease part names, if any.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "checked_artifacts": {
+      "description": "Artifacts whose digests were checked against files.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "checked_assets": {
+      "description": "Resource assets, such as an SBOM or a skill archive, whose digests\nwere checked against files.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "issuer": {
+      "description": "The OIDC issuer, for `sigstore-oidc`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "key_id": {
+      "description": "Who signed: the certificate identity, or the key id.",
+      "type": "string"
+    },
+    "logged_at": {
+      "description": "When the transparency log recorded the signature, RFC 3339. None\nonly for an unlogged bundle the consumer chose to accept.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "pin_workflow": {
+      "description": "Whether the document asks consumers to hold later releases to the\nworkflow that signed it. See [`crate::model::Identity::pin_workflow`].",
+      "type": "boolean"
+    },
+    "prerelease": {
+      "description": "Whether the version has a prerelease part.",
+      "type": "boolean"
+    },
+    "project": {
+      "type": "string"
+    },
+    "provenance_linked": {
+      "description": "Whether every artifact links build provenance for the consumer to\nverify. The packslip proves the manifest; SLSA provenance, if\nverified, proves the build.",
+      "type": "boolean"
+    },
+    "published_at": {
+      "type": "string"
+    },
+    "requires": {
+      "description": "What each artifact requires of the host, one line per artifact\nthat declares anything: `name: glibc>=2.31; libs libz.so.1; bin\njava>=17`.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "resources": {
+      "description": "The kinds of resources declared (completions, man pages, CLI\nspecs, ...), one label per entry, in document order.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "scheme": {
+      "$ref": "#/$defs/Scheme"
+    },
+    "source_repository": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SourceRepository"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "version": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "project",
+    "version",
+    "published_at",
+    "scheme",
+    "key_id",
+    "attested_by",
+    "prerelease",
+    "provenance_linked",
+    "checked_artifacts",
+    "artifact_count",
+    "checked_assets",
+    "asset_count",
+    "artifacts"
+  ],
+  "title": "VerifyReport",
+  "type": "object"
+}

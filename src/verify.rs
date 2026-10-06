@@ -7,7 +7,7 @@ use std::path::Path;
 use sigstore_trust_root::TrustedRoot;
 
 use crate::forge;
-use crate::model::{InvalidDocument, ReleaseListStatement, Scheme, Statement};
+use crate::model::{Artifact, InvalidDocument, ReleaseListStatement, Scheme, Statement};
 use crate::sigstore::{self, Policy, SignedBy, Trust};
 
 /// How strict to be.
@@ -19,8 +19,20 @@ pub struct Options<'a> {
     pub trusted_root: &'a TrustedRoot,
 }
 
+/// An artifact the verified statement lists, with the digest the statement
+/// signs for it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct VerifiedArtifact {
+    #[serde(flatten)]
+    pub artifact: Artifact,
+    /// The signed SHA-256 of the file, in lowercase hex.
+    pub sha256: String,
+}
+
 /// What a successful verification established.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Verified {
     pub project: String,
     pub version: String,
@@ -67,6 +79,21 @@ pub struct Verified {
     /// java>=17`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub requires: Vec<String>,
+    /// Every artifact the statement lists, in document order, with its
+    /// signed digest. Whatever the caller passed as `--artifact`, these are
+    /// verified metadata: nothing was downloaded to produce them.
+    pub artifacts: Vec<VerifiedArtifact>,
+}
+
+/// What `packslip verify --json` prints for a release: the verified report,
+/// plus the repository the signing certificate records, when it records one.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct VerifyReport<'a> {
+    #[serde(flatten)]
+    pub verified: &'a Verified,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_repository: Option<&'a sigstore::SourceRepository>,
 }
 
 /// What verifying a release list established.
@@ -253,6 +280,15 @@ pub fn verify(
                 Some(format!("{}: {}", a.name, requires.summary()))
             })
             .collect(),
+        artifacts: statement
+            .predicate
+            .artifacts
+            .iter()
+            .map(|a| VerifiedArtifact {
+                artifact: a.clone(),
+                sha256: statement.digest_of(&a.name).unwrap_or_default().to_string(),
+            })
+            .collect(),
     })
 }
 
@@ -429,6 +465,48 @@ mod tests {
         assert_eq!(source.id.as_deref(), Some("922514152"));
         assert_eq!(source.owner_uri.as_deref(), Some("https://github.com/jdx"));
         assert_eq!(source.owner_id.as_deref(), Some("216188"));
+    }
+
+    #[test]
+    fn a_verified_report_lists_every_artifact_with_its_signed_digest() {
+        let root = sigstore::trusted_root(None).unwrap();
+        let ok =
+            verify_forge(HK, &Expected::new("github.com/jdx/hk"), options(&root), &[]).unwrap();
+        let report = &ok.verified;
+        assert_eq!(report.artifacts.len(), report.artifact_count);
+        let linux = report
+            .artifacts
+            .iter()
+            .find(|a| a.artifact.name == "hk-x86_64-unknown-linux-gnu.tar.gz")
+            .unwrap();
+        assert_eq!(linux.artifact.os.as_deref(), Some("linux"));
+        assert_eq!(linux.artifact.arch.as_deref(), Some("x86_64"));
+        assert_eq!(linux.sha256.len(), 64);
+        let json = serde_json::to_value(report).unwrap();
+        let first = &json["artifacts"][0];
+        assert!(first["name"].is_string() && first["sha256"].is_string());
+        assert!(first["size"].is_u64());
+    }
+
+    #[cfg(feature = "schema")]
+    #[test]
+    fn the_report_schema_requires_only_fields_the_report_always_has() {
+        let root = sigstore::trusted_root(None).unwrap();
+        let ok =
+            verify_forge(HK, &Expected::new("github.com/jdx/hk"), options(&root), &[]).unwrap();
+        let report = serde_json::to_value(&ok.verified).unwrap();
+        // hk pins its workflow, so `pin_workflow` is skipped in this report.
+        assert!(report.get("pin_workflow").is_none());
+        let schema = crate::verify_report_schema();
+        for key in schema["required"].as_array().unwrap() {
+            let key = key.as_str().unwrap();
+            assert!(report.get(key).is_some(), "{key} is required but absent");
+        }
+        let artifact_schema = &schema["$defs"]["VerifiedArtifact"]["required"];
+        for key in artifact_schema.as_array().unwrap() {
+            let key = key.as_str().unwrap();
+            assert!(report["artifacts"][0].get(key).is_some(), "{key} absent");
+        }
     }
 
     #[test]

@@ -28,7 +28,7 @@ Then match the verified project and version to what you meant to install. For a 
 - **`--trusted-root <TRUSTED_ROOT>`** — A sigstore trusted_root.json to use instead of the embedded one
 
 ## Output
-- **`-J --json`** — Print the verified report as JSON, with source_repository when the signing certificate records one; for a release list, print the verified list statement
+- **`-J --json`** — Print the verified report as JSON, including every listed artifact with its signed digest and source_repository when the signing certificate records one; for a release list, print the verified list statement
 
 ## Exit Status
 

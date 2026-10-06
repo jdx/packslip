@@ -329,10 +329,12 @@ impl RunWith<BinInfo> for Keygen {
 
 /// Print the JSON schema for a decoded release statement
 ///
-/// Use --releases for the release-list statement schema. These schemas
-/// describe the in-toto payload, not the enclosing sigstore bundle. Both are
-/// published at https://packslip.dev/schema/release-v1.json and
-/// https://packslip.dev/schema/releases-v1.json.
+/// Use --releases for the release-list statement schema, or --report for the
+/// report `verify --json` prints for a release. The statement schemas describe
+/// the in-toto payload, not the enclosing sigstore bundle. All are published
+/// at https://packslip.dev/schema/release-v1.json,
+/// https://packslip.dev/schema/releases-v1.json, and
+/// https://packslip.dev/schema/verify-report-v1.json.
 #[derive(Debug, usage_rs::Args)]
 #[cfg(feature = "schema")]
 struct Schema {
@@ -340,6 +342,9 @@ struct Schema {
     /// schema
     #[usage(long)]
     releases: bool,
+    /// Print the schema of the report `verify --json` prints for a release
+    #[usage(long)]
+    report: bool,
 }
 
 #[cfg(feature = "schema")]
@@ -347,7 +352,9 @@ impl RunWith<BinInfo> for Schema {
     type Output = Result<()>;
 
     fn run_with(self, _: BinInfo) -> Self::Output {
-        let schema = if self.releases {
+        let schema = if self.report {
+            packslip::verify_report_schema()
+        } else if self.releases {
             ReleaseListStatement::schema()
         } else {
             Statement::schema()
@@ -1488,9 +1495,10 @@ struct Verify {
     /// (repeatable)
     #[usage(short = 'a', long)]
     artifact: Vec<PathBuf>,
-    /// Print the verified report as JSON, with source_repository when the
-    /// signing certificate records one; for a release list, print the
-    /// verified list statement
+    /// Print the verified report as JSON, including every listed artifact
+    /// with its signed digest and source_repository when the signing
+    /// certificate records one; for a release list, print the verified list
+    /// statement
     #[usage(short = 'J', long, help_heading = "Output")]
     json: bool,
 }
@@ -1630,14 +1638,7 @@ impl RunWith<BinInfo> for Verify {
                     std::process::exit(1)
                 }
                 if self.json {
-                    #[derive(serde::Serialize)]
-                    struct Report<'a> {
-                        #[serde(flatten)]
-                        verified: &'a packslip::Verified,
-                        #[serde(skip_serializing_if = "Option::is_none")]
-                        source_repository: Option<&'a sigstore::SourceRepository>,
-                    }
-                    let report = Report {
+                    let report = packslip::VerifyReport {
                         verified: &verified,
                         source_repository: source.as_ref(),
                     };

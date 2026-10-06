@@ -29,6 +29,7 @@ run = [
   "usage generate manpage --file packslip.usage.kdl --out-file packslip.1",
   "target/debug/packslip schema > static/schema/release-v1.json",
   "target/debug/packslip schema --releases > static/schema/releases-v1.json",
+  "target/debug/packslip schema --report > static/schema/verify-report-v1.json",
   # The site renders the spec from its canonical text.
   # Both predicate types must resolve: the list predicate is /releases/v1.
   "{ printf -- '---\ntitle: packslip release/v1 specification\nurl: /release/v1/\naliases:\n  - /releases/v1/\n---\n'; cat docs/spec/packslip.md; } > content/spec.md",

@@ -86,7 +86,7 @@ command's `--help` describes the options it supports.
 - [`packslip keygen [-o --out <OUT>]`](/cli/keygen.md)
 - [`packslip pin [FLAGS] <BUNDLE>`](/cli/pin.md)
 - [`packslip releases <FLAGS>`](/cli/releases.md)
-- [`packslip schema [--releases]`](/cli/schema.md)
+- [`packslip schema [--releases] [--report]`](/cli/schema.md)
 - [`packslip show [--raw] <BUNDLE>`](/cli/show.md)
 - [`packslip verify [FLAGS] <BUNDLE>`](/cli/verify.md)
 - [`packslip version [-J --json]`](/cli/version.md)

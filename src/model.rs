@@ -15,6 +15,10 @@ pub const SCHEMA_URL: &str = "https://packslip.dev/schema/release-v1.json";
 /// Where the JSON schema for [`ReleaseListStatement`] is published.
 pub const RELEASES_SCHEMA_URL: &str = "https://packslip.dev/schema/releases-v1.json";
 
+/// Where the JSON schema for [`crate::VerifyReport`], the report `verify --json`
+/// prints for a release, is published.
+pub const VERIFY_REPORT_SCHEMA_URL: &str = "https://packslip.dev/schema/verify-report-v1.json";
+
 /// What the specification has no field for, keyed by who defines it: a
 /// consumer by its name (`mise`), a vendor by a domain it controls
 /// (`example.com`). packslip assigns no meaning to anything inside, so a
@@ -1763,6 +1767,29 @@ impl ReleaseListStatement {
         set_schema_id(&mut schema, RELEASES_SCHEMA_URL);
         schema
     }
+}
+
+/// The JSON schema of the report `verify --json` prints for a release.
+#[cfg(feature = "schema")]
+pub fn verify_report_schema() -> serde_json::Value {
+    // The report is only ever written, so describe what it serializes: a field
+    // skipped when empty or true is not required.
+    let generator = schemars::generate::SchemaSettings::default()
+        .for_serialize()
+        .into_generator();
+    let mut schema =
+        serde_json::to_value(generator.into_root_schema_for::<crate::VerifyReport<'_>>())
+            .expect("schema serialises");
+    // `Artifact::format` is `Option` only so `validate` can name a document that
+    // omits it; a verified report is built after `validate`, so it always has one.
+    if let Some(required) = schema
+        .pointer_mut("/$defs/VerifiedArtifact/required")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        required.push("format".into());
+    }
+    set_schema_id(&mut schema, VERIFY_REPORT_SCHEMA_URL);
+    schema
 }
 
 /// Name a generated schema by the URL it is published at, so a
