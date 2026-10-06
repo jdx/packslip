@@ -201,7 +201,6 @@
       "required": [
         "name",
         "size",
-        "format",
         "sha256"
       ],
       "type": "object"
@@ -317,7 +316,6 @@
     "published_at",
     "scheme",
     "key_id",
-    "pin_workflow",
     "attested_by",
     "prerelease",
     "provenance_linked",
@@ -325,8 +323,6 @@
     "artifact_count",
     "checked_assets",
     "asset_count",
-    "resources",
-    "requires",
     "artifacts"
   ],
   "title": "Verified",

@@ -477,6 +477,27 @@ mod tests {
         assert!(first["size"].is_u64());
     }
 
+    #[cfg(feature = "schema")]
+    #[test]
+    fn the_report_schema_requires_only_fields_the_report_always_has() {
+        let root = sigstore::trusted_root(None).unwrap();
+        let ok =
+            verify_forge(HK, &Expected::new("github.com/jdx/hk"), options(&root), &[]).unwrap();
+        let report = serde_json::to_value(&ok.verified).unwrap();
+        // hk pins its workflow, so `pin_workflow` is skipped in this report.
+        assert!(report.get("pin_workflow").is_none());
+        let schema = crate::verify_report_schema();
+        for key in schema["required"].as_array().unwrap() {
+            let key = key.as_str().unwrap();
+            assert!(report.get(key).is_some(), "{key} is required but absent");
+        }
+        let artifact_schema = &schema["$defs"]["VerifiedArtifact"]["required"];
+        for key in artifact_schema.as_array().unwrap() {
+            let key = key.as_str().unwrap();
+            assert!(report["artifacts"][0].get(key).is_some(), "{key} absent");
+        }
+    }
+
     #[test]
     fn a_published_release_verifies_by_repository_id() {
         let root = sigstore::trusted_root(None).unwrap();

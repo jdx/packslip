@@ -1772,8 +1772,13 @@ impl ReleaseListStatement {
 /// The JSON schema of the report `verify --json` prints for a release.
 #[cfg(feature = "schema")]
 pub fn verify_report_schema() -> serde_json::Value {
-    let mut schema =
-        serde_json::to_value(schemars::schema_for!(crate::Verified)).expect("schema serialises");
+    // The report is only ever written, so describe what it serializes: a field
+    // skipped when empty or true is not required.
+    let generator = schemars::generate::SchemaSettings::default()
+        .for_serialize()
+        .into_generator();
+    let mut schema = serde_json::to_value(generator.into_root_schema_for::<crate::Verified>())
+        .expect("schema serialises");
     set_schema_id(&mut schema, VERIFY_REPORT_SCHEMA_URL);
     schema
 }
