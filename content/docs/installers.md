@@ -63,6 +63,33 @@ selection, tag parsing, statement validation, forge identity, and signer
 fingerprints against the
 [conformance vectors](https://github.com/jdx/packslip/tree/main/tests/conformance).
 
+## Use private hosts and mirrors
+
+Trust comes from the signature, the signer policy, and the signed digests,
+never from where a file was downloaded. `packslip verify` makes no network
+requests, so it works the same on a private host, an enterprise mirror, or
+a file copied across an air gap. What the caller handles:
+
+| Concern | Who handles it |
+| --- | --- |
+| Fetching the bundle and artifacts, credentials, proxies, and caching | You, when you call `verify` or the library. `packslip install` handles it itself, as the next paragraph says. |
+| Keeping the file name the release published | You. `--artifact` matches by name, and a mirror that renames files fails with `not listed in the document`. |
+| Trusting the signer | You, with the same pin as for the origin. A mirror holding the vendor's unmodified bundle and files adds no new signer. |
+| Freshness | You. Copy the signed release list and bundles together, and refuse an expired or older list as [consumer rule 5](/release/v1/#consumer-rules) says; a mirror that goes stale serves old, still validly signed releases. |
+
+`packslip install` downloads each file only from the HTTPS `url` the signed
+statement gives and has no setting that replaces it with a mirror's URL. For
+a private host, scope a credential to its exact origin in `config.toml`, as
+[Install a tool](/docs/bootstrap/) shows. To serve a release from your own
+host, either have your tooling download from the mirror and verify with
+`packslip verify --artifact`, or publish the release under your own project
+name and signing identity. The second option is a repackager document
+(`attested_by: repackager`) that carries the vendor's digests with your
+URLs, as the [specification](/release/v1/#repackager-attestation)
+describes. A consumer that already holds the vendor's document for the
+project refuses to replace it with a repackager one without a person's
+approval.
+
 ## Follow the consumer rules
 
 The steps above are the main path. The
