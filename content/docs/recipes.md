@@ -240,13 +240,15 @@ dist/mytool-1.2.3-windows-x64.zip
 ```
 
 ```sh
-packslip create --project example.com/mytool --version 1.2.3 \
+packslip create --key release.key --no-log \
+  --project example.com/mytool --version 1.2.3 \
   --url-base https://downloads.example.com/v1.2.3 \
   --out packslip dist/*
 ```
 
 This example signs with `--key release.key` and `--no-log` so it runs
-anywhere; in CI, omit both to sign keylessly. Check the inference with
+anywhere, so `verify` below needs `--allow-unlogged`. In CI, omit all three
+to sign keylessly and keep the transparency-log entry. Check the inference with
 `packslip show packslip/packslip.sigstore.json` before publishing. For this
 release it records:
 
@@ -262,7 +264,7 @@ bundle and files to the build host, keeping their names, and pass each
 file:
 
 ```sh
-packslip verify packslip.sigstore.json --pubkey release.pub \
+packslip verify packslip.sigstore.json --pubkey release.pub --allow-unlogged \
   --artifact mytool-1.2.3-linux-x64.tar.gz \
   --artifact mytool-1.2.3-linux-arm64.tar.gz \
   --artifact mytool-1.2.3-darwin-arm64.tar.gz \
