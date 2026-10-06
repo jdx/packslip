@@ -63,6 +63,40 @@ selection, tag parsing, statement validation, forge identity, and signer
 fingerprints against the
 [conformance vectors](https://github.com/jdx/packslip/tree/main/tests/conformance).
 
+## Use private hosts and mirrors
+
+Trust comes from the signature, the signer policy, and the signed digests,
+never from where a file was downloaded. `packslip verify` makes no network
+requests, so it works the same on a private host, an enterprise mirror, or
+a file copied across an air gap. What the caller handles:
+
+| Concern | Who handles it |
+| --- | --- |
+| Fetching the bundle and artifacts, credentials, proxies, and caching | You, when you call `verify` or the library. `packslip install` handles it itself, as the next paragraphs say. |
+| Keeping the file name the release published | You. `--artifact` matches by name, and a mirror that renames files fails with `not listed in the document`. |
+| Trusting the signer | You, with the same pin as for the origin. A mirror holding the vendor's unmodified bundle and files adds no new signer. |
+| Freshness | You. Copy the signed release list and bundles together, and refuse an expired or older list as [consumer rule 5](/release/v1/#consumer-rules) says; a mirror that goes stale serves old, still validly signed releases. |
+
+`packslip install` downloads an artifact from the HTTPS `url` the signed
+statement gives. When the statement gives none, it takes the file from
+beside the bundle, using the bundle's URL with the signed artifact name as
+the last path segment. Either way it checks the file against the signed size
+and digest. It has no setting that replaces a URL with a mirror's. For a
+private host, scope a credential to its exact origin in `config.toml`, as
+[Install a tool](/docs/bootstrap/) shows.
+
+To serve a release from your own host, you have two options:
+
+- Download from the mirror yourself and verify with
+  `packslip verify --artifact`.
+- Publish a repackager document for a vendor that publishes no packslip of
+  its own (`attested_by: repackager`). It still names the vendor's project
+  and carries the vendor's digests, but it has your URLs and is signed with
+  your identity, as the
+  [specification](/release/v1/#repackager-attestation) describes. A
+  consumer that already holds the vendor's document for the project
+  refuses to replace it with a repackager one without a person's approval.
+
 ## Follow the consumer rules
 
 Verification is one part of an install. The [consumer
