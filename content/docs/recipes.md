@@ -243,6 +243,66 @@ can install the application bundle; a CLI-only consumer is not required
 to do so. A packslip signature does not replace platform code signing or
 notarization.
 
+## Several platforms, from release to verification
+
+A release with one archive per platform needs no manifest when the file
+names say the platform. Pass the files and `packslip create` infers each
+one's OS, architecture, and libc, as
+[Select platforms and variants](/docs/describing-releases/#select-platforms-and-variants)
+explains:
+
+```text
+dist/mytool-1.2.3-linux-x64.tar.gz
+dist/mytool-1.2.3-linux-arm64.tar.gz
+dist/mytool-1.2.3-darwin-arm64.tar.gz
+dist/mytool-1.2.3-windows-x64.zip
+```
+
+```sh
+packslip create --key release.key --no-log \
+  --project example.com/mytool --version 1.2.3 \
+  --url-base https://downloads.example.com/v1.2.3 \
+  --out packslip dist/*
+```
+
+This example signs with `--key release.key` and `--no-log` so it runs
+anywhere, so `verify` below needs `--allow-unlogged`. In CI, omit all three
+to sign keylessly and keep the transparency-log entry. Check the inference with
+`packslip show packslip/packslip.sigstore.json` before publishing. For this
+release it records:
+
+| File | `os` | `arch` | `libc` | `format` |
+| --- | --- | --- | --- | --- |
+| `mytool-1.2.3-linux-x64.tar.gz` | `linux` | `x86_64` | `gnu` | `tar.gz` |
+| `mytool-1.2.3-linux-arm64.tar.gz` | `linux` | `aarch64` | `gnu` | `tar.gz` |
+| `mytool-1.2.3-darwin-arm64.tar.gz` | `darwin` | `aarch64` | none | `tar.gz` |
+| `mytool-1.2.3-windows-x64.zip` | `windows` | `x86_64` | none | `zip` |
+
+Deployment tooling can then check all four files in one call. Copy the
+bundle and files to the build host, keeping their names, and pass each
+file:
+
+```sh
+packslip verify packslip.sigstore.json --pubkey release.pub --allow-unlogged \
+  --artifact mytool-1.2.3-linux-x64.tar.gz \
+  --artifact mytool-1.2.3-linux-arm64.tar.gz \
+  --artifact mytool-1.2.3-darwin-arm64.tar.gz \
+  --artifact mytool-1.2.3-windows-x64.zip
+```
+
+```text
+ok: example.com/mytool 1.2.3 published 2026-10-06T15:05:23Z signed by BEA040B74F3FAC9E (sigstore-key) unlogged (4 of 4 artifact(s) checked)
+```
+
+`4 of 4` shows every platform's file was supplied and matched. A deploy
+that stages only one platform passes just that file and sees `1 of 4`.
+For a monorepo, run the same `create` and `verify` once per tool: each
+tool has its own bundle and `project`, and a `--pin` or identity prefix for
+the repository applies to every tool, so check the verified `project`
+names the tool you meant. If you need the verified metadata instead of
+a pass or fail, see
+[Verify a release](/docs/verifying/#check-every-file-you-use).
+
 ## Add build provenance
 
 Build provenance describes how an artifact was built. `release.toml`
