@@ -135,9 +135,9 @@ jobs:
             --json number --jq '.[0].number // empty')
           if [ -z "$pr" ]; then
             gh pr create --head "$RELEASE_BRANCH" --base main \
-              --title "$title" --body "$body"
+              --title "$title" --body "$body" --label release
           else
-            gh pr edit "$pr" --title "$title" --body "$body"
+            gh pr edit "$pr" --title "$title" --body "$body" --add-label release
           fi
 
   # Publishes to crates.io and pushes the tag once a release PR has been
