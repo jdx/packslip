@@ -1,4 +1,6 @@
 [workspace]
+# Label the release PR so it is easy to find and filter.
+pr_labels = ["release"]
 # release.yml creates the GitHub release from the tag and attaches the
 # binaries; release-plz owns the version bump, changelog, tag, and
 # crates.io publish. Letting both create the release would race.
