@@ -550,3 +550,16 @@ jobs:
     permissions:
       contents: read
       id-token: write
+
+  comment-release-fixes:
+    needs: release
+    if: ${{ !cancelled() && needs.release.result == 'success' && github.ref_type == 'tag' }}
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: write
+      discussions: write
+    uses: jdx/workflows/.github/workflows/comment-release-fixes.yml@652dd92c36927734924fcfe25d7a6bae33c06efc
+    with:
+      tag: ${{ github.ref_name }}
+      marker_prefix: packslip-fixed-in
