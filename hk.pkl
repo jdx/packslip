@@ -14,6 +14,15 @@ local linters = new Mapping<String, Step> {
         fix = "cargo clippy -q --no-default-features --all-targets --fix --allow-dirty --allow-staged -- -D warnings"
     }
     ["shellcheck"] = Builtins.shellcheck
+    // lints GitHub Actions workflows (jdx/jactionlint, a maintained actionlint fork)
+    ["jactionlint"] {
+        glob = List(".github/workflows/*.yml", ".github/workflows/*.yaml")
+        batch = true
+        check = new CommandSpec {
+            command = "jactionlint {{ files }}"
+            effect = "read"
+        }
+    }
 }
 
 fail_fast = false
