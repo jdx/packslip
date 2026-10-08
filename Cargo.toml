@@ -106,7 +106,7 @@ toml = { version = "1", optional = true }
 x509-cert = { version = "0.3", default-features = false }
 zip = { version = "8", default-features = false, features = ["deflate"], optional = true }
 # usage-rs derives scan this table line by line for the alias below.
-usage_rs = { package = "usage-rs", version = "6", features = ["completions"], optional = true }
+usage_rs = { package = "usage-rs", version = "7", features = ["completions"], optional = true }
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["fs", "process"], optional = true }
