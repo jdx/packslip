@@ -31,6 +31,7 @@ concurrency:
 jobs:
   release-commit:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     outputs:
       sha: ${{ steps.release.outputs.sha }}
     steps:

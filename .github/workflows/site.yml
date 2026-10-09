@@ -12,15 +12,19 @@ on:
 permissions:
   contents: read
 
+# A deployment in flight finishes; only the newest waiting run follows it.
 concurrency:
   group: site
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       # Hugo comes from mise.toml, like the docs check in CI, so the deploy
       # builds with the version that was validated.
       - uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
@@ -49,6 +53,7 @@ jobs:
   # Hugo build never holds it back.
   installer:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

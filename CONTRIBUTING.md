@@ -149,8 +149,9 @@ Windows x64 and ARM64. Its `image` job builds the container image with
 runs it alone. The `signing` job runs only on pushes to `main`, where a CI
 identity is available. It signs both keylessly and with a key, records
 both signatures in the public Rekor log, and runs the releases action.
-zizmor audits the workflows on every pull request, as a job in `ci.yml`.
-The `final` job in `ci.yml` gates on `test`, `signing`, and `zizmor`; make it
+jactionlint lints the workflows with its default profile on every pull request,
+through the `jactionlint` hk step; run `hk fix --all` to apply its safe fixes.
+The `final` job in `ci.yml` gates on `test`, `signing`, and the other jobs; make it
 the required status check. The pull request title check stays in its own
 workflow, `conventional-commits.yml`, because it runs on `pull_request_target`.
 

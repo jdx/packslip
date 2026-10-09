@@ -36,6 +36,7 @@ jobs:
   release-commit:
     if: github.event_name != 'schedule' || vars.PACKAGE_REPOSITORIES_ENABLED == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     outputs:
       sha: ${{ steps.release.outputs.sha }}
       tag: ${{ steps.release.outputs.tag }}
