@@ -9,11 +9,17 @@ on:
   push:
     branches: ["renovate/**"]
 
-permissions:
-  contents: write
+permissions: {}
+
+concurrency:
+  # Not "mise-lock-<ref>": the called workflow uses that group for its own job.
+  group: mise-lock-caller-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   mise-lock:
+    permissions:
+      contents: write
     uses: jdx/renovate-config/.github/workflows/mise-lock.yml@d0f85cba63adc5a26194009e76eebcf5bc1ee823 # v1.0.2
     with:
       # ci.yml runs `mise run render` and fails if it produces a diff, so a

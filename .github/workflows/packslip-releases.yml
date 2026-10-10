@@ -33,6 +33,7 @@ concurrency:
 jobs:
   list:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       id-token: write
@@ -43,6 +44,8 @@ jobs:
       AWS_ENDPOINT_URL: https://6e243906ff257b965bcae8025c2fc344.r2.cloudflarestorage.com
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       # The checkout above is the ref that triggered the run, which the
       # action needs to be the version released with. For a post-release run
       # that is the tag, cut before a withdrawal merged during the release

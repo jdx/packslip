@@ -36,6 +36,7 @@ jobs:
   release-commit:
     if: github.event_name != 'schedule' || vars.PACKAGE_REPOSITORIES_ENABLED == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     outputs:
       sha: ${{ steps.release.outputs.sha }}
       tag: ${{ steps.release.outputs.tag }}
@@ -95,7 +96,7 @@ jobs:
           version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
           test "$RELEASE_TAG" = "v$version"
           scripts/build-repository-installer.sh "$BUILD_TARGET" repository-installer
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: repository-installer-${{ matrix.arch }}
           path: repository-installer/*
@@ -110,7 +111,7 @@ jobs:
         with:
           ref: ${{ needs.release-commit.outputs.sha }}
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: repository-installer-*
           path: installers
@@ -122,7 +123,7 @@ jobs:
           for arch in x64 arm64; do
             scripts/package-binary.sh "installers/repository-installer-$arch" "$arch" packages
           done
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: repository-packages
           path: packages/*
@@ -138,7 +139,7 @@ jobs:
         with:
           ref: ${{ needs.release-commit.outputs.sha }}
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: repository-packages
           path: packages
