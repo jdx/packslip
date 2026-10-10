@@ -7,7 +7,7 @@ mr-boxington = { version = "latest", minimum_release_age = "0s" }
 communique = { version = "latest", minimum_release_age = "0s" }
 hk = { version = "latest", minimum_release_age = "0s" }
 hugo = "0.167.0"
-jactionlint = "2.1.0"
+jactionlint = "latest"
 shellcheck = "0.11.0"
 usage = { version = "latest", minimum_release_age = "0s" }
 
