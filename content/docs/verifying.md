@@ -57,6 +57,12 @@ what it names. Pass `--issuer` together with `--identity-prefix` or
 `--identity`: `--issuer` alone accepts a workflow of any repository on
 that forge.
 
+For a release signed through a reusable workflow of another repository,
+the signing identity names that workflow, not the project's repository.
+Pass `--source-repository https://github.com/owner/repo` with `--issuer`
+instead of an identity flag: the certificate must record that repository
+as its source, whichever workflow signed.
+
 To pin one workflow file, extend the prefix through its `@`:
 `--identity-prefix https://github.com/owner/repo/.github/workflows/release.yml@`.
 `--identity` takes one exact certificate identity, which includes the

@@ -409,7 +409,9 @@ runs:
 
     # The pin is spelled out rather than derived from the project name, so
     # a project named after its own host verifies the same way a GitHub
-    # one does: this repository's workflows, through GitHub's issuer.
+    # one does. It names the repository, not a workflow, because the action
+    # may run inside a reusable workflow of another repository: the
+    # certificate's source repository is still this one.
     - name: Verify what was written
       shell: bash
       env:
@@ -418,7 +420,7 @@ runs:
         SERVER: ${{ github.server_url }}
       run: |
         packslip verify "$BUNDLE" \
-          --identity-prefix "${SERVER}/${REPO}/" \
+          --source-repository "${SERVER}/${REPO}" \
           --issuer https://token.actions.githubusercontent.com
 
     # `--repo` is not optional here: without it `gh` asks git which repository

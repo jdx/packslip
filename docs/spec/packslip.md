@@ -315,8 +315,11 @@ or GitLab CI job, from the job's OIDC token:
 
 Each extension value is a DER UTF8String. An empty value means the forge
 supplied none. For these IDs to authenticate a packslip, the Source
-Repository URI must identify the repository named by `project`, and the
-signer must be a workflow of that repository.
+Repository URI must identify the repository named by `project`. That URI
+names the repository whose run requested the certificate, whichever
+workflow signed, so the signer may be a reusable workflow of another
+repository. Only a certificate that records no Source Repository URI falls
+back to requiring the signer to be a workflow of the named repository.
 
 The owner extensions record who owned the repository when the certificate
 was issued. They are not part of the project's identity: consumers neither
@@ -464,7 +467,8 @@ itself:
    through another issuer, and it is refused.
 3. Apply [Repository identity and renames](#repository-identity-and-renames)
    as for any release: the certificate's Source Repository URI must be the
-   repository the statement names, and the signer a workflow of it. The
+   repository the statement names (or, without one, the signer a workflow
+   of it). The
    fingerprint says which repository; these say the statement is about it.
 
 The consumer refuses a malformed pin rather than ignoring it or treating

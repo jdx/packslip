@@ -77,7 +77,7 @@ guides cover what a release needs beyond the action's defaults.
 | Term | Meaning |
 | --- | --- |
 | Project | The name a consumer asks for: a host and optional path with no URL scheme, such as `github.com/owner/repo` or `mytool.example.com`. |
-| Forge | A code host whose project names also say who is expected to sign: github.com or gitlab.com. A release of `github.com/owner/repo` is expected to be signed by a workflow of that repository. |
+| Forge | A code host whose project names also say who is expected to sign: github.com or gitlab.com. A release of `github.com/owner/repo` is expected to be signed by that repository's CI, normally one of its workflows. |
 | Vendor | A project that builds and signs its own releases, as opposed to a repackager, such as a mirror, that signs a document for another vendor's files. |
 | Consumer | Software that verifies or installs releases from their packslips, such as a package manager or a mirror. |
 | Artifact | A release file the statement lists for a consumer to select and download, such as an archive, installer, bare executable, or source tarball. Files that ship for another purpose, such as an SBOM or a man page, are resources; a file that is neither, such as a checksum file, is left out of the statement. |

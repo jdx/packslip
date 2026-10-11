@@ -275,11 +275,12 @@ make them refuse it.
   same signer. A bundle signed from another file, such as a backfill
   workflow, looks like a changed signer, and consumers refuse it until a
   person approves it. A reusable workflow in your own repository is fine:
-  every job that calls it signs as that one file. If the action runs inside
-  a reusable workflow hosted in another repository, the certificate
-  identity names that repository, so the action's own verification fails.
-  Consumers, which accept only your repository's workflows, would refuse
-  the bundle anyway.
+  every job that calls it signs as that one file. A reusable workflow
+  hosted in another repository also works: the certificate's identity
+  names that repository's workflow, but its source repository is still
+  yours, and the action and consumers check the source repository. Consumers
+  then compare that workflow's path, so moving from a workflow of your own
+  to a shared one is a changed signer that a person approves once.
 - **Keep provenance.** Consumers refuse a release that drops the
   per-artifact provenance the previous release carried. Once you publish
   with `attest: true` or `link`, do not switch to `attest: false`, and

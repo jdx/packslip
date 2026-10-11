@@ -396,7 +396,7 @@ fn forge_policy(bundle: &str, expected: &forge::Expected<'_>) -> Result<Policy, 
 /// Verify a GitHub or GitLab project's packslip under the policy its forge
 /// implies, then check that it was signed by the repository the consumer
 /// expected, by the forge's immutable repository ID where the certificate
-/// and the consumer's pin or forge lookup give one ([`forge::check`]). A
+/// and the consumer's pin or forge lookup give one ([`forge::check_source`]). A
 /// renamed or transferred repository's releases verify under the new name,
 /// and its older releases under the old one; a recreated name does not.
 ///
@@ -412,7 +412,7 @@ pub fn verify_forge(
     let policy = forge_policy(bundle, expected)?;
     let verified = verify(bundle, &Trust::Identity(&policy), options, artifacts)?;
     let source = sigstore::source_repository(bundle).map_err(Error::from)?;
-    let check = forge::check(
+    let check = forge::check_source(
         expected,
         &verified.project,
         &verified.key_id,
@@ -432,7 +432,7 @@ pub fn verify_forge_release_list(
     let policy = forge_policy(bundle, expected)?;
     let verified = verify_release_list(bundle, &Trust::Identity(&policy), options)?;
     let source = sigstore::source_repository(bundle).map_err(Error::from)?;
-    let check = forge::check(
+    let check = forge::check_source(
         expected,
         &verified.list.predicate.project,
         &verified.key_id,

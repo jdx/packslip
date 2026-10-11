@@ -562,20 +562,26 @@ fn workflow_path(identity: &str) -> Option<(&str, &str)> {
 }
 
 /// The signer policy to verify a forge project's bundle with, given the
-/// project the (not yet verified) statement names. A statement for another
-/// repository on the same forge, with the same monorepo subpath, is
-/// verified under its own repository's policy so that [`check`] can then
-/// decide whether it is the expected repository renamed; anything else
-/// under the requested project's. None when the requested project is not
-/// on a forge. The policy alone accepts any repository that signs for the
-/// name it claims: never use it without [`check`].
+/// project the (not yet verified) statement names: the forge's issuer
+/// alone. A statement for another repository on the same forge, with the
+/// same monorepo subpath, is verified under its own forge so that
+/// [`check_source`] can then decide whether it is the expected repository
+/// renamed; anything else under the requested project's. None when the
+/// requested project is not on a forge. The policy alone accepts any
+/// signer the forge's issuer vouches for: never use it without
+/// [`check_source`], which binds the release to the project through the
+/// certificate's source repository.
 pub fn policy(requested: &str, signed_project: &str) -> Option<Policy> {
     let want = ForgeName::parse(requested)?;
     let target = match ForgeName::parse(signed_project) {
-        Some(got) if got.host == want.host && got.subpath == want.subpath => signed_project,
-        _ => requested,
+        Some(got) if got.host == want.host && got.subpath == want.subpath => got,
+        _ => want,
     };
-    Policy::for_project(target)
+    Some(Policy {
+        issuer: Some(target.issuer().to_string()),
+        identity: None,
+        identity_prefix: None,
+    })
 }
 
 /// Classify a verified release of a forge project against what the
@@ -1321,26 +1327,25 @@ mod tests {
     }
 
     #[test]
-    fn the_verification_policy_follows_the_signed_name_on_the_same_forge() {
-        let renamed = policy("github.com/jdx/hk", "github.com/jdx/hook").unwrap();
-        assert_eq!(
-            renamed.identity_prefix.as_deref(),
-            Some("https://github.com/jdx/hook/")
-        );
-        assert_eq!(renamed.issuer.as_deref(), Some(GITHUB_ISSUER));
-        for other in [
-            "github.com/jdx/hook/tool",
-            "gitlab.com/jdx/hook",
-            "mise.jdx.dev",
-            "",
-        ] {
-            let p = policy("github.com/jdx/hk", other).unwrap();
-            assert_eq!(
-                p.identity_prefix.as_deref(),
-                Some("https://github.com/jdx/hk/"),
-                "{other}"
+    fn the_verification_policy_is_the_forges_issuer_alone() {
+        // The signing workflow may belong to another repository, so the
+        // policy names no identity: `check_source` binds the release to the
+        // project through the certificate's source repository.
+        for signed in ["github.com/jdx/hook", "github.com/jdx/hook/tool"] {
+            let p = policy("github.com/jdx/hk", signed).unwrap();
+            assert_eq!(p.issuer.as_deref(), Some(GITHUB_ISSUER));
+            assert!(
+                p.identity.is_none() && p.identity_prefix.is_none(),
+                "{signed}"
             );
         }
+        // A name on another forge or off any forge never selects its issuer.
+        for other in ["gitlab.com/jdx/hook", "mise.jdx.dev", ""] {
+            let p = policy("github.com/jdx/hk", other).unwrap();
+            assert_eq!(p.issuer.as_deref(), Some(GITHUB_ISSUER), "{other}");
+        }
+        let gitlab = policy("gitlab.com/group/proj", "gitlab.com/group/proj").unwrap();
+        assert_eq!(gitlab.issuer.as_deref(), Some(GITLAB_ISSUER));
         assert!(policy("mise.jdx.dev", "github.com/jdx/hk").is_none());
     }
 
