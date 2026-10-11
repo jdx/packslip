@@ -500,7 +500,7 @@ Verify a packslip, or a release list, against a pinned identity or key
 
 Check the signature, log evidence, and statement structure. With \-\-artifact, also check local files against signed digests and artifact sizes. Without it, only the bundle is checked. Nothing is downloaded: remote artifacts and linked provenance are not fetched.
 
-Choose what to trust. By default, the identity policy comes from the project the document claims, if it is on github.com or gitlab.com: that forge's issuer and any workflow of that repository. Any other project needs \-\-pubkey or an identity flag. For a keyless release, \-\-issuer with \-\-identity\-prefix (any workflow of a repository, such as https://github.com/owner/repo/) or \-\-identity (one exact certificate identity, including its ref) replaces the derived policy, and only the flags you pass are checked: \-\-issuer alone accepts any signer from that issuer. For a key\-signed release, pass \-\-pubkey. \-\-pin adds a check on top of the identity policy: the signing repository must have that signer fingerprint.
+Choose what to trust. By default, the identity policy comes from the project the document claims, if it is on github.com or gitlab.com: that forge's issuer and any workflow of that repository. Any other project needs \-\-pubkey or an identity flag. For a keyless release, \-\-issuer with \-\-identity\-prefix (any workflow of a repository, such as https://github.com/owner/repo/) or \-\-identity (one exact certificate identity, including its ref) replaces the derived policy, and only the flags you pass are checked: \-\-issuer alone accepts any signer from that issuer. For a release signed through another repository's reusable workflow, \-\-issuer with \-\-source\-repository requires the certificate to record that repository as its source, whichever workflow signed. For a key\-signed release, pass \-\-pubkey. \-\-pin adds a check on top of the identity policy: the signing repository must have that signer fingerprint.
 
 Then match the verified project and version to what you meant to install. For a release list, the command does not check the expiry or compare the sequence with an earlier list. See https://packslip.dev/docs/verifying/.
 .PP
@@ -520,6 +520,9 @@ A prefix the certificate identity must start with, such as https://github.com/ow
 .TP
 \fB\-\-issuer\fR \fI<ISSUER>\fR
 The OIDC issuer a keyless signer must have; pass it with \-\-identity or \-\-identity\-prefix, since alone it accepts any signer from that issuer
+.TP
+\fB\-\-source\-repository\fR \fI<SOURCE_REPOSITORY>\fR
+The repository the signing certificate must record as its source, such as https://github.com/owner/repo, whichever workflow signed; for a release signed through another repository's reusable workflow. Needs \-\-issuer, and replaces \-\-identity and \-\-identity\-prefix
 .TP
 \fB\-\-pin\fR \fI<PIN>\fR
 The signer fingerprint (ps1_...) the certificate's repository must have, as `packslip pin` prints it

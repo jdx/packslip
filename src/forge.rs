@@ -439,6 +439,9 @@ pub struct Check {
     /// repository is the one expected.
     by_id: bool,
     pin_workflow: bool,
+    /// The names of the projects the consumer's pins recorded, which a
+    /// renamed project's earlier signers were workflows of.
+    previous_projects: Vec<String>,
 }
 
 impl Check {
@@ -471,7 +474,34 @@ impl Check {
             };
             return before.0 == now.0 && (self.by_id || before == now);
         }
-        same_workflow(previous, pin, &self.identity, pin)
+        // A release signed through a shared workflow needs `previous` to be a
+        // workflow of that repository. One signed by the project's own
+        // workflow needs `previous` to be the project's too, under the name
+        // of any pin the consumer holds, since a rename is not a shared
+        // workflow. Without a pin to name the project's earlier names,
+        // nothing tells the two apart, so only the first direction is held.
+        if let (Some(pin), Some(before)) = (pin, repository_of(previous)) {
+            match external_signer(&self.identity, pin) {
+                Some(shared) => {
+                    if before != shared {
+                        return false;
+                    }
+                }
+                None => {
+                    let own = |name: &str| {
+                        ForgeName::parse(name)
+                            .is_some_and(|name| (name.host, name.repository) == before)
+                    };
+                    if !self.previous_projects.is_empty()
+                        && !own(&pin.project)
+                        && !self.previous_projects.iter().any(|name| own(name))
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+        same_path(previous, pin, &self.identity, pin)
     }
 
     /// Whether the verified release asks consumers to hold later releases
@@ -503,9 +533,27 @@ impl Check {
 /// and the workflow has the same path inside the repository, so a rename or
 /// a transfer keeps the signer. A changed repository ID is a
 /// different signer even under the same identity: that is what a recreated
-/// name looks like. Without both pins, the identities must be the same
-/// apart from a workflow's ref.
+/// name looks like. A workflow of another repository, such as a shared
+/// reusable workflow, is the same signer only as a workflow of that
+/// repository, whatever its path. Without both pins, the identities must be
+/// the same apart from a workflow's ref.
 pub fn same_workflow(
+    previous: &str,
+    previous_pin: Option<&ForgePin>,
+    current: &str,
+    current_pin: Option<&ForgePin>,
+) -> bool {
+    if let (Some(before), Some(now)) = (previous_pin, current_pin)
+        && external_signer(previous, before) != external_signer(current, now)
+    {
+        return false;
+    }
+    same_path(previous, previous_pin, current, current_pin)
+}
+
+/// [`same_workflow`] without the check that both signers are the project's
+/// own or one shared repository's.
+fn same_path(
     previous: &str,
     previous_pin: Option<&ForgePin>,
     current: &str,
@@ -521,6 +569,18 @@ pub fn same_workflow(
         }
         _ => without_ref(previous) == without_ref(current),
     }
+}
+
+/// The repository of a reusable workflow that signed for the project `pin`
+/// names, when it is not the project's own. A path inside that repository
+/// says nothing about the project's workflows, so signers are the same only
+/// when both are the project's own or both are workflows of one shared
+/// repository. A shared repository that is renamed is a changed signer, as
+/// nothing here can tell its rename from another repository.
+fn external_signer<'a>(identity: &'a str, pin: &ForgePin) -> Option<(&'a str, &'a str)> {
+    let signer = repository_of(identity)?;
+    let project = ForgeName::parse(&pin.project)?;
+    (signer != (project.host, project.repository)).then_some(signer)
 }
 
 /// A workflow identity without the ref after its last `@`. Only a URL
@@ -562,20 +622,26 @@ fn workflow_path(identity: &str) -> Option<(&str, &str)> {
 }
 
 /// The signer policy to verify a forge project's bundle with, given the
-/// project the (not yet verified) statement names. A statement for another
-/// repository on the same forge, with the same monorepo subpath, is
-/// verified under its own repository's policy so that [`check`] can then
-/// decide whether it is the expected repository renamed; anything else
-/// under the requested project's. None when the requested project is not
-/// on a forge. The policy alone accepts any repository that signs for the
-/// name it claims: never use it without [`check`].
+/// project the (not yet verified) statement names: the forge's issuer
+/// alone. A statement for another repository on the same forge, with the
+/// same monorepo subpath, is verified under its own forge so that
+/// [`check_source`] can then decide whether it is the expected repository
+/// renamed; anything else under the requested project's. None when the
+/// requested project is not on a forge. The policy alone accepts any
+/// signer the forge's issuer vouches for: never use it without
+/// [`check_source`], which binds the release to the project through the
+/// certificate's source repository.
 pub fn policy(requested: &str, signed_project: &str) -> Option<Policy> {
     let want = ForgeName::parse(requested)?;
     let target = match ForgeName::parse(signed_project) {
-        Some(got) if got.host == want.host && got.subpath == want.subpath => signed_project,
-        _ => requested,
+        Some(got) if got.host == want.host && got.subpath == want.subpath => got,
+        _ => want,
     };
-    Policy::for_project(target)
+    Some(Policy {
+        issuer: Some(target.issuer().to_string()),
+        identity: None,
+        identity_prefix: None,
+    })
 }
 
 /// Classify a verified release of a forge project against what the
@@ -724,6 +790,7 @@ fn check_inner(
         identity: identity.to_string(),
         by_id,
         pin_workflow: true,
+        previous_projects: pins.iter().map(|(pin, _)| pin.project.clone()).collect(),
     })
 }
 
@@ -1160,6 +1227,60 @@ mod tests {
     }
 
     #[test]
+    fn a_shared_workflow_at_the_same_path_is_not_the_projects_own_signer() {
+        let pin = pin();
+        let expected = Expected::new("github.com/jdx/hk").pinned(Some(&pin));
+        let shared = "https://github.com/jdx/shared/.github/workflows/release.yml@refs/tags/v1";
+        let ok = check_source(
+            &expected,
+            "github.com/jdx/hk",
+            shared,
+            Some(GITHUB_ISSUER),
+            Some(&hk()),
+        )
+        .unwrap();
+        assert!(ok.continues_signer(shared));
+        assert!(ok.continues_signer(
+            "https://github.com/jdx/shared/.github/workflows/release.yml@refs/tags/v0"
+        ));
+        assert!(!ok.continues_signer("https://github.com/jdx/hk/.github/workflows/release.yml"));
+        assert!(!ok.continues_signer("https://github.com/jdx/other/.github/workflows/release.yml"));
+
+        // Moving off a shared workflow is a changed signer too, but a rename
+        // of the project is not, under the name a pin recorded.
+        let own_signer = "https://github.com/jdx/hk/.github/workflows/release.yml@refs/tags/v2";
+        let own = check_source(
+            &expected,
+            "github.com/jdx/hk",
+            own_signer,
+            Some(GITHUB_ISSUER),
+            Some(&hk()),
+        )
+        .unwrap();
+        assert!(!own.continues_signer(
+            "https://github.com/jdx/shared/.github/workflows/release.yml@refs/tags/v1"
+        ));
+        assert!(own.continues_signer(
+            "https://github.com/jdx/hk/.github/workflows/release.yml@refs/tags/v1"
+        ));
+        let old = ForgePin::of("github.com/jdx/old-hk", "922514152");
+        let renamed = check_source(
+            &Expected::new("github.com/jdx/hk").pinned(Some(&old)),
+            "github.com/jdx/hk",
+            own_signer,
+            Some(GITHUB_ISSUER),
+            Some(&hk()),
+        )
+        .unwrap();
+        assert!(renamed.continues_signer(
+            "https://github.com/jdx/old-hk/.github/workflows/release.yml@refs/tags/v1"
+        ));
+        assert!(!renamed.continues_signer(
+            "https://github.com/jdx/shared/.github/workflows/release.yml@refs/tags/v1"
+        ));
+    }
+
+    #[test]
     fn the_signer_and_certificate_must_belong_to_the_named_repository() {
         let pin = pin();
         let expected = Expected::new("github.com/jdx/hk").pinned(Some(&pin));
@@ -1321,26 +1442,25 @@ mod tests {
     }
 
     #[test]
-    fn the_verification_policy_follows_the_signed_name_on_the_same_forge() {
-        let renamed = policy("github.com/jdx/hk", "github.com/jdx/hook").unwrap();
-        assert_eq!(
-            renamed.identity_prefix.as_deref(),
-            Some("https://github.com/jdx/hook/")
-        );
-        assert_eq!(renamed.issuer.as_deref(), Some(GITHUB_ISSUER));
-        for other in [
-            "github.com/jdx/hook/tool",
-            "gitlab.com/jdx/hook",
-            "mise.jdx.dev",
-            "",
-        ] {
-            let p = policy("github.com/jdx/hk", other).unwrap();
-            assert_eq!(
-                p.identity_prefix.as_deref(),
-                Some("https://github.com/jdx/hk/"),
-                "{other}"
+    fn the_verification_policy_is_the_forges_issuer_alone() {
+        // The signing workflow may belong to another repository, so the
+        // policy names no identity: `check_source` binds the release to the
+        // project through the certificate's source repository.
+        for signed in ["github.com/jdx/hook", "github.com/jdx/hook/tool"] {
+            let p = policy("github.com/jdx/hk", signed).unwrap();
+            assert_eq!(p.issuer.as_deref(), Some(GITHUB_ISSUER));
+            assert!(
+                p.identity.is_none() && p.identity_prefix.is_none(),
+                "{signed}"
             );
         }
+        // A name on another forge or off any forge never selects its issuer.
+        for other in ["gitlab.com/jdx/hook", "mise.jdx.dev", ""] {
+            let p = policy("github.com/jdx/hk", other).unwrap();
+            assert_eq!(p.issuer.as_deref(), Some(GITHUB_ISSUER), "{other}");
+        }
+        let gitlab = policy("gitlab.com/group/proj", "gitlab.com/group/proj").unwrap();
+        assert_eq!(gitlab.issuer.as_deref(), Some(GITLAB_ISSUER));
         assert!(policy("mise.jdx.dev", "github.com/jdx/hk").is_none());
     }
 
@@ -1483,6 +1603,35 @@ mod tests {
             Some(&hk),
             &release("acme/hk"),
             Some(&acme),
+        ));
+        // A shared reusable workflow at the same path is a different signer
+        // from the project's own, and from another shared repository's.
+        let shared = |repo: &str| format!("{}@refs/tags/v1", release(repo));
+        assert!(!same_workflow(
+            &release("jdx/hk"),
+            Some(&hk),
+            &shared("jdx/shared"),
+            Some(&hk),
+        ));
+        assert!(!same_workflow(
+            &shared("jdx/shared"),
+            Some(&hk),
+            &release("jdx/hk"),
+            Some(&hk),
+        ));
+        assert!(!same_workflow(
+            &shared("jdx/shared"),
+            Some(&hk),
+            &shared("jdx/other"),
+            Some(&hk),
+        ));
+        // The same shared repository keeps the signer, through a rename of
+        // the project.
+        assert!(same_workflow(
+            &shared("jdx/shared"),
+            Some(&hk),
+            &shared("jdx/shared"),
+            Some(&hook),
         ));
         // Without a pin on both sides, only the identity itself, less a
         // workflow's ref.

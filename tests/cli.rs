@@ -75,6 +75,88 @@ fn pin_prints_the_signer_fingerprint_of_a_verified_release() {
     assert_eq!(out, format!("{HK_PIN}\n"), "the pin and nothing else");
 }
 
+const GITHUB_ISSUER: &str = "https://token.actions.githubusercontent.com";
+
+#[test]
+fn verify_source_repository_goes_by_the_certificates_repository_not_its_workflow() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    // A trailing slash is the same repository.
+    for source in ["https://github.com/jdx/hk", "https://github.com/jdx/hk/"] {
+        let (code, _, err) = packslip(
+            d,
+            &[
+                "verify",
+                HK_BUNDLE,
+                "--issuer",
+                GITHUB_ISSUER,
+                "--source-repository",
+                source,
+            ],
+        );
+        assert_eq!(code, 0, "{source}: {err}");
+    }
+
+    // Another repository is refused whichever workflow signed.
+    let (code, _, err) = packslip(
+        d,
+        &[
+            "verify",
+            HK_BUNDLE,
+            "--issuer",
+            GITHUB_ISSUER,
+            "--source-repository",
+            "https://github.com/jdx/other",
+        ],
+    );
+    assert_eq!(code, 1, "{err}");
+    assert!(
+        err.contains("source repository is https://github.com/jdx/hk"),
+        "{err}"
+    );
+
+    // The issuer is required, and a workflow pin cannot be combined with it.
+    let (code, _, err) = packslip(
+        d,
+        &[
+            "verify",
+            HK_BUNDLE,
+            "--source-repository",
+            "https://github.com/jdx/hk",
+        ],
+    );
+    assert_ne!(code, 0);
+    assert!(err.contains("--source-repository needs --issuer"), "{err}");
+    let (code, _, err) = packslip(
+        d,
+        &[
+            "verify",
+            HK_BUNDLE,
+            "--issuer",
+            GITHUB_ISSUER,
+            "--identity-prefix",
+            "https://github.com/jdx/hk/",
+            "--source-repository",
+            "https://github.com/jdx/hk",
+        ],
+    );
+    assert_ne!(code, 0);
+    assert!(err.contains("drop --identity"), "{err}");
+    let (code, _, err) = packslip(
+        d,
+        &[
+            "verify",
+            HK_BUNDLE,
+            "--pubkey",
+            "RWQ-not-a-key",
+            "--source-repository",
+            "https://github.com/jdx/hk",
+        ],
+    );
+    assert_ne!(code, 0);
+    assert!(err.contains("--pubkey pins a key"), "{err}");
+}
+
 #[test]
 fn pin_refuses_a_bundle_it_cannot_verify_or_fingerprint() {
     let dir = tempfile::tempdir().unwrap();

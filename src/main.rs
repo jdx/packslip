@@ -1430,8 +1430,11 @@ fn parse_duration(s: &str) -> Result<std::time::Duration> {
 /// https://github.com/owner/repo/) or --identity (one exact certificate
 /// identity, including its ref) replaces the derived policy, and only the
 /// flags you pass are checked: --issuer alone accepts any signer from that
-/// issuer. For a key-signed release, pass --pubkey. --pin adds a check on
-/// top of the identity policy: the signing repository must have that signer
+/// issuer. For a release signed through another repository's reusable
+/// workflow, --issuer with --source-repository requires the certificate to
+/// record that repository as its source, whichever workflow signed. For a
+/// key-signed release, pass --pubkey. --pin adds a check on top of the
+/// identity policy: the signing repository must have that signer
 /// fingerprint.
 ///
 /// Then match the verified project and version to what you meant to
@@ -1480,6 +1483,13 @@ struct Verify {
     /// issuer
     #[usage(long, help_heading = "Trust")]
     issuer: Option<String>,
+    /// The repository the signing certificate must record as its source,
+    /// such as https://github.com/owner/repo, whichever workflow signed;
+    /// for a release signed through another repository's reusable
+    /// workflow. Needs --issuer, and replaces --identity and
+    /// --identity-prefix
+    #[usage(long, help_heading = "Trust")]
+    source_repository: Option<String>,
     /// The signer fingerprint (ps1_...) the certificate's repository must
     /// have, as `packslip pin` prints it
     #[usage(long, help_heading = "Trust")]
@@ -1538,6 +1548,7 @@ impl RunWith<BinInfo> for Verify {
                 if self.identity.is_some()
                     || self.identity_prefix.is_some()
                     || self.issuer.is_some()
+                    || self.source_repository.is_some()
                 {
                     bail!(
                         "--pubkey pins a key; the identity flags pin a certificate. Pass one kind"
@@ -1554,6 +1565,23 @@ impl RunWith<BinInfo> for Verify {
                     text.clone()
                 };
                 TrustPin::Key(PublicKey::parse(&pubkey_text)?)
+            }
+            None if self.source_repository.is_some() => {
+                if self.identity.is_some() || self.identity_prefix.is_some() {
+                    bail!(
+                        "--source-repository pins the repository, not a workflow; drop --identity and --identity-prefix"
+                    );
+                }
+                let Some(issuer) = &self.issuer else {
+                    bail!(
+                        "--source-repository needs --issuer: the repository is only as good as the issuer that vouches for it"
+                    );
+                };
+                TrustPin::Identity(Policy {
+                    issuer: Some(issuer.clone()),
+                    identity: None,
+                    identity_prefix: None,
+                })
             }
             None => TrustPin::Identity(identity_policy(
                 &self.identity,
@@ -1577,6 +1605,16 @@ impl RunWith<BinInfo> for Verify {
             return match packslip::verify_release_list(&text, &pin.as_trust(), options) {
                 Ok(verified) => {
                     let list = &verified.list.predicate;
+                    if let Err(err) = require_source_repository(
+                        self.source_repository.as_deref(),
+                        &text,
+                        &list.project,
+                        &verified.key_id,
+                        verified.issuer.as_deref(),
+                    ) {
+                        eprintln!("verification failed: {err}");
+                        std::process::exit(1)
+                    }
                     if let Some(want) = &want_fingerprint {
                         let source = sigstore::source_repository(&text)?;
                         if let Err(err) = match_fingerprint(
@@ -1625,6 +1663,16 @@ impl RunWith<BinInfo> for Verify {
                 // The bundle verified, so its certificate's record of the
                 // repository is the one Fulcio issued.
                 let source = sigstore::source_repository(&text)?;
+                if let Err(err) = require_source_repository(
+                    self.source_repository.as_deref(),
+                    &text,
+                    &verified.project,
+                    &verified.key_id,
+                    verified.issuer.as_deref(),
+                ) {
+                    eprintln!("verification failed: {err}");
+                    std::process::exit(1)
+                }
                 if let Some(want) = &want_fingerprint
                     && let Err(err) = match_fingerprint(
                         want,
@@ -1707,6 +1755,38 @@ impl RunWith<BinInfo> for Verify {
             }
         }
     }
+}
+
+/// Whether a verified bundle's certificate records `want` as its source
+/// repository, and that repository is the project the statement names.
+/// Fulcio derives the record from the forge's token, so it names the
+/// repository whose run signed, whichever workflow that was. A project that
+/// is not on a forge has no repository to compare, so only `want` is
+/// checked.
+fn require_source_repository(
+    want: Option<&str>,
+    bundle: &str,
+    project: &str,
+    signer: &str,
+    issuer: Option<&str>,
+) -> std::result::Result<(), String> {
+    let Some(want) = want else { return Ok(()) };
+    let source = sigstore::source_repository(bundle).map_err(|e| e.to_string())?;
+    match &source {
+        Some(source) if source.uri == want.trim_end_matches('/') => {}
+        Some(source) => {
+            return Err(format!(
+                "the certificate's source repository is {}, expected {want}",
+                source.uri
+            ));
+        }
+        None => {
+            return Err(format!(
+                "the certificate records no source repository, expected {want}"
+            ));
+        }
+    }
+    bound_to_project(project, signer, issuer, source.as_ref())
 }
 
 /// The certificate policy for `project`: the identity flags, or else the
