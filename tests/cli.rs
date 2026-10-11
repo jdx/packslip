@@ -142,6 +142,19 @@ fn verify_source_repository_goes_by_the_certificates_repository_not_its_workflow
     );
     assert_ne!(code, 0);
     assert!(err.contains("drop --identity"), "{err}");
+    let (code, _, err) = packslip(
+        d,
+        &[
+            "verify",
+            HK_BUNDLE,
+            "--pubkey",
+            "RWQ-not-a-key",
+            "--source-repository",
+            "https://github.com/jdx/hk",
+        ],
+    );
+    assert_ne!(code, 0);
+    assert!(err.contains("--pubkey pins a key"), "{err}");
 }
 
 #[test]

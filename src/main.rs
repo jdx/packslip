@@ -1548,6 +1548,7 @@ impl RunWith<BinInfo> for Verify {
                 if self.identity.is_some()
                     || self.identity_prefix.is_some()
                     || self.issuer.is_some()
+                    || self.source_repository.is_some()
                 {
                     bail!(
                         "--pubkey pins a key; the identity flags pin a certificate. Pass one kind"
@@ -1604,9 +1605,13 @@ impl RunWith<BinInfo> for Verify {
             return match packslip::verify_release_list(&text, &pin.as_trust(), options) {
                 Ok(verified) => {
                     let list = &verified.list.predicate;
-                    if let Err(err) =
-                        require_source_repository(self.source_repository.as_deref(), &text)
-                    {
+                    if let Err(err) = require_source_repository(
+                        self.source_repository.as_deref(),
+                        &text,
+                        &list.project,
+                        &verified.key_id,
+                        verified.issuer.as_deref(),
+                    ) {
                         eprintln!("verification failed: {err}");
                         std::process::exit(1)
                     }
@@ -1658,9 +1663,13 @@ impl RunWith<BinInfo> for Verify {
                 // The bundle verified, so its certificate's record of the
                 // repository is the one Fulcio issued.
                 let source = sigstore::source_repository(&text)?;
-                if let Err(err) =
-                    require_source_repository(self.source_repository.as_deref(), &text)
-                {
+                if let Err(err) = require_source_repository(
+                    self.source_repository.as_deref(),
+                    &text,
+                    &verified.project,
+                    &verified.key_id,
+                    verified.issuer.as_deref(),
+                ) {
                     eprintln!("verification failed: {err}");
                     std::process::exit(1)
                 }
@@ -1749,20 +1758,35 @@ impl RunWith<BinInfo> for Verify {
 }
 
 /// Whether a verified bundle's certificate records `want` as its source
-/// repository. Fulcio derives that record from the forge's token, so it
-/// names the repository whose run signed, whichever workflow that was.
-fn require_source_repository(want: Option<&str>, bundle: &str) -> std::result::Result<(), String> {
+/// repository, and that repository is the project the statement names.
+/// Fulcio derives the record from the forge's token, so it names the
+/// repository whose run signed, whichever workflow that was. A project that
+/// is not on a forge has no repository to compare, so only `want` is
+/// checked.
+fn require_source_repository(
+    want: Option<&str>,
+    bundle: &str,
+    project: &str,
+    signer: &str,
+    issuer: Option<&str>,
+) -> std::result::Result<(), String> {
     let Some(want) = want else { return Ok(()) };
-    match sigstore::source_repository(bundle).map_err(|e| e.to_string())? {
-        Some(source) if source.uri == want.trim_end_matches('/') => Ok(()),
-        Some(source) => Err(format!(
-            "the certificate's source repository is {}, expected {want}",
-            source.uri
-        )),
-        None => Err(format!(
-            "the certificate records no source repository, expected {want}"
-        )),
+    let source = sigstore::source_repository(bundle).map_err(|e| e.to_string())?;
+    match &source {
+        Some(source) if source.uri == want.trim_end_matches('/') => {}
+        Some(source) => {
+            return Err(format!(
+                "the certificate's source repository is {}, expected {want}",
+                source.uri
+            ));
+        }
+        None => {
+            return Err(format!(
+                "the certificate records no source repository, expected {want}"
+            ));
+        }
     }
+    bound_to_project(project, signer, issuer, source.as_ref())
 }
 
 /// The certificate policy for `project`: the identity flags, or else the
