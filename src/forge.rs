@@ -439,6 +439,9 @@ pub struct Check {
     /// repository is the one expected.
     by_id: bool,
     pin_workflow: bool,
+    /// The names of the projects the consumer's pins recorded, which a
+    /// renamed project's earlier signers were workflows of.
+    previous_projects: Vec<String>,
 }
 
 impl Check {
@@ -471,14 +474,32 @@ impl Check {
             };
             return before.0 == now.0 && (self.by_id || before == now);
         }
-        // `pin` is the verified release's, so it cannot say whether
-        // `previous` was a shared workflow; `same_workflow` over the stored
-        // records can. A release signed through a shared workflow still
-        // needs `previous` to be a workflow of that repository.
-        if let Some(shared) = pin.and_then(|pin| external_signer(&self.identity, pin))
-            && repository_of(previous) != Some(shared)
-        {
-            return false;
+        // A release signed through a shared workflow needs `previous` to be a
+        // workflow of that repository. One signed by the project's own
+        // workflow needs `previous` to be the project's too, under the name
+        // of any pin the consumer holds, since a rename is not a shared
+        // workflow. Without a pin to name the project's earlier names,
+        // nothing tells the two apart, so only the first direction is held.
+        if let (Some(pin), Some(before)) = (pin, repository_of(previous)) {
+            match external_signer(&self.identity, pin) {
+                Some(shared) => {
+                    if before != shared {
+                        return false;
+                    }
+                }
+                None => {
+                    let own = |name: &str| {
+                        ForgeName::parse(name)
+                            .is_some_and(|name| (name.host, name.repository) == before)
+                    };
+                    if !self.previous_projects.is_empty()
+                        && !own(&pin.project)
+                        && !self.previous_projects.iter().any(|name| own(name))
+                    {
+                        return false;
+                    }
+                }
+            }
         }
         same_path(previous, pin, &self.identity, pin)
     }
@@ -769,6 +790,7 @@ fn check_inner(
         identity: identity.to_string(),
         by_id,
         pin_workflow: true,
+        previous_projects: pins.iter().map(|(pin, _)| pin.project.clone()).collect(),
     })
 }
 
@@ -1223,6 +1245,39 @@ mod tests {
         ));
         assert!(!ok.continues_signer("https://github.com/jdx/hk/.github/workflows/release.yml"));
         assert!(!ok.continues_signer("https://github.com/jdx/other/.github/workflows/release.yml"));
+
+        // Moving off a shared workflow is a changed signer too, but a rename
+        // of the project is not, under the name a pin recorded.
+        let own_signer = "https://github.com/jdx/hk/.github/workflows/release.yml@refs/tags/v2";
+        let own = check_source(
+            &expected,
+            "github.com/jdx/hk",
+            own_signer,
+            Some(GITHUB_ISSUER),
+            Some(&hk()),
+        )
+        .unwrap();
+        assert!(!own.continues_signer(
+            "https://github.com/jdx/shared/.github/workflows/release.yml@refs/tags/v1"
+        ));
+        assert!(own.continues_signer(
+            "https://github.com/jdx/hk/.github/workflows/release.yml@refs/tags/v1"
+        ));
+        let old = ForgePin::of("github.com/jdx/old-hk", "922514152");
+        let renamed = check_source(
+            &Expected::new("github.com/jdx/hk").pinned(Some(&old)),
+            "github.com/jdx/hk",
+            own_signer,
+            Some(GITHUB_ISSUER),
+            Some(&hk()),
+        )
+        .unwrap();
+        assert!(renamed.continues_signer(
+            "https://github.com/jdx/old-hk/.github/workflows/release.yml@refs/tags/v1"
+        ));
+        assert!(!renamed.continues_signer(
+            "https://github.com/jdx/shared/.github/workflows/release.yml@refs/tags/v1"
+        ));
     }
 
     #[test]
