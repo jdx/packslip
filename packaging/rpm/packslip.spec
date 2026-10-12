@@ -31,11 +31,17 @@ export CARGO_HOME="$PWD/.cargo-home"
 export CARGO_TARGET_DIR="$PWD/target"
 # Fedora's hardening linker flags also apply to aws-lc's compiler probes.
 export LDFLAGS="${LDFLAGS:-} -fPIE"
+# Fedora's optimizing CFLAGS reach aws-lc-sys's jitterentropy build, which must
+# compile at -O0. cc 1.6 and later snapshot the environment before aws-lc-sys
+# filters CFLAGS, so skip jitterentropy until aws-lc-sys fixes that (%build and
+# %check each run in their own shell).
+export AWS_LC_SYS_NO_JITTER_ENTROPY=1
 cargo build --release --frozen --no-default-features --features install-cli --bin packslip
 
 %check
 export CARGO_HOME="$PWD/.cargo-home"
 export CARGO_TARGET_DIR="$PWD/target"
+export AWS_LC_SYS_NO_JITTER_ENTROPY=1
 cargo test --frozen --no-default-features --features install-cli
 
 %install

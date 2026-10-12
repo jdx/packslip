@@ -1,6 +1,10 @@
 #!/usr/bin/make -f
 export CARGO_HOME = $(CURDIR)/.cargo-home
 export CARGO_TARGET_DIR = $(CURDIR)/target
+# dpkg's optimizing CFLAGS reach aws-lc-sys's jitterentropy build, which must
+# compile at -O0. cc 1.6 and later snapshot the environment before aws-lc-sys
+# filters CFLAGS, so skip jitterentropy until aws-lc-sys fixes that.
+export AWS_LC_SYS_NO_JITTER_ENTROPY = 1
 
 %:
 	dh $@
