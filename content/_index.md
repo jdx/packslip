@@ -85,6 +85,24 @@ withdrawals, and an optional recommended version. See
 [What a verified packslip proves](/release/v1/#what-a-verified-packslip-proves)
 for the full statement.
 
+## Who is using Packslip
+
+Projects including Helmfile, Dagu, Worktrunk, Timoni, Flint, and mise publish
+signed release manifests. These are examples from their upstream releases:
+
+| Project | Example signed release |
+| --- | --- |
+| [Helmfile](https://github.com/helmfile/helmfile) | [1.8.1](https://github.com/helmfile/helmfile/releases/download/v1.8.1/packslip.sigstore.json) |
+| [Dagu](https://github.com/dagucloud/dagu) | [2.19.2](https://github.com/dagucloud/dagu/releases/download/v2.19.2/packslip.sigstore.json) |
+| [Worktrunk](https://github.com/max-sixty/worktrunk) | [0.80.0](https://github.com/max-sixty/worktrunk/releases/download/v0.80.0/packslip.sigstore.json) |
+| [Timoni](https://github.com/stefanprodan/timoni) | [0.35.0](https://github.com/stefanprodan/timoni/releases/download/v0.35.0/packslip.sigstore.json) |
+| [Flint](https://github.com/grafana/flint) | [0.22.14](https://github.com/grafana/flint/releases/download/v0.22.14/packslip.sigstore.json) |
+| [mise](https://github.com/jdx/mise) | [2026.10.9](https://github.com/jdx/mise/releases/download/v2026.10.9/packslip.sigstore.json) |
+
+[See who is using Packslip](/docs/who-is-using-packslip/) for a dated list of
+published releases, with upstream projects and independent publishers listed
+separately. Only integrations that have shipped a signed manifest are listed.
+
 ## Choose your next step
 
 | If you… | Start here |

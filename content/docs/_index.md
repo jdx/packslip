@@ -18,6 +18,11 @@ installers or mirrors.
 | Try creating and verifying a manifest | [Getting started](/docs/getting-started/), an offline local walkthrough |
 | Understand how the pieces connect | [How packslip fits a release](/docs/release-workflow/) |
 
+## Published examples
+
+[Who is using Packslip](/docs/who-is-using-packslip/) lists published signed
+release manifests from upstream projects and independent publishers.
+
 ## Publish software
 
 Start by adding the packslip GitHub Action to your release job. The other
