@@ -44,7 +44,7 @@ jobs:
           # token starts no workflow, so CI would never run on the
           # release PR.
           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
-      - uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
           cache: false
       # No rust-cache here: `mise run render` builds through mbx, which turns
@@ -52,7 +52,7 @@ jobs:
       # symlink, and restoring it made `release-plz update` fail copying the
       # project ("cannot strip prefix ... prefix not found").
       # cargo-semver-checks backs `semver_check = true` in release-plz.toml.
-      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+      - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
         with:
           tool: release-plz@0.3.160,cargo-semver-checks@0.48.0
       - name: Bump the version and changelog
