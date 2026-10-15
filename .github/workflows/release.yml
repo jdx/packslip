@@ -554,6 +554,60 @@ jobs:
       contents: read
       id-token: write
 
+  # The packslip npm package, published with the version of the release it
+  # ships in. The checked-in version is a placeholder: the job stamps the tag's
+  # version before publishing. npm trusted publishing for jdx/packslip names
+  # this workflow file, so the publish step must stay here, not in a called
+  # workflow. See RELEASING.md for the one-time setup.
+  npm:
+    needs: [version, release]
+    if: ${{ !cancelled() && needs.release.result == 'success' && github.ref_type == 'tag' && vars.NPM_PUBLISH_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: packages/packslip
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Publish the release's version
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          # Trusted publishing needs npm 11.5.1 or newer, which Node 24 ships.
+          have="$(npm --version)"
+          if [ "$(printf '11.5.1\n%s\n' "$have" | sort -V | head -n 1)" != "11.5.1" ]; then
+            echo "npm $have is too old for trusted publishing" >&2
+            exit 1
+          fi
+          npm version "$version" --no-git-tag-version
+          npm ci
+          npm run typecheck
+          npm run build
+          npm test
+          if [ "$(npm view "packslip@$version" version 2>/dev/null || true)" = "$version" ]; then
+            echo "packslip@$version is already published"
+            exit 0
+          fi
+          # A retry of an older release must not move the latest tag backwards.
+          latest="$(npm view packslip dist-tags.latest 2>/dev/null || true)"
+          tag=latest
+          if [ -n "$latest" ] && [ "$(printf '%s\n%s\n' "$latest" "$version" | sort -V | tail -n 1)" != "$version" ]; then
+            tag=backport
+          fi
+          npm publish --access public --tag "$tag"
+
   comment-release-fixes:
     needs: release
     if: ${{ !cancelled() && needs.release.result == 'success' && github.ref_type == 'tag' }}

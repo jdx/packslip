@@ -1,6 +1,6 @@
 {
   "name": "packslip",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "description": "Verify a packslip release bundle and the files downloaded from it",
   "license": "MIT",
   "repository": {
