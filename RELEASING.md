@@ -450,6 +450,21 @@ Communiqué's context and tone are configured in `communique.toml`.
 Its version is declared in `mise.toml` and resolved in `mise.lock`;
 update the lock deliberately with `mise lock`.
 
+## npm package
+
+`packages/packslip/` holds the `packslip` npm package. It is versioned
+separately from the CLI and is not published by `release.yml` or release-plz;
+CI builds, tests, and packs it on every pull request. Nothing publishes it
+yet. Before the first release a maintainer needs to:
+
+1. Create the `packslip` package on npm and configure
+   [trusted publishing](https://docs.npmjs.com/trusted-publishers) for
+   `jdx/packslip`, or add an `NPM_TOKEN` secret.
+2. Add a workflow that runs `npm publish --provenance` from
+   `packages/packslip` (`publishConfig` already sets `access` and
+   `provenance`) with the `id-token: write` permission, triggered by a tag
+   or a manual dispatch.
+
 ## crates.io publication
 
 crates.io needs no stored credential. 0.2.0 was published by hand from its
