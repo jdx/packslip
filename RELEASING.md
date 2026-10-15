@@ -461,8 +461,6 @@ builds, tests, and publishes. Publication uses npm
 provenance), so the repository holds no npm token. A rerun skips a version
 that is already on npm, and a release older than the current `latest` is
 published under the `backport` dist-tag so it cannot move `latest` backwards.
-The job runs only when the repository variable `NPM_PUBLISH_ENABLED` is
-`true`.
 
 ### One-time setup
 
@@ -480,8 +478,7 @@ order matters:
    allow `npm publish`. npm does not validate these fields when you save
    them. The workflow filename must be the top-level workflow: npm checks the
    calling workflow, which is why the publish step is in `release.yml`.
-3. Set the repository variable `NPM_PUBLISH_ENABLED` to `true`, then merge the
-   release PR. Do this within two days of step 2, or delete the expired
+3. Merge a release PR within two days of step 2, or delete the expired
    configuration and add it again.
 4. After the first release succeeds, set the package's **Publishing access**
    to "Require two-factor authentication and disallow tokens".

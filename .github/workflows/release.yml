@@ -561,7 +561,7 @@ jobs:
   # workflow. See RELEASING.md for the one-time setup.
   npm:
     needs: [version, release]
-    if: ${{ !cancelled() && needs.release.result == 'success' && github.ref_type == 'tag' && vars.NPM_PUBLISH_ENABLED == 'true' }}
+    if: ${{ !cancelled() && needs.release.result == 'success' && github.ref_type == 'tag' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
