@@ -46,12 +46,16 @@ function parseBundle(bundleJson: string | Uint8Array | object): Bundle & {
   dsseEnvelope: { payload: string; payloadType: string };
 } {
   let value: unknown = bundleJson;
-  if (typeof bundleJson === 'string' || bundleJson instanceof Uint8Array) {
-    try {
+  // Always work on a private copy: the caller's object must not be able to change
+  // between sigstore verifying the bundle and this package reading its statement.
+  try {
+    if (typeof bundleJson === 'string' || bundleJson instanceof Uint8Array) {
       value = JSON.parse(typeof bundleJson === 'string' ? bundleJson : Buffer.from(bundleJson).toString('utf8'));
-    } catch (cause) {
-      throw new BundleError('the bundle is not valid JSON', { cause });
+    } else {
+      value = JSON.parse(JSON.stringify(bundleJson));
     }
+  } catch (cause) {
+    throw new BundleError('the bundle is not valid JSON', { cause });
   }
   if (!isObject(value) || !isObject(value['dsseEnvelope'])) {
     throw new BundleError('the bundle has no DSSE envelope');

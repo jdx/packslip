@@ -125,7 +125,7 @@ cargo test --no-default-features
 mise run lint        # Shellcheck the scripts the actions, workflows, and installer run.
 installer/test.sh    # Run install.sh against a stand-in release with each local shell.
 node --test cloudflare/installer/worker.test.mjs  # packslip.sh's Worker.
-(cd packages/packslip && npm ci && npm run typecheck && npm test)  # The npm package; needs network for sigstore's trust root.
+(cd packages/packslip && npm ci && npm run typecheck && npm test)  # The npm package; needs Node.js 22.22.2+ (22.x), 24.15.0+ (24.x), or 26+ and network for sigstore's trust root.
 mise run docs:check  # Also runs `mise run render`.
 mise exec -- usage lint packslip.usage.kdl
 git status --short   # Lists generated files to commit.

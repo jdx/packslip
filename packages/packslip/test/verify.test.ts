@@ -92,6 +92,19 @@ describe('verifyRelease (public-good sigstore)', () => {
     await assert.rejects(verifyRelease(tampered, { identity: IDENTITY, issuer: ISSUER }), SignatureError);
   });
 
+  it('verifies a snapshot of an object bundle, not the caller\'s reference', async () => {
+    const bundle = JSON.parse(bundleText);
+    const statement = await verifyRelease(bundle, {
+      identity: (san) => {
+        // Swapping the payload during the identity check must not change the result.
+        bundle.dsseEnvelope.payload = Buffer.from('{}').toString('base64');
+        return san === IDENTITY;
+      },
+      issuer: ISSUER,
+    });
+    assert.equal(statement.predicate.project, 'github.com/jdx/mise');
+  });
+
   it('rejects input that is not a DSSE bundle', async () => {
     await assert.rejects(verifyRelease('not json', { identity: IDENTITY, issuer: ISSUER }), BundleError);
     await assert.rejects(verifyRelease('{}', { identity: IDENTITY, issuer: ISSUER }), BundleError);
@@ -121,6 +134,12 @@ describe('readStatement', () => {
   it('rejects another predicate type and statement type', () => {
     assert.throws(() => readStatement(payload((s) => (s.predicateType = 'https://slsa.dev/provenance/v1')), {}), StatementError);
     assert.throws(() => readStatement(payload((s) => (s._type = 'https://example.com/Statement')), {}), StatementError);
+  });
+
+  it('rejects a non-string _type and malformed artifacts', () => {
+    assert.throws(() => readStatement(payload((s) => (s._type = { toString: null })), {}), StatementError);
+    assert.throws(() => readStatement(payload((s) => (s.predicate.artifacts = [null])), {}), StatementError);
+    assert.throws(() => readStatement(payload((s) => (s.predicate.artifacts[0].size = -1)), {}), StatementError);
   });
 
   it('rejects malformed digests and duplicate subjects', () => {

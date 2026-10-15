@@ -599,13 +599,14 @@ jobs:
           # A failed lookup other than "not found" must stop the job, not read as
           # an empty answer.
           lookup() {
-            local out
-            if out="$(npm view "$@" 2>&1)"; then
+            local out err
+            err="$(mktemp)"
+            if out="$(npm view "$@" 2>"$err")"; then
               printf '%s' "$out"
-            elif printf '%s' "$out" | grep -q 'E404'; then
+            elif grep -q 'E404' "$err"; then
               return 0
             else
-              printf '%s\n' "$out" >&2
+              cat "$err" >&2
               return 1
             fi
           }

@@ -81,7 +81,8 @@ export function readStatement(
   expect: { project?: string | undefined; tag?: string | undefined },
 ): Omit<VerifiedStatement, 'signer'> {
   const statement = parseStatement(payload);
-  if (!STATEMENT_TYPES.includes(String(statement['_type']))) {
+  const type = statement['_type'];
+  if (typeof type !== 'string' || !STATEMENT_TYPES.includes(type)) {
     throw new StatementError('the signed payload is not an in-toto statement');
   }
   if (statement['predicateType'] !== RELEASE_PREDICATE_TYPE) {
@@ -98,6 +99,15 @@ export function readStatement(
     !Array.isArray(predicate['artifacts'])
   ) {
     throw new StatementError('the predicate needs a project, a version, and artifacts');
+  }
+  for (const artifact of predicate['artifacts']) {
+    if (
+      !isObject(artifact) ||
+      typeof artifact['name'] !== 'string' ||
+      (artifact['size'] !== undefined && !(Number.isSafeInteger(artifact['size']) && (artifact['size'] as number) >= 0))
+    ) {
+      throw new StatementError('each artifact needs a name and, if present, a non-negative integer size');
+    }
   }
   const subject = parseSubjects(statement['subject']);
 
@@ -118,7 +128,7 @@ export function readStatement(
     }
   }
 
-  return { _type: String(statement['_type']), subject, predicateType: RELEASE_PREDICATE_TYPE, predicate: predicate as ReleasePredicate };
+  return { _type: type, subject, predicateType: RELEASE_PREDICATE_TYPE, predicate: predicate as ReleasePredicate };
 }
 
 export interface ArtifactDigest {

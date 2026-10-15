@@ -12,7 +12,7 @@ applies the [consumer rules](/release/v1/#consumer-rules) for a bundle you
 already trust a signer for: the signature, certificate and transparency log
 entry through the official [`sigstore`](https://www.npmjs.com/package/sigstore)
 package, then the statement, then each downloaded file's digest. It needs
-Node.js 22.22.2, 24.15.0, or newer.
+Node.js 22.22.2 or later in 22, 24.15.0 or later in 24, or Node.js 26 or newer.
 
 The package does no downloading. You fetch the bundle (`packslip.sigstore.json`
 on a release) and the assets yourself; the only network access is sigstore's
