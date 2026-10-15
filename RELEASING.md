@@ -450,6 +450,39 @@ Communiqué's context and tone are configured in `communique.toml`.
 Its version is declared in `mise.toml` and resolved in `mise.lock`;
 update the lock deliberately with `mise lock`.
 
+## npm package
+
+`packages/packslip/` holds the `packslip` npm package. `release.yml`'s
+`npm` job publishes it after the GitHub release is public, with the same
+version as the tag: the checked-in `package.json` version is the placeholder
+`0.0.0`, and the job runs `npm version` with the tag's version before it
+builds, tests, and publishes. Publication uses npm
+[trusted publishing](https://docs.npmjs.com/trusted-publishers) (OIDC, with
+provenance), so the repository holds no npm token. A rerun skips a version
+that is already on npm, and a release older than the current `latest` is
+published under the `backport` dist-tag so it cannot move `latest` backwards.
+
+### One-time setup
+
+npm can configure trusted publishing only for a package that exists, and a
+new configuration must complete its first publish within two days, so the
+order matters:
+
+1. A maintainer publishes the placeholder once from their own machine, which
+   needs their npm login and 2FA: from `packages/packslip`, run
+   `npm ci && npm run build && npm publish --access public --provenance=false`. This publishes `0.0.0`;
+   the first real release then supersedes it.
+2. On npmjs.com, open the `packslip` package's **Settings → Trusted
+   publisher**, choose GitHub Actions, and enter organization `jdx`,
+   repository `packslip`, workflow filename `release.yml`, no environment, and
+   allow `npm publish`. npm does not validate these fields when you save
+   them. The workflow filename must be the top-level workflow: npm checks the
+   calling workflow, which is why the publish step is in `release.yml`.
+3. Merge a release PR within two days of step 2, or delete the expired
+   configuration and add it again.
+4. After the first release succeeds, set the package's **Publishing access**
+   to "Require two-factor authentication and disallow tokens".
+
 ## crates.io publication
 
 crates.io needs no stored credential. 0.2.0 was published by hand from its

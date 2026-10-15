@@ -57,6 +57,7 @@ toolchain, for example `RUSTUP_TOOLCHAIN=1.93.0 mise run docs`.
 | Container image `ghcr.io/jdx/packslip` | `container/Dockerfile`, built from a release's executables by `container/build.sh` |
 | Test fixtures | `tests/fixtures/` (see its README) |
 | Release example on the homepage and quickstart | `docs/examples/release-excerpt.json` |
+| The `packslip` npm package, which verifies a release bundle from Node.js | `packages/packslip/` (see its `package.json` for checks) |
 | The site's Worker | `wrangler.jsonc`, `cloudflare/worker.js` |
 | Install scripts that packslip.sh serves | `installer/install.sh` and `installer/install.ps1`, filled in for each release by `installer/render.sh` |
 | packslip.sh's Worker | `cloudflare/installer/` |
@@ -124,6 +125,7 @@ cargo test --no-default-features
 mise run lint        # Shellcheck the scripts the actions, workflows, and installer run.
 installer/test.sh    # Run install.sh against a stand-in release with each local shell.
 node --test cloudflare/installer/worker.test.mjs  # packslip.sh's Worker.
+(cd packages/packslip && npm ci && npm run typecheck && npm test)  # The npm package; needs Node.js 22.22.2+ (22.x), 24.15.0+ (24.x), or 26+ and network for sigstore's trust root.
 mise run docs:check  # Also runs `mise run render`.
 mise exec -- usage lint packslip.usage.kdl
 git status --short   # Lists generated files to commit.
