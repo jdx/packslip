@@ -472,7 +472,7 @@ order matters:
 
 1. A maintainer publishes the placeholder once from their own machine, which
    needs their npm login and 2FA: from `packages/packslip`, run
-   `npm ci && npm run build && npm publish --access public`. This publishes `0.0.0`;
+   `npm ci && npm run build && npm publish --access public --provenance=false`. This publishes `0.0.0`;
    the first real release then supersedes it.
 2. On npmjs.com, open the `packslip` package's **Settings → Trusted
    publisher**, choose GitHub Actions, and enter organization `jdx`,
