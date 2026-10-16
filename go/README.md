@@ -34,16 +34,9 @@ Assets are hashed into subjects but are not artifacts.
 
 ## Releases
 
-This is an independent Go module. Its versions use tags such as `go/v0.1.0`; root `vX.Y.Z` tags remain the Rust CLI/action release stream. The repository's release-plz configuration publishes the root Cargo crate only, so it does not publish this module. Go module distribution follows the normal Go module proxy behavior—there is no registry upload step.
-
-After review, a maintainer validates the checked-out `main` revision, then creates and pushes an annotated module tag:
-
-```sh
-cd go
-go mod tidy
-git diff --exit-code -- go.mod go.sum
-gofmt -w *.go cmd/conformance/*.go
-go test ./...
-git -C .. tag -a go/v0.1.0 -m 'packslip Go v0.1.0'
-git -C .. push origin go/v0.1.0
-```
+This module shares the CLI/action/npm release version. When release-plz creates
+the root `vX.Y.Z` tag, the release workflow creates `go/vX.Y.Z` at the same
+commit; the `go/` prefix is required for a subdirectory module. The repository's
+release-plz configuration publishes the root Cargo crate only. Go module
+distribution follows the normal Go module proxy behavior—there is no registry
+upload step or separate Go release dispatch.

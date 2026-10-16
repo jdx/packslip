@@ -62,6 +62,37 @@ jobs:
         id: mode
         run: echo "mode=$(python3 scripts/release-candidate.py mode)" >> "$GITHUB_OUTPUT"
 
+  # Go module tags must carry the module directory prefix, but share the
+  # release version and commit with the CLI and npm package. Go module proxies
+  # distribute directly from this tag; no registry publish is needed.
+  go-module-tag:
+    needs: version
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Create the matching Go module tag
+        env:
+          VERSION_TAG: ${{ needs.version.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="go/$VERSION_TAG"
+          target="$(git rev-parse HEAD)"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            test "$(git rev-list -n1 "$tag")" = "$target"
+            exit 0
+          fi
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            tag -a "$tag" -m "packslip Go $VERSION_TAG"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/$tag"
+
   build:
     needs: version
     if: github.ref == 'refs/heads/release-plz' && needs.version.outputs.mode == 'build'
