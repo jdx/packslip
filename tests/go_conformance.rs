@@ -68,7 +68,11 @@ fn rust_verifies_an_offline_sigstore_go_bundle_and_rejects_tampering() {
     let mut value: serde_json::Value =
         serde_json::from_str(generated["bundle"].as_str().unwrap()).unwrap();
     let mut signature = base64::engine::general_purpose::STANDARD
-        .decode(value["dsseEnvelope"]["signatures"][0]["sig"].as_str().unwrap())
+        .decode(
+            value["dsseEnvelope"]["signatures"][0]["sig"]
+                .as_str()
+                .unwrap(),
+        )
         .unwrap();
     signature[0] ^= 0x01;
     value["dsseEnvelope"]["signatures"][0]["sig"] =
