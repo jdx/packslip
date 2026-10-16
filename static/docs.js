@@ -164,10 +164,14 @@ window.dispatchEvent(new Event("resize"));
   let index;
   let loading;
   let selected = -1;
+  let generation = 0;
 
   function load() {
     loading ??= fetch("/search-index.json")
-      .then((response) => response.json())
+      .then((response) => {
+        if (!response.ok) throw new Error(`search index: ${response.status}`);
+        return response.json();
+      })
       .then((pages) => {
         index = pages.map((page) => ({
           ...page,
@@ -177,6 +181,11 @@ window.dispatchEvent(new Event("resize"));
             text: page.text.toLowerCase(),
           },
         }));
+      })
+      .catch((error) => {
+        // Let a later focus or query retry instead of keeping the failure.
+        loading = undefined;
+        throw error;
       });
     return loading;
   }
@@ -220,6 +229,7 @@ window.dispatchEvent(new Event("resize"));
   }
 
   function close() {
+    generation++;
     list.hidden = true;
     input.setAttribute("aria-expanded", "false");
     selected = -1;
@@ -236,7 +246,14 @@ window.dispatchEvent(new Event("resize"));
   async function render() {
     const query = input.value.trim();
     if (!query) return close();
-    await load();
+    const mine = ++generation;
+    try {
+      await load();
+    } catch {
+      return;
+    }
+    // Drop a render that the user outran by editing or closing the search.
+    if (mine !== generation || input.value.trim() !== query) return;
     list.replaceChildren();
     const results = search(query);
     if (!results.length) {
@@ -267,13 +284,13 @@ window.dispatchEvent(new Event("resize"));
     input.setAttribute("aria-expanded", "true");
   }
 
-  input.addEventListener("focus", load, { once: true });
+  input.addEventListener("focus", () => load().catch(() => {}));
   input.addEventListener("input", render);
   input.addEventListener("keydown", (event) => {
     if (event.key === "ArrowDown") { event.preventDefault(); select(selected + 1); }
     else if (event.key === "ArrowUp") { event.preventDefault(); select(selected - 1); }
     else if (event.key === "Enter") {
-      const link = list.querySelectorAll("a")[Math.max(selected, 0)];
+      const link = list.hidden ? undefined : list.querySelectorAll("a")[Math.max(selected, 0)];
       if (link) window.location = link.href;
     } else if (event.key === "Escape") { close(); input.blur(); }
   });
