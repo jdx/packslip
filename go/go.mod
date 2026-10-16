@@ -1,4 +1,4 @@
-module github.com/jdx/packslip/packages/packslip-go
+module github.com/jdx/packslip/go
 
 go 1.25.8
 

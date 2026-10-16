@@ -9,7 +9,7 @@ import (
 )
 
 func TestStatementValidityVectors(t *testing.T) {
-	bytes, err := os.ReadFile(filepath.Join("..", "..", "tests", "conformance", "statement-validity.json"))
+	bytes, err := os.ReadFile(filepath.Join("..", "tests", "conformance", "statement-validity.json"))
 	if os.IsNotExist(err) {
 		t.Skip("shared repository conformance fixtures are unavailable in a standalone module checkout")
 	}

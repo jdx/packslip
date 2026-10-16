@@ -12,12 +12,12 @@ fn validates_a_statement_emitted_by_packslip_go() {
     }
     let output = Command::new("go")
         .args(["run", "./cmd/conformance"])
-        .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("packages/packslip-go"))
+        .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("go"))
         .output()
-        .expect("Go must be installed by the packslip-go CI job");
+        .expect("Go must be installed by the Go module CI job");
     assert!(
         output.status.success(),
-        "packslip-go conformance helper failed: {}",
+        "Go conformance helper failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     let statement: Statement =
@@ -32,9 +32,9 @@ fn rust_verifies_an_offline_sigstore_go_bundle_and_rejects_tampering() {
     }
     let output = Command::new("go")
         .args(["run", "./cmd/conformance", "-signed"])
-        .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("packages/packslip-go"))
+        .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("go"))
         .output()
-        .expect("Go must be installed by the packslip-go CI job");
+        .expect("Go must be installed by the Go module CI job");
     assert!(
         output.status.success(),
         "{}",

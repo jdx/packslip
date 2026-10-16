@@ -1,6 +1,6 @@
-# packslip-go
+# packslip Go module
 
-`packslip-go` is the publisher-facing Go library for [packslip release-v1](https://packslip.dev/release/v1/) statements. It constructs release statements from explicit artifact metadata, streams artifact digests, validates the statement, and signs it keylessly with Sigstore.
+This module is the publisher-facing Go library for [packslip release-v1](https://packslip.dev/release/v1/) statements. It constructs release statements from explicit artifact metadata, streams artifact digests, validates the statement, and signs it keylessly with Sigstore.
 
 It is intentionally not a GoReleaser adapter or a release CLI. Mapping build platforms, archive names, upload destinations, and release-tool configuration stays in an adapter owned by that tool or its users.
 
@@ -34,4 +34,16 @@ Assets are hashed into subjects but are not artifacts.
 
 ## Releases
 
-This is an independent Go submodule. Its initial and subsequent versions use tags such as `packages/packslip-go/v0.1.0`; root `vX.Y.Z` tags remain the Rust CLI/action release stream. The repository's release-plz configuration publishes the root Cargo crate only, so it does not publish this module. After review, a maintainer explicitly dispatches **Release packslip-go** with a version; it revalidates the module and creates only that prefixed tag. Go module distribution then follows the normal Go module proxy behavior—there is no registry upload step or automatic tag creation.
+This is an independent Go module. Its versions use tags such as `go/v0.1.0`; root `vX.Y.Z` tags remain the Rust CLI/action release stream. The repository's release-plz configuration publishes the root Cargo crate only, so it does not publish this module. Go module distribution follows the normal Go module proxy behavior—there is no registry upload step.
+
+After review, a maintainer validates the checked-out `main` revision, then creates and pushes an annotated module tag:
+
+```sh
+cd go
+go mod tidy
+git diff --exit-code -- go.mod go.sum
+gofmt -w *.go cmd/conformance/*.go
+go test ./...
+git -C .. tag -a go/v0.1.0 -m 'packslip Go v0.1.0'
+git -C .. push origin go/v0.1.0
+```

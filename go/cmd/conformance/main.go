@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"time"
 
-	packslip "github.com/jdx/packslip/packages/packslip-go"
+	packslip "github.com/jdx/packslip/go"
 	protocommon "github.com/sigstore/protobuf-specs/gen/pb-go/common/v1"
 	"github.com/sigstore/sigstore-go/pkg/sign"
 	"google.golang.org/protobuf/encoding/protojson"

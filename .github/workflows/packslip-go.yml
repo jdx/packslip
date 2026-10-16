@@ -5,10 +5,9 @@ on:
     branches: [main]
   pull_request:
     paths:
-      - packages/packslip-go/**
+      - go/**
       - tests/conformance/statement-validity.json
       - .github/workflows/packslip-go.yml
-      - .github/workflows/release-packslip-go.yml
       - tests/go_conformance.rs
 
 permissions:
@@ -24,7 +23,7 @@ jobs:
     timeout-minutes: 15
     defaults:
       run:
-        working-directory: packages/packslip-go
+        working-directory: go
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
