@@ -1,0 +1,53 @@
+name: Release packslip-go
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Go module version without the v prefix (for example 0.1.0)
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # The tag is always cut from the protected default branch, not the
+          # ref selected for a workflow-dispatch UI run.
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        with:
+          go-version: 1.25.8
+          cache-dependency-path: packages/packslip-go/go.sum
+      - name: Validate module
+        working-directory: packages/packslip-go
+        run: |
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+          test "$(gofmt -l . | wc -l)" -eq 0
+          go test ./...
+      - name: Validate and create module tag
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]] || {
+            echo "version must be semver without a v prefix" >&2
+            exit 1
+          }
+          tag="packages/packslip-go/v$VERSION"
+          git check-ref-format "refs/tags/$tag"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "tag already exists: $tag" >&2
+            exit 1
+          fi
+          git tag -a "$tag" -m "packslip-go v$VERSION"
+          git push origin "refs/tags/$tag"

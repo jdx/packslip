@@ -1,0 +1,57 @@
+name: packslip-go
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - packages/packslip-go/**
+      - tests/conformance/statement-validity.json
+      - .github/workflows/packslip-go.yml
+      - .github/workflows/release-packslip-go.yml
+      - tests/go_conformance.rs
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: packages/packslip-go
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        with:
+          go-version: 1.25.8
+          check-latest: false
+      - run: go mod tidy
+      - run: test -z "$(git status --porcelain -- go.mod go.sum)"
+      - run: test -z "$(gofmt -l .)"
+      - run: go test ./...
+
+  rust-conformance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        with:
+          go-version: 1.25.8
+          check-latest: false
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+        with:
+          cache: false
+      - run: cargo test --test go_conformance
+        env:
+          PACKSLIP_GO_CONFORMANCE: "1"
