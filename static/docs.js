@@ -288,7 +288,7 @@ window.dispatchEvent(new Event("resize"));
   input.addEventListener("input", render);
   input.addEventListener("keydown", (event) => {
     if (event.key === "ArrowDown") { event.preventDefault(); select(selected + 1); }
-    else if (event.key === "ArrowUp") { event.preventDefault(); select(selected - 1); }
+    else if (event.key === "ArrowUp") { event.preventDefault(); select(selected < 0 ? -1 : selected - 1); }
     else if (event.key === "Enter") {
       const link = list.hidden ? undefined : list.querySelectorAll("a")[Math.max(selected, 0)];
       if (link) window.location = link.href;
