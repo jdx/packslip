@@ -2,6 +2,12 @@
 
 This module is the publisher-facing Go library for [packslip release-v1](https://packslip.dev/release/v1/) statements. It constructs release statements from explicit artifact metadata, streams artifact digests, validates the statement, and signs it keylessly with Sigstore.
 
+> **Unreleased:** the module is not yet available from the Go module proxy.
+> Its first published version will be installed as
+> `go get github.com/jdx/packslip/go@vX.Y.Z` and requires Go 1.25.8 or newer.
+> See [the library guide](https://packslip.dev/docs/libraries/) for the Go and
+> npm roles and release cadence.
+
 It is intentionally not a GoReleaser adapter or a release CLI. Mapping build platforms, archive names, upload destinations, and release-tool configuration stays in an adapter owned by that tool or its users.
 
 ```go

@@ -56,7 +56,7 @@ def check_links(site):
                 "docs/index.html", "cli/index.html"]
     required += [f"docs/{name}/index.html" for name in (
         "release-workflow", "getting-started", "describing-releases", "resources", "host-requirements",
-        "recipes", "publishing", "verifying", "installers", "release-lists", "self-hosting", "mise", "verify-js",
+        "recipes", "publishing", "verifying", "installers", "release-lists", "self-hosting", "mise", "verify-js", "libraries",
     )]
     errors = [f"missing page: {name}" for name in required if not (site / name).is_file()]
     count = 0
