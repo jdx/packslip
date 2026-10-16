@@ -33,6 +33,7 @@ jobs:
         with:
           go-version: 1.25.8
           check-latest: false
+          cache: false
       - run: go mod tidy
       - run: test -z "$(git status --porcelain -- go.mod go.sum)"
       - run: test -z "$(gofmt -l .)"
@@ -49,6 +50,7 @@ jobs:
         with:
           go-version: 1.25.8
           check-latest: false
+          cache: false
       - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
           cache: false
