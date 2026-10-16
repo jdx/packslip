@@ -46,7 +46,10 @@ func (p identityBoundProvider) GetCertificate(ctx context.Context, keypair sign.
 	if err := validateCertificateIdentity(cert, p.identity); err != nil {
 		return nil, err
 	}
-	return der, nil
+	// sigstore-go persists these bytes in the bundle and later parses them as
+	// DER. Normalize accepted PEM input so a provider cannot produce a bundle
+	// that fails verification solely because of its certificate encoding.
+	return cert.Raw, nil
 }
 
 func parseIssuedCertificate(data []byte) (*x509.Certificate, error) {

@@ -1,6 +1,7 @@
 package packslip
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -71,8 +72,12 @@ func TestIdentityBoundProviderAcceptsPEMCertificate(t *testing.T) {
 		}),
 		identity: Identity{Scheme: "sigstore-oidc", KeyID: "https://github.com/acme/tool/.github/workflows/release.yml@refs/tags/v0.1.0", Issuer: "https://token.actions.githubusercontent.com"},
 	}
-	if _, err := provider.GetCertificate(context.Background(), nil, nil); err != nil {
+	got, err := provider.GetCertificate(context.Background(), nil, nil)
+	if err != nil {
 		t.Fatalf("PEM certificate rejected: %v", err)
+	}
+	if !bytes.Equal(got, cert.Raw) {
+		t.Fatal("PEM certificate was not normalized to DER")
 	}
 }
 
