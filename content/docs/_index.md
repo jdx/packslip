@@ -38,6 +38,8 @@ guides cover what a release needs beyond the action's defaults.
   must provide.
 - [Release recipes](/docs/recipes/): complete configurations for a Rust,
   Go, monorepo, or desktop release.
+- [Go and npm libraries](/docs/libraries/): create and sign statements from
+  Go (unreleased), or verify a downloaded keyless release from Node.js.
 - [Manage release lists](/docs/release-lists/): withdraw versions, mark
   security fixes, and recommend a default release. A list is optional on
   GitHub and required for a project on its own domain.
@@ -65,6 +67,8 @@ guides cover what a release needs beyond the action's defaults.
 - [Consumer rules](/release/v1/#consumer-rules): the complete contract a
   consumer implements. A successful `packslip verify` alone does not meet
   it.
+- [Go and npm libraries](/docs/libraries/): choose the publisher-facing Go
+  API or the Node.js verification API.
 
 ## Reference
 
