@@ -8,4 +8,9 @@
     <a href="/cli/"{{ if eq .Section "cli" }} class="active" aria-current="page"{{ end }}>CLI</a>
     {{ partial "github-link.html" . }}
   </nav>
+  <form class="search" role="search" action="/docs/" onsubmit="return false">
+    <label class="visually-hidden" for="search-input">Search the documentation</label>
+    <input id="search-input" type="search" placeholder="Search docs" autocomplete="off" spellcheck="false" aria-controls="search-results" aria-expanded="false">
+    <ul id="search-results" class="search-results" hidden></ul>
+  </form>
 </header>

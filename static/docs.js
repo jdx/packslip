@@ -154,3 +154,136 @@ document.querySelectorAll("pre > code").forEach((code) => {
 });
 // The toolbar changes heading positions on short pages.
 window.dispatchEvent(new Event("resize"));
+
+// Search: load the index on first use, then rank pages by where the words
+// match (title, then headings, then body) and show a snippet.
+(() => {
+  const input = document.getElementById("search-input");
+  const list = document.getElementById("search-results");
+  if (!input || !list) return;
+  let index;
+  let loading;
+  let selected = -1;
+
+  function load() {
+    loading ??= fetch("/search-index.json")
+      .then((response) => response.json())
+      .then((pages) => {
+        index = pages.map((page) => ({
+          ...page,
+          lower: {
+            title: page.title.toLowerCase(),
+            headings: page.headings.join("\n").toLowerCase(),
+            text: page.text.toLowerCase(),
+          },
+        }));
+      });
+    return loading;
+  }
+
+  function search(query) {
+    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+    if (!words.length) return [];
+    const results = [];
+    for (const page of index) {
+      let score = 0;
+      for (const word of words) {
+        const inTitle = page.lower.title.includes(word);
+        const inHeadings = page.lower.headings.includes(word);
+        const inText = page.lower.text.includes(word);
+        if (!inTitle && !inHeadings && !inText) { score = 0; break; }
+        score += (inTitle ? 10 : 0) + (inHeadings ? 4 : 0) + (inText ? 1 : 0);
+      }
+      if (score) results.push({ page, score, words });
+    }
+    return results.sort((a, b) => b.score - a.score).slice(0, 8);
+  }
+
+  function highlight(parent, text, words) {
+    const pattern = new RegExp(`(${words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`, "gi");
+    text.split(pattern).forEach((part, i) => {
+      if (i % 2) {
+        const mark = document.createElement("mark");
+        mark.textContent = part;
+        parent.append(mark);
+      } else {
+        parent.append(part);
+      }
+    });
+  }
+
+  function snippet(page, words) {
+    const at = words.map((w) => page.lower.text.indexOf(w)).filter((i) => i >= 0);
+    const start = Math.max(0, (at.length ? Math.min(...at) : 0) - 40);
+    const text = page.text.slice(start, start + 140).trim();
+    return (start > 0 ? "… " : "") + text + (start + 140 < page.text.length ? " …" : "");
+  }
+
+  function close() {
+    list.hidden = true;
+    input.setAttribute("aria-expanded", "false");
+    selected = -1;
+  }
+
+  function select(next) {
+    const links = list.querySelectorAll("a");
+    if (!links.length) return;
+    selected = (next + links.length) % links.length;
+    links.forEach((link, i) => link.setAttribute("aria-selected", String(i === selected)));
+    links[selected].scrollIntoView({ block: "nearest" });
+  }
+
+  async function render() {
+    const query = input.value.trim();
+    if (!query) return close();
+    await load();
+    list.replaceChildren();
+    const results = search(query);
+    if (!results.length) {
+      const empty = document.createElement("li");
+      empty.className = "empty";
+      empty.textContent = "No results";
+      list.append(empty);
+    }
+    for (const { page, words } of results) {
+      const item = document.createElement("li");
+      const link = document.createElement("a");
+      link.href = page.url;
+      const title = document.createElement("span");
+      title.className = "result-title";
+      highlight(title, page.title, words);
+      const section = document.createElement("span");
+      section.className = "result-section";
+      section.textContent = page.section === "docs" ? "guide" : page.section === "cli" ? "cli" : "spec";
+      const text = document.createElement("span");
+      text.className = "result-snippet";
+      highlight(text, snippet(page, words), words);
+      link.append(title, section, text);
+      item.append(link);
+      list.append(item);
+    }
+    selected = -1;
+    list.hidden = false;
+    input.setAttribute("aria-expanded", "true");
+  }
+
+  input.addEventListener("focus", load, { once: true });
+  input.addEventListener("input", render);
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown") { event.preventDefault(); select(selected + 1); }
+    else if (event.key === "ArrowUp") { event.preventDefault(); select(selected - 1); }
+    else if (event.key === "Enter") {
+      const link = list.querySelectorAll("a")[Math.max(selected, 0)];
+      if (link) window.location = link.href;
+    } else if (event.key === "Escape") { close(); input.blur(); }
+  });
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest(".search")) close();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "/" && !event.target.closest("input, textarea")) {
+      event.preventDefault();
+      input.focus();
+    }
+  });
+})();
