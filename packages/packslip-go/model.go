@@ -213,7 +213,7 @@ func (s Statement) Validate() error {
 		}
 		bare := bareFormat(a.Format)
 		for _, b := range a.Bin {
-			if b.Path == "" || strings.Contains(b.Name, "/") || strings.HasSuffix(strings.ToLower(b.Name), ".exe") {
+			if b.Path == "" || b.Name == "" || strings.Contains(b.Name, "/") || strings.HasSuffix(strings.ToLower(b.Name), ".exe") {
 				return fmt.Errorf("packslip: invalid bin in %q", a.Name)
 			}
 			if bare && b.Path != bareFile(a.Name, a.Format) {

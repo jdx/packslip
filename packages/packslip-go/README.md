@@ -26,6 +26,10 @@ if err != nil { /* handle public-good TUF discovery */ }
 bundle, err := packslip.SignKeyless(statement, options)
 ```
 
+When a resource references a separately uploaded release asset, pass it as
+`packslip.BuildOptions{Assets: []packslip.AssetInput{{Name: "...", Path: "..."}}}`.
+Assets are hashed into subjects but are not artifacts.
+
 `Build` and `Statement.Validate` only establish structural validity. `SignKeyless` returns a Sigstore bundle after `sigstore-go` has verified it against the injected trusted root. Never treat parsed JSON as cryptographically verified.
 
 ## Releases

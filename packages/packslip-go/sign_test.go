@@ -1,6 +1,7 @@
 package packslip
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -12,7 +13,14 @@ import (
 	"time"
 
 	"github.com/sigstore/sigstore-go/pkg/fulcio/certificate"
+	"github.com/sigstore/sigstore-go/pkg/sign"
 )
+
+type certificateProviderFunc func(context.Context, sign.Keypair, *sign.CertificateProviderOptions) ([]byte, error)
+
+func (f certificateProviderFunc) GetCertificate(ctx context.Context, keypair sign.Keypair, options *sign.CertificateProviderOptions) ([]byte, error) {
+	return f(ctx, keypair, options)
+}
 
 func TestSignKeylessRejectsKeyIdentityBeforeNetworkConfiguration(t *testing.T) {
 	statement := Statement{Type: StatementType, PredicateType: ReleasePredicateType,
@@ -38,6 +46,19 @@ func TestCertificateIdentityBindingRejectsSANAndIssuerMismatch(t *testing.T) {
 	identity.Issuer = "https://issuer.example.test"
 	if err := validateCertificateIdentity(cert, identity); err == nil {
 		t.Fatal("issuer mismatch accepted")
+	}
+}
+
+func TestIdentityBoundProviderRejectsBeforeBundle(t *testing.T) {
+	cert := testFulcioCertificate(t, "https://github.com/acme/tool/.github/workflows/release.yml@refs/tags/v0.1.0", "https://token.actions.githubusercontent.com")
+	provider := identityBoundProvider{
+		inner: certificateProviderFunc(func(context.Context, sign.Keypair, *sign.CertificateProviderOptions) ([]byte, error) {
+			return cert.Raw, nil
+		}),
+		identity: Identity{Scheme: "sigstore-oidc", KeyID: "https://github.com/acme/other/.github/workflows/release.yml@refs/tags/v0.1.0", Issuer: "https://token.actions.githubusercontent.com"},
+	}
+	if _, err := provider.GetCertificate(context.Background(), nil, nil); err == nil {
+		t.Fatal("mismatched identity reached the bundle signer")
 	}
 }
 

@@ -45,7 +45,11 @@ func TestStatementValidityVectors(t *testing.T) {
 func TestBuildStreamsAndBindsSubjects(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "tool.tar.xz")
+	asset := filepath.Join(dir, "tool.bash")
 	if err := os.WriteFile(file, []byte("packslip"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(asset, []byte("complete -W tool tool"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	statement, err := Build(Predicate{
@@ -57,12 +61,13 @@ func TestBuildStreamsAndBindsSubjects(t *testing.T) {
 			KeyID:  "https://github.com/example/tool/.github/workflows/release.yml@refs/tags/v0.1.0",
 			Issuer: "https://token.actions.githubusercontent.com",
 		},
+		Resources: []Resource{{Kind: "icon", Asset: "tool.bash", URL: "https://example.test/tool.bash"}},
 	}, []ArtifactInput{{
 		Path: file,
 		Artifact: Artifact{
 			Name: "tool.tar.xz", OS: "linux", Arch: "x86_64", Format: "tar.xz", Bin: []Bin{NewBin("tool")},
 		},
-	}})
+	}}, BuildOptions{Assets: []AssetInput{{Name: "tool.bash", Path: asset}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,6 +76,9 @@ func TestBuildStreamsAndBindsSubjects(t *testing.T) {
 	}
 	if statement.Predicate.Artifacts[0].Size != 8 {
 		t.Fatalf("size = %d", statement.Predicate.Artifacts[0].Size)
+	}
+	if len(statement.Subject) != 2 || statement.Subject[1].Name != "tool.bash" {
+		t.Fatalf("asset subject = %#v", statement.Subject)
 	}
 }
 
@@ -127,5 +135,16 @@ func TestValidateResourceAndKeyIdentityRules(t *testing.T) {
 				t.Fatal("accepted invalid resource")
 			}
 		})
+	}
+}
+
+func TestValidateRejectsObjectBinWithoutName(t *testing.T) {
+	statement := Statement{Type: StatementType, PredicateType: ReleasePredicateType,
+		Subject: []Subject{{Name: "tool", Digest: Digest{SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}},
+		Predicate: Predicate{Project: "github.com/example/tool", Version: "0.1.0", PublishedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+			Artifacts: []Artifact{{Name: "tool", Size: 1, Format: "raw", Bin: []Bin{{Path: "tool"}}}},
+			Identity:  Identity{Scheme: "sigstore-key", KeyID: "AABB"}}}
+	if err := statement.Validate(); err == nil {
+		t.Fatal("accepted object-form bin without a name")
 	}
 }

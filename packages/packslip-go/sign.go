@@ -26,6 +26,28 @@ type KeylessOptions struct {
 	Context             context.Context
 }
 
+// identityBoundProvider rejects a certificate whose OIDC identity differs from
+// the statement before sigstore-go can upload an entry to a transparency log.
+type identityBoundProvider struct {
+	inner    sign.CertificateProvider
+	identity Identity
+}
+
+func (p identityBoundProvider) GetCertificate(ctx context.Context, keypair sign.Keypair, options *sign.CertificateProviderOptions) ([]byte, error) {
+	der, err := p.inner.GetCertificate(ctx, keypair, options)
+	if err != nil {
+		return nil, err
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		return nil, fmt.Errorf("packslip: parse issued certificate: %w", err)
+	}
+	if err := validateCertificateIdentity(cert, p.identity); err != nil {
+		return nil, err
+	}
+	return der, nil
+}
+
 // ProductionKeylessOptions resolves the current Sigstore public-good Fulcio,
 // Rekor, and trust root from production TUF metadata. idToken is deliberately
 // passed by the caller: this package never reads an environment variable or
@@ -80,7 +102,7 @@ func SignKeyless(statement Statement, options KeylessOptions) ([]byte, error) {
 		return nil, fmt.Errorf("packslip: keyless signing requires ID token, keypair, certificate provider, transparency log, and trusted root")
 	}
 	bundle, err := sign.Bundle(&sign.DSSEData{Data: payload, PayloadType: DSSEPayloadType}, options.Keypair, sign.BundleOptions{
-		CertificateProvider:        options.CertificateProvider,
+		CertificateProvider:        identityBoundProvider{inner: options.CertificateProvider, identity: statement.Predicate.Identity},
 		CertificateProviderOptions: &sign.CertificateProviderOptions{IDToken: options.IDToken},
 		TransparencyLogs:           options.TransparencyLogs,
 		TrustedRoot:                options.TrustedRoot,

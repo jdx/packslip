@@ -16,40 +16,77 @@ type ArtifactInput struct {
 	Path     string
 }
 
+// AssetInput binds the uploaded asset name used by a resource to a local file.
+// Assets become statement subjects but are not release artifacts.
+type AssetInput struct {
+	Name string
+	Path string
+}
+
+// BuildOptions supplies optional inputs that do not change the artifact list.
+type BuildOptions struct {
+	Assets []AssetInput
+}
+
 // Build constructs a statement from explicit metadata and streams every input
 // file once to calculate its SHA-256, SHA-512, and size.
-func Build(metadata Predicate, inputs []ArtifactInput) (Statement, error) {
+func Build(metadata Predicate, inputs []ArtifactInput, buildOptions ...BuildOptions) (Statement, error) {
 	if len(inputs) == 0 {
 		return Statement{}, fmt.Errorf("packslip: no artifact inputs")
 	}
+	if len(buildOptions) > 1 {
+		return Statement{}, fmt.Errorf("packslip: at most one build options value is allowed")
+	}
+	var options BuildOptions
+	if len(buildOptions) == 1 {
+		options = buildOptions[0]
+	}
 	statement := Statement{Type: StatementType, PredicateType: ReleasePredicateType, Predicate: metadata}
 	statement.Predicate.Artifacts = make([]Artifact, 0, len(inputs))
-	statement.Subject = make([]Subject, 0, len(inputs))
+	statement.Subject = make([]Subject, 0, len(inputs)+len(options.Assets))
 	for _, input := range inputs {
 		if input.Path == "" {
 			return Statement{}, fmt.Errorf("packslip: %q has no local path", input.Artifact.Name)
 		}
-		file, err := os.Open(input.Path)
+		digest, size, err := hashPath(input.Path)
 		if err != nil {
-			return Statement{}, fmt.Errorf("packslip: open %q: %w", input.Path, err)
-		}
-		digest, size, hashErr := hash(file)
-		closeErr := file.Close()
-		if hashErr != nil {
-			return Statement{}, fmt.Errorf("packslip: hash %q: %w", input.Path, hashErr)
-		}
-		if closeErr != nil {
-			return Statement{}, fmt.Errorf("packslip: close %q: %w", input.Path, closeErr)
+			return Statement{}, err
 		}
 		artifact := input.Artifact
 		artifact.Size = size
 		statement.Predicate.Artifacts = append(statement.Predicate.Artifacts, artifact)
 		statement.Subject = append(statement.Subject, Subject{Name: artifact.Name, Digest: digest})
 	}
+	for _, input := range options.Assets {
+		if input.Name == "" || input.Path == "" {
+			return Statement{}, fmt.Errorf("packslip: asset requires both name and local path")
+		}
+		digest, _, err := hashPath(input.Path)
+		if err != nil {
+			return Statement{}, err
+		}
+		statement.Subject = append(statement.Subject, Subject{Name: input.Name, Digest: digest})
+	}
 	if err := statement.Validate(); err != nil {
 		return Statement{}, err
 	}
 	return statement, nil
+}
+
+func hashPath(path string) (Digest, int64, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return Digest{}, 0, fmt.Errorf("packslip: open %q: %w", path, err)
+	}
+	digest, size, hashErr := hash(file)
+	closeErr := file.Close()
+	if hashErr != nil {
+		return Digest{}, 0, fmt.Errorf("packslip: hash %q: %w", path, hashErr)
+	}
+	if closeErr != nil {
+		return Digest{}, 0, fmt.Errorf("packslip: close %q: %w", path, closeErr)
+	}
+	return digest, size, nil
 }
 
 func hash(reader io.Reader) (Digest, int64, error) {
