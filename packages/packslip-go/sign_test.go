@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/pem"
 	"math/big"
 	"net/url"
 	"testing"
@@ -59,6 +60,19 @@ func TestIdentityBoundProviderRejectsBeforeBundle(t *testing.T) {
 	}
 	if _, err := provider.GetCertificate(context.Background(), nil, nil); err == nil {
 		t.Fatal("mismatched identity reached the bundle signer")
+	}
+}
+
+func TestIdentityBoundProviderAcceptsPEMCertificate(t *testing.T) {
+	cert := testFulcioCertificate(t, "https://github.com/acme/tool/.github/workflows/release.yml@refs/tags/v0.1.0", "https://token.actions.githubusercontent.com")
+	provider := identityBoundProvider{
+		inner: certificateProviderFunc(func(context.Context, sign.Keypair, *sign.CertificateProviderOptions) ([]byte, error) {
+			return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}), nil
+		}),
+		identity: Identity{Scheme: "sigstore-oidc", KeyID: "https://github.com/acme/tool/.github/workflows/release.yml@refs/tags/v0.1.0", Issuer: "https://token.actions.githubusercontent.com"},
+	}
+	if _, err := provider.GetCertificate(context.Background(), nil, nil); err != nil {
+		t.Fatalf("PEM certificate rejected: %v", err)
 	}
 }
 

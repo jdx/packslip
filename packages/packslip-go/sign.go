@@ -3,6 +3,7 @@ package packslip
 import (
 	"context"
 	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"time"
 
@@ -38,7 +39,7 @@ func (p identityBoundProvider) GetCertificate(ctx context.Context, keypair sign.
 	if err != nil {
 		return nil, err
 	}
-	cert, err := x509.ParseCertificate(der)
+	cert, err := parseIssuedCertificate(der)
 	if err != nil {
 		return nil, fmt.Errorf("packslip: parse issued certificate: %w", err)
 	}
@@ -46,6 +47,13 @@ func (p identityBoundProvider) GetCertificate(ctx context.Context, keypair sign.
 		return nil, err
 	}
 	return der, nil
+}
+
+func parseIssuedCertificate(data []byte) (*x509.Certificate, error) {
+	if block, _ := pem.Decode(data); block != nil {
+		data = block.Bytes
+	}
+	return x509.ParseCertificate(data)
 }
 
 // ProductionKeylessOptions resolves the current Sigstore public-good Fulcio,
