@@ -49,5 +49,6 @@ jobs:
             echo "tag already exists: $tag" >&2
             exit 1
           fi
-          git tag -a "$tag" -m "packslip-go v$VERSION"
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            tag -a "$tag" -m "packslip-go v$VERSION"
           git push origin "refs/tags/$tag"
