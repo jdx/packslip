@@ -62,6 +62,7 @@ toolchain, for example `RUSTUP_TOOLCHAIN=1.93.0 mise run docs`.
 | Install scripts that packslip.sh serves | `installer/install.sh` and `installer/install.ps1`, filled in for each release by `installer/render.sh` |
 | packslip.sh's Worker | `cloudflare/installer/` |
 | Site layout and styling | `layouts/`, `static/style.css`, `static/docs.js` |
+| Site search | `layouts/index.searchindex.json` (the index Hugo builds), `static/docs.js` (the search box) |
 | Social preview images | `layouts/partials/social-image.html`, `assets/social/` (see its README) |
 | Release process | `RELEASING.md`, `.github/workflows/`, `release-plz.toml`, `cliff.toml` (changelog), `communique.toml` (release notes), `scripts/describe-release.sh` (packslip.dev's own packslip) |
 

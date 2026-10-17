@@ -1,0 +1,13 @@
+{{- $entries := slice -}}
+{{- range site.Pages -}}
+  {{- if and (not .IsHome) (in (slice "page" "section") .Kind) -}}
+    {{- $title := .Title -}}
+    {{- if and (not $title) (eq .Section "cli") -}}
+      {{- $title = cond .IsSection "packslip" (printf "packslip %s" .File.ContentBaseName) -}}
+    {{- end -}}
+    {{- $headings := slice -}}
+    {{- range .Fragments.HeadingsMap -}}{{- $headings = $headings | append .Title -}}{{- range .Headings -}}{{- $headings = $headings | append .Title -}}{{- end -}}{{- end -}}
+    {{- $entries = $entries | append (dict "title" $title "url" .RelPermalink "section" (.Section | default "spec") "headings" $headings "text" (.Plain | htmlUnescape | replaceRE `\s+` " ")) -}}
+  {{- end -}}
+{{- end -}}
+{{- $entries | jsonify -}}
