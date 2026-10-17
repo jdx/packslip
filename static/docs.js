@@ -195,17 +195,21 @@ window.dispatchEvent(new Event("resize"));
     if (!words.length) return [];
     const results = [];
     for (const page of index) {
-      let score = 0;
+      // Matches in the title, then headings, then body, compared in that order.
+      let score = [0, 0, 0];
+      let matched = true;
       for (const word of words) {
         const inTitle = page.lower.title.includes(word);
         const inHeadings = page.lower.headings.includes(word);
         const inText = page.lower.text.includes(word);
-        if (!inTitle && !inHeadings && !inText) { score = 0; break; }
-        score += (inTitle ? 10 : 0) + (inHeadings ? 4 : 0) + (inText ? 1 : 0);
+        if (!inTitle && !inHeadings && !inText) { matched = false; break; }
+        if (inTitle) score[0]++;
+        if (inHeadings) score[1]++;
+        if (inText) score[2]++;
       }
-      if (score) results.push({ page, score, words });
+      if (matched) results.push({ page, score, words });
     }
-    return results.sort((a, b) => b.score - a.score).slice(0, 8);
+    return results.sort((a, b) => b.score[0] - a.score[0] || b.score[1] - a.score[1] || b.score[2] - a.score[2]).slice(0, 8);
   }
 
   function highlight(parent, text, words) {
