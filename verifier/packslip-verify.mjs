@@ -343,7 +343,7 @@ function verifyLogEntry(root, bundle, envelope, leafDer) {
 export const RELEASE_PREDICATE_TYPE = 'https://packslip.dev/release/v1';
 const isObject = (v) => typeof v === 'object' && v !== null && !Array.isArray(v);
 
-function readStatement(payload, expect) {
+export function readStatement(payload, expect) {
   let statement;
   try {
     statement = JSON.parse(b64(payload).toString('utf8'));
@@ -369,9 +369,9 @@ function readStatement(payload, expect) {
     if (
       !isObject(artifact) ||
       typeof artifact.name !== 'string' ||
-      (artifact.size !== undefined && !(Number.isSafeInteger(artifact.size) && artifact.size >= 0))
+      !(Number.isSafeInteger(artifact.size) && artifact.size >= 0)
     ) {
-      fail('statement', 'each artifact needs a name and, if present, a non-negative integer size');
+      fail('statement', 'each artifact needs a name and a non-negative integer size');
     }
   }
   if (!Array.isArray(statement.subject) || statement.subject.length === 0) fail('statement', 'the statement has no subjects');
@@ -490,7 +490,7 @@ export async function verifyFile(statement, path) {
   } catch (error) {
     fail('file', `cannot read ${path}: ${error.message}`);
   }
-  if (info?.size !== undefined && size !== info.size) {
+  if (info !== undefined && size !== info.size) {
     fail('digest-mismatch', `${name}: size is ${size}, but the signed statement says ${info.size}`);
   }
   for (const [algorithm, hash] of Object.entries(hashes)) {

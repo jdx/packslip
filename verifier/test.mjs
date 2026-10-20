@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { TRUSTED_ROOT as trustedRoot, verifyFile, verifyRelease } from './packslip-verify.mjs';
+import { TRUSTED_ROOT as trustedRoot, readStatement, verifyFile, verifyRelease } from './packslip-verify.mjs';
 
 const script = fileURLToPath(new URL('./packslip-verify.mjs', import.meta.url));
 const miseBundlePath = fileURLToPath(new URL('../packages/packslip/test/mise-2026.10.11.sigstore.json', import.meta.url));
@@ -165,6 +165,25 @@ describe('verifyRelease', () => {
       const text = tamper(mise, (_, e) => (e.inclusionProof.treeSize = String(Number(e.inclusionProof.treeSize) + 1)));
       assert.throws(() => verifyRelease(text, policy), (error) => error.code === 'signature');
     });
+  });
+});
+
+describe('readStatement', () => {
+  const payload = JSON.parse(mise).dsseEnvelope.payload;
+  const withArtifact = (edit) => {
+    const statement = JSON.parse(Buffer.from(payload, 'base64'));
+    edit(statement.predicate.artifacts[0]);
+    return Buffer.from(JSON.stringify(statement)).toString('base64');
+  };
+
+  it('accepts the signed statement', () => {
+    assert.equal(readStatement(payload, {}).predicate.project, 'github.com/jdx/mise');
+  });
+
+  it('requires a size on every artifact', () => {
+    assert.throws(() => readStatement(withArtifact((a) => delete a.size), {}), { code: 'statement', message: /integer size/ });
+    assert.throws(() => readStatement(withArtifact((a) => (a.size = -1)), {}), { code: 'statement' });
+    assert.throws(() => readStatement(withArtifact((a) => (a.size = '12')), {}), { code: 'statement' });
   });
 });
 
