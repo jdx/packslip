@@ -24,7 +24,8 @@ Pass every downloaded file with `--artifact`. If you have not chosen a
 file yet, verify the bundle alone, inspect it with `packslip show`, then
 verify the selected download under the same policy. For a command that
 does discovery, verification, and installation together, see
-[Install a tool](/docs/bootstrap/).
+[Install a tool](/docs/bootstrap/). To verify keyless releases in a project that cannot
+install packslip, [commit a verifier](/docs/verify-script/) into it.
 
 ## Verify against the expected repository
 
