@@ -44,9 +44,10 @@ verified github.com/jdx/mise 2026.10.11, signed by https://github.com/jdx/mise/.
 
 On a failure it prints the reason and exits 1, for example
 `verification failed: the signing identity … is not the expected one`.
-Usage errors exit 2. `--json` prints one JSON object with `ok`, and on failure
-a `code` such as `signature`, `identity`, `digest-mismatch`, or
-`artifact-not-found`.
+With `--json` it prints one JSON object instead, with `ok` and, on failure, a
+`code` such as `signature`, `identity`, `digest-mismatch`, `artifact-not-found`,
+or `file` for a bundle or download it cannot read. A usage error, such as a
+missing policy flag, exits 2 with usage text on stderr and no JSON.
 
 The policy always comes from you. `--issuer` is required together with one of:
 
@@ -63,6 +64,7 @@ names: a renamed file is `not listed` in the statement.
 ## Use it as a module
 
 ```js
+import { readFile } from 'node:fs/promises';
 import { verifyFile, verifyRelease } from './packslip-verify.mjs';
 
 const statement = verifyRelease(await readFile('packslip.sigstore.json'), {
@@ -74,7 +76,8 @@ await verifyFile(statement, 'mise-v2026.10.11-linux-arm64');
 ```
 
 `verifyRelease` throws a `VerifyError` whose `code` names the failed check,
-and `verifyFile` rejects with one.
+including for a malformed bundle. `verifyFile` rejects with a `VerifyError`
+too, with the code `file` when it cannot read the download.
 
 ## What it checks
 

@@ -86,6 +86,13 @@ describe('verifyRelease', () => {
 
   describe('a bundle that was changed', () => {
     it('is not JSON', () => refuses('{', policy, 'bundle'));
+    it('has malformed certificate bytes', () => {
+      refuses(tamper(mise, (b) => (b.verificationMaterial.certificate.rawBytes = 'AAAA')), policy, 'bundle', /malformed/);
+    });
+    it('has a log entry with the wrong shape', () => {
+      refuses(tamper(mise, (_, e) => (e.canonicalizedBody = 'e30=')), policy, 'signature');
+      refuses(tamper(mise, (b) => (b.dsseEnvelope.signatures[0].sig = 7)), policy, 'signature');
+    });
     it('has no envelope', () => refuses(tamper(mise, (b) => delete b.dsseEnvelope), policy, 'bundle'));
     it('has another payload type', () => {
       refuses(tamper(mise, (b) => (b.dsseEnvelope.payloadType = 'text/plain')), policy, 'bundle');
@@ -192,6 +199,11 @@ describe('verifyFile', () => {
     await assert.rejects(verifyFile(statement(), renamed), { code: 'artifact-not-found' });
   });
 
+  it('refuses a file it cannot read', async () => {
+    const missing = statement();
+    await assert.rejects(verifyFile(missing, join(dir, 'missing', 'tool-1.0.0.tar.gz')), { code: 'file' });
+  });
+
   it('refuses a changed file', async () => {
     const other = mkdtempSync(join(tmpdir(), 'packslip-verify-'));
     const changed = join(other, 'tool-1.0.0.tar.gz');
@@ -236,6 +248,15 @@ describe('command line', () => {
     const result = run(miseBundlePath, '--issuer', ISSUER, '--identity', IDENTITY, '--artifact', miseBundlePath, '--json');
     assert.equal(result.status, 1);
     assert.equal(JSON.parse(result.stdout).code, 'artifact-not-found');
+  });
+
+  it('reports an unreadable bundle or file as a failure', () => {
+    const missing = run(join(tmpdir(), 'no-such-bundle.json'), '--issuer', ISSUER, '--identity', IDENTITY, '--json');
+    assert.equal(missing.status, 1);
+    assert.equal(JSON.parse(missing.stdout).code, 'bundle');
+    const file = run(miseBundlePath, '--issuer', ISSUER, '--identity', IDENTITY, '--artifact', join(tmpdir(), 'mise-v2026.10.11-linux-arm64'), '--json');
+    assert.equal(file.status, 1);
+    assert.equal(JSON.parse(file.stdout).code, 'file');
   });
 
   it('exits 2 without a signer policy', () => {

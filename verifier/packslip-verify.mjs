@@ -14,7 +14,7 @@
 //   5. the statement, then each file you pass: signed size and SHA-256/SHA-512.
 //
 // It does not check the certificate's signed certificate timestamp, an RFC 3161
-// timestamp, or key-signed bundles; use  for those. The trust
+// timestamp, or key-signed bundles; use `packslip verify` for those. The trust
 // root below is a snapshot of sigstore's public-good trusted_root.json (Fulcio
 // chains and Rekor keys). When sigstore rotates a key, replace this file with a
 // newer copy.
@@ -412,9 +412,20 @@ function readStatement(payload, expect) {
  * `identity` is the exact certificate identity, or a function that accepts one,
  * and `issuer` the exact OIDC issuer; the policy must come from you, never from
  * the bundle. `project`, `tag` and `sourceRepository` are optional further
- * checks, and `trustedRoot` replaces the embedded trust root (same shape). Returns the signed statement plus `signer`.
+ * checks, and `trustedRoot` replaces the embedded trust root (same shape).
+ * Returns the signed statement plus `signer`.
+ * Throws a `VerifyError` for every failure, including a malformed bundle.
  */
 export function verifyRelease(bundleJson, options) {
+  try {
+    return verifyBundle(bundleJson, options);
+  } catch (error) {
+    if (error instanceof VerifyError) throw error;
+    throw new VerifyError('bundle', `the bundle is malformed: ${error.message}`);
+  }
+}
+
+function verifyBundle(bundleJson, options) {
   if (typeof options?.issuer !== 'string' || (options.identity === undefined && options.sourceRepository === undefined)) {
     fail('usage', 'a signer policy needs an issuer and an identity or a source repository');
   }
@@ -471,9 +482,13 @@ export async function verifyFile(statement, path) {
   const info = statement.predicate.artifacts.find((a) => a.name === name);
   const hashes = { sha256: createHash('sha256'), ...(subject.digest.sha512 ? { sha512: createHash('sha512') } : {}) };
   let size = 0;
-  for await (const chunk of createReadStream(path)) {
-    size += chunk.length;
-    for (const hash of Object.values(hashes)) hash.update(chunk);
+  try {
+    for await (const chunk of createReadStream(path)) {
+      size += chunk.length;
+      for (const hash of Object.values(hashes)) hash.update(chunk);
+    }
+  } catch (error) {
+    fail('file', `cannot read ${path}: ${error.message}`);
   }
   if (info?.size !== undefined && size !== info.size) {
     fail('digest-mismatch', `${name}: size is ${size}, but the signed statement says ${info.size}`);
@@ -496,6 +511,14 @@ const USAGE = `usage: node packslip-verify.mjs BUNDLE --issuer URL (--identity S
 
 Verifies a keyless packslip bundle and the files you downloaded. The policy flags
 must come from you, not from the release.`;
+
+function readBundle(path) {
+  try {
+    return readFileSync(path);
+  } catch (error) {
+    return fail('bundle', `cannot read ${path}: ${error.message}`);
+  }
+}
 
 async function main(argv) {
   let args;
@@ -526,7 +549,7 @@ async function main(argv) {
   }
   try {
     const prefix = values['identity-prefix'];
-    const statement = verifyRelease(readFileSync(positionals[0]), {
+    const statement = verifyRelease(readBundle(positionals[0]), {
       issuer: values.issuer,
       identity: prefix === undefined ? values.identity : (san) => san.startsWith(prefix),
       sourceRepository: values['source-repository'],
@@ -544,8 +567,9 @@ async function main(argv) {
     }
     return 0;
   } catch (error) {
-    if (!(error instanceof VerifyError)) throw error;
-    if (values.json) console.log(JSON.stringify({ ok: false, code: error.code, error: error.message }));
+    // Anything that is not a VerifyError is a bug here, but still a failure, not a crash.
+    const code = error instanceof VerifyError ? error.code : 'error';
+    if (values.json) console.log(JSON.stringify({ ok: false, code, error: error.message }));
     else console.error(`verification failed: ${error.message}`);
     return 1;
   }
