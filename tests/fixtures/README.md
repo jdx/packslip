@@ -1,8 +1,8 @@
 # Test fixtures
 
-These files give tests fixed executable layouts and a real historical
-signature to inspect. The three ELF files test metadata extraction;
-the hk bundle tests verification and repository identity.
+These files give tests fixed executable layouts and real historical
+signatures to inspect. The three ELF files test metadata extraction;
+the hk and mkghtag bundles test verification and repository identity.
 
 ## Executable metadata
 
@@ -32,6 +32,17 @@ verify it offline against the embedded trusted root. Tests also check
 that `packslip pin` prints its signer fingerprint,
 `ps1_snirenkjwr7m5ozgcufameodnm`, and that `packslip verify --pin`
 accepts that fingerprint and refuses another repository's.
+
+`mkghtag-v0.1.14-10.sigstore.json` is the packslip
+`suzuki-shunsuke/mkghtag` published with its v0.1.14-10 GitHub prerelease.
+A run of mkghtag signed it through the reusable workflow of another
+repository, so its certificate's identity is
+`https://github.com/suzuki-shunsuke/go-release-workflow/.github/workflows/release.yaml@refs/heads/add-packslip`
+while its Source Repository URI is `https://github.com/suzuki-shunsuke/mkghtag`
+(repository ID 701940692). Tests check that `packslip verify` and
+`packslip pin` accept it without trust flags, binding it to the project
+through the source repository, and that its signer fingerprint is
+`ps1_xfjx4bjm6cpir2jd2yovxlyqxm`.
 
 ## Compatibility coverage
 

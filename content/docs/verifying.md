@@ -44,9 +44,10 @@ Keep the trailing slash: without it, the prefix
 `https://github.com/owner/repo-fork`.
 
 Without identity flags, `verify` derives the policy from the project the
-bundle claims: for `github.com/owner/repo`, a workflow under
-`https://github.com/owner/repo/` through GitHub's issuer, and the
-equivalent for a `gitlab.com` project. That shows only that the signer
+bundle claims: for `github.com/owner/repo`, a signature through GitHub's
+issuer whose certificate records `https://github.com/owner/repo` as its
+source repository, whichever workflow signed, and the equivalent for a
+`gitlab.com` project. That shows only that the signer
 belongs to the project the document names. It does **not** show that this
 is the project or version you intended to install, so compare both with
 your request. For a project on any other host there is nothing to derive,
@@ -64,9 +65,12 @@ what it names, so pass `--issuer` together with `--identity-prefix` or
 `--identity`: `--issuer` alone accepts a workflow of any repository on that
 forge.
 
-For a release signed through a reusable workflow of another repository,
-the signing identity names that workflow, not the project's repository.
-Pass `--source-repository https://github.com/owner/repo` with `--issuer`
+A release signed through a reusable workflow of another repository
+verifies without flags, because its certificate still records the
+project's repository as its source. Its signing identity names that
+workflow, not the project's repository, so an identity prefix of the
+project's repository does not match it. To pin the repository yourself,
+pass `--source-repository https://github.com/owner/repo` with `--issuer`
 instead of an identity flag: the certificate must record that repository
 as its source, whichever workflow signed.
 

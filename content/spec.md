@@ -112,8 +112,10 @@ The name is the location and, on a forge, says who may sign:
 
 - **GitHub:** `github.com/<owner>/<repo>`. Releases and their packslips are
   GitHub release assets, and the packslip is expected to be signed by a workflow
-  of that repository through GitHub's OIDC issuer
-  (`https://token.actions.githubusercontent.com`).
+  run of that repository through GitHub's OIDC issuer
+  (`https://token.actions.githubusercontent.com`). The workflow that signs
+  may be a reusable workflow of another repository, as
+  [Repository identity and renames](#repository-identity-and-renames) allows.
 - **GitLab:** `gitlab.com/<path>`. Likewise, packslips are signed by a
   pipeline of that project through `https://gitlab.com`. GitLab subgroups
   make paths arbitrary depth, so the whole path names the repository.
@@ -145,7 +147,7 @@ monorepo subpath.
 Each tool gets its own packslip per release, with its own `version`, and
 `source.tag` carries the real tag (`oxlint_v1.0.0`, `cli/v1.9.4`), so
 consumers do not have to infer the tag from the version. The identity pin is
-still the repository: any workflow of `oxc-project/oxc` may sign a
+still the repository: any workflow run of `oxc-project/oxc` may sign a
 packslip for `oxc-project/oxc/oxlint`.
 
 When several tools share one GitHub release, each ships its own bundle,
@@ -275,11 +277,12 @@ with `--key`. The field has no meaning for `sigstore-key`, which has no
 workflow.
 
 With `pin_workflow: false`, a consumer still requires everything else of
-the signer: the issuer, a certificate whose repository is the one pinned
-(by repository ID where the forge records one, as
+the signer: the issuer and a certificate whose repository is the one
+pinned (by repository ID where the forge records one, as
 [Repository identity and renames](#repository-identity-and-renames)
-describes), and a workflow of that repository. It stops comparing the
-workflow's path with the last accepted signer.
+describes). It stops comparing the signing workflow's path with the last
+accepted signer and, where repository IDs establish the repository, the
+repository its workflow file belongs to.
 
 The consumer remembers `pin_workflow` beside the signer. Disabling a
 previously pinned workflow reduces remembered trust and requires approval,
@@ -351,7 +354,11 @@ repository under the old name has a different ID and is refused.
 Signer continuity compares the workflow's path inside the repository.
 For example, `.github/workflows/release.yml` in `jdx/rtx` continues as the
 same workflow in `jdx/mise`; the same path in `jdx/hk` continues in
-`acme/hk` after a transfer.
+`acme/hk` after a transfer. A reusable workflow of another repository is
+compared as a workflow of that repository, by that repository's name: it
+continues only the same path in the same repository. It does not continue
+the project's own workflow at that path, and the project's own workflow
+does not continue it.
 
 A pin taken from an accepted release records its signed project name and
 repository ID. Consumers reading pins that also store an owner ID, as an
@@ -378,7 +385,7 @@ Two mechanisms limit that first-use exposure:
 
 The reference implementation reads the extensions as
 `sigstore::source_repository`, classifies a release into these cases in
-`forge::check`, and verifies and classifies a bundle in one call with
+`forge::check_source`, and verifies and classifies a bundle in one call with
 `verify_forge`. `forge::same_workflow` compares two signers a consumer
 recorded, with the repository ID recorded alongside each, for
 [consumer rule 3](#consumer-rules) when no release is at hand.
@@ -531,13 +538,16 @@ list.
 
 Without `--pubkey`, `--identity`, `--identity-prefix`, `--issuer`, or
 `--source-repository`, the command derives its signer policy from the
-GitHub or GitLab project the statement claims. As
-[Project names](#project-names) explains, that default does not check the
-user's intended identity. Supply the expected public key with `--pubkey`,
-or the expected identity or identity prefix together with `--issuer`. For
-a release signed through another repository's reusable workflow,
-`--source-repository` with `--issuer` requires the certificate to record
-the expected repository as its source. For a GitHub or GitLab project,
+GitHub or GitLab project the statement claims: the forge's issuer, and a
+certificate bound to that repository as
+[Repository identity and renames](#repository-identity-and-renames)
+describes, so a release signed through another repository's reusable
+workflow verifies. As [Project names](#project-names) explains, that
+default does not check the user's intended identity. Supply the expected
+public key with `--pubkey`, or the expected identity or identity prefix
+together with `--issuer`. `--source-repository` with `--issuer` instead
+requires the certificate to record the expected repository as its source,
+whichever workflow signed. For a GitHub or GitLab project,
 supplied identity flags narrow the policy rather than replace it: the
 signer must match them and still belong to the project's repository, as
 [Repository identity and renames](#repository-identity-and-renames)
@@ -1743,8 +1753,10 @@ their linked sections use this remembered state:
 
 1. **Pin the identity once.**
    - For a forge project, use the project name to establish the first
-     pin: accept only the forge's issuer and an identity under that
-     repository. Remember the repository ID in the certificate. That ID
+     pin: accept only the forge's issuer and a certificate whose Source
+     Repository URI is that repository, or, when the certificate records
+     none, an identity under that repository. Remember the repository ID
+     in the certificate. That ID
      then pins the project as [Repository identity and renames](#repository-identity-and-renames) defines:
      renames and transfers preserve the pin, while a repository recreated
      under the old name does not inherit it.
@@ -1779,7 +1791,10 @@ their linked sections use this remembered state:
    ID from the release's certificate, or, when comparing two recorded
    signers such as lockfile entries, the ID recorded with each. A changed
    repository ID means a changed signer even if the identity string
-   matches.
+   matches. A reusable workflow of another repository is a different
+   signer from the project's own workflow at the same path, as
+   [Repository identity and renames](#repository-identity-and-renames)
+   describes.
 
    With `identity.pin_workflow: false`, compare by repository alone. If
    the remembered value is `true`, changing it to `false` weakens the pin

@@ -365,9 +365,10 @@ jobs:
             exit 1
           fi
       # A release and a release list this job signs for a GitHub project
-      # that is not this repository, as a repackager would. Identity flags
-      # that match this job must still refuse both until
-      # --allow-other-repository accepts a signer outside the project.
+      # that is not this repository, as a repackager would. verify without
+      # flags, and with identity flags that match this job, must still
+      # refuse both until --allow-other-repository accepts a signer outside
+      # the project.
       - name: Keyless, for another repository's project
         run: |
           set -euo pipefail
@@ -395,6 +396,7 @@ jobs:
           issuer=https://token.actions.githubusercontent.com
           this_repo=(--issuer "$issuer" --identity-prefix "https://github.com/${GITHUB_REPOSITORY}/")
           for doc in elsewhere/packslip.sigstore.json elsewhere/releases.sigstore.json; do
+            refused "$doc"
             refused "$doc" --issuer "$issuer"
             refused "$doc" "${this_repo[@]}"
             ./target/release/packslip verify "$doc" "${this_repo[@]}" --allow-other-repository
