@@ -198,23 +198,41 @@ impl RunWith<BinInfo> for Install {
             .enable_all()
             .build()?;
         let report = runtime.block_on(packslip::install::run(request))?;
-        println!(
-            "Installed {} {} at {}",
-            report.project,
-            report.receipt.version,
-            report.receipt.tree.display()
-        );
-        if let Some(pin) = report.pin {
-            println!("Signer pin: {pin}");
-        }
-        for warning in report.warnings {
-            eprintln!("warning: {warning}");
-        }
-        for path in report.receipt.exports.keys() {
-            println!("Command: {}", path.display());
-        }
+        print_install_report(
+            report,
+            &mut std::io::stdout().lock(),
+            &mut std::io::stderr().lock(),
+        )?;
         Ok(())
     }
+}
+
+/// Print what `install` did: the release and its tree, the signer
+/// fingerprint of a keyless forge release, and each exported command, with
+/// any warnings on stderr.
+#[cfg(feature = "install-cli")]
+fn print_install_report(
+    report: packslip::install::Report,
+    out: &mut impl std::io::Write,
+    err: &mut impl std::io::Write,
+) -> std::io::Result<()> {
+    writeln!(
+        out,
+        "Installed {} {} at {}",
+        report.project,
+        report.receipt.version,
+        report.receipt.tree.display()
+    )?;
+    if let Some(fingerprint) = report.pin {
+        writeln!(out, "Signer fingerprint: {fingerprint}")?;
+    }
+    for warning in report.warnings {
+        writeln!(err, "warning: {warning}")?;
+    }
+    for path in report.receipt.exports.keys() {
+        writeln!(out, "Command: {}", path.display())?;
+    }
+    Ok(())
 }
 
 /// Generate a self-contained shell completion script
@@ -2712,5 +2730,57 @@ mod signer_tests {
                 "{project}: {err}"
             );
         }
+    }
+}
+
+#[cfg(all(test, feature = "install-cli"))]
+mod install_tests {
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    use packslip::install::Report;
+    use packslip::install_fs::{Entry, History, Receipt};
+
+    fn printed(pin: Option<&str>) -> (String, String) {
+        let tree = PathBuf::from("/installs/hk");
+        let command = PathBuf::from("/bin/hk");
+        let report = Report {
+            project: "github.com/jdx/hk".into(),
+            receipt: Receipt {
+                schema: 1,
+                project: "github.com/jdx/hk".into(),
+                version: "1.2.3".into(),
+                tree: tree.clone(),
+                exports: BTreeMap::from([(command, Entry::Link(tree.join("hk")))]),
+                history: History::default(),
+            },
+            pin: pin.map(Into::into),
+            warnings: vec!["/bin is absent from PATH".into()],
+        };
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        super::print_install_report(report, &mut out, &mut err).unwrap();
+        (
+            String::from_utf8(out).unwrap(),
+            String::from_utf8(err).unwrap(),
+        )
+    }
+
+    #[test]
+    fn install_prints_the_signer_fingerprint_of_a_keyless_release() {
+        let (out, err) = printed(Some("ps1_snirenkjwr7m5ozgcufameodnm"));
+        assert_eq!(
+            out,
+            "Installed github.com/jdx/hk 1.2.3 at /installs/hk\n\
+             Signer fingerprint: ps1_snirenkjwr7m5ozgcufameodnm\n\
+             Command: /bin/hk\n"
+        );
+        assert_eq!(err, "warning: /bin is absent from PATH\n");
+
+        // A key-signed release has no fingerprint to print.
+        let (out, _) = printed(None);
+        assert_eq!(
+            out,
+            "Installed github.com/jdx/hk 1.2.3 at /installs/hk\nCommand: /bin/hk\n"
+        );
     }
 }

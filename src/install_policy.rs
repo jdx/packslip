@@ -369,7 +369,9 @@ fn check_constraints(
                 .iter()
                 .map(|p| {
                     p.parse().map_err(|_| {
-                        Error::Constraint(format!("invalid signer pin in constraint {index}"))
+                        Error::Constraint(format!(
+                            "invalid signer fingerprint in constraint {index}"
+                        ))
                     })
                 })
                 .collect::<Result<_, _>>()?;
@@ -378,7 +380,7 @@ fn check_constraints(
                 .any(|p| p.verify(record.issuer.as_deref(), source.as_ref()).is_ok())
             {
                 return Err(Error::Constraint(format!(
-                    "signer does not match constraint {index}'s repository pins"
+                    "signer does not match constraint {index}'s signer fingerprints"
                 )));
             }
         }
@@ -1174,15 +1176,18 @@ mod tests {
             pins: vec!["ps1_aaaaaaaaaaaaaaaaaaaaaaaaaa".into()],
             ..Constraints::default()
         };
-        assert!(
-            release(
-                "github.com/jdx/hk",
-                Some("922514152"),
-                bundle,
-                &[good.clone(), wrong],
-                options
-            )
-            .is_err()
+        let err = release(
+            "github.com/jdx/hk",
+            Some("922514152"),
+            bundle,
+            &[good.clone(), wrong],
+            options,
+        )
+        .err()
+        .expect("a mismatched signer fingerprint must fail");
+        assert_eq!(
+            err.to_string(),
+            "signer does not match constraint 1's signer fingerprints"
         );
         assert!(
             release(
@@ -1289,18 +1294,21 @@ mod tests {
         let constraints = admin_constraints(&[dir.path()], "github.com/jdx/hk").unwrap();
         assert_eq!(constraints.len(), 2);
         let root = crate::sigstore::trusted_root(None).unwrap();
-        assert!(
-            release(
-                "github.com/jdx/hk",
-                Some("922514152"),
-                include_str!("../tests/fixtures/hk-v2.3.0.sigstore.json"),
-                &constraints,
-                crate::Options {
-                    require_log: true,
-                    trusted_root: &root
-                }
-            )
-            .is_err()
+        let err = release(
+            "github.com/jdx/hk",
+            Some("922514152"),
+            include_str!("../tests/fixtures/hk-v2.3.0.sigstore.json"),
+            &constraints,
+            crate::Options {
+                require_log: true,
+                trusted_root: &root,
+            },
+        )
+        .err()
+        .expect("a malformed signer fingerprint must fail");
+        assert_eq!(
+            err.to_string(),
+            "invalid signer fingerprint in constraint 1"
         );
     }
     #[test]
