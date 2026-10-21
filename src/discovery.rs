@@ -881,6 +881,9 @@ pub fn candidates_with_latest(
     // candidate after the one chosen above: only its bundles say which
     // project it describes.
     let mut alternates: BTreeMap<String, Vec<Release>> = BTreeMap::new();
+    // A withdrawn build that a request names only by leaving out its build
+    // metadata, reported if no release still matches the request.
+    let mut yanked_build = None;
     for release in live {
         match choices.entry(release.version.clone()) {
             std::collections::btree_map::Entry::Vacant(entry) => {
@@ -915,6 +918,11 @@ pub fn candidates_with_latest(
                 }) {
                     return Err(Error::Yanked(entry.version.clone()));
                 }
+                if requested
+                    .is_some_and(|v| same_version(numeric.as_deref().unwrap_or(v), &entry.version))
+                {
+                    yanked_build.get_or_insert_with(|| entry.version.clone());
+                }
                 continue;
             }
             // GitHub's latest release, when it has the entry's version, is
@@ -948,6 +956,26 @@ pub fn candidates_with_latest(
                     bundles: vec![entry.packslip.clone()],
                 },
             );
+        }
+        // A signed entry that maps a forge tag decides which version the
+        // tag names, so the version derived from that tag is no candidate
+        // of its own: a vendor who tags `v1.2.3` and signs `1.2.3+build.5`
+        // offers only the build, which install would refuse to take as
+        // `1.2.3`. A withdrawn entry withdraws the tag that names it.
+        let mapped: BTreeMap<&str, &str> = list
+            .predicate
+            .releases
+            .iter()
+            .filter_map(|entry| Some((entry.tag.as_deref()?, entry.version.as_str())))
+            .collect();
+        let unmapped = |version: &str, release: &Release| {
+            mapped
+                .get(release.tag.as_str())
+                .is_none_or(|mapped| *mapped == version)
+        };
+        choices.retain(|version, release| unmapped(version, release));
+        for (version, others) in &mut alternates {
+            others.retain(|release| unmapped(version, release));
         }
         if list.predicate.latest.is_some() {
             for choice in choices.values_mut() {
@@ -992,16 +1020,25 @@ pub fn candidates_with_latest(
     };
     if let Some(request) = requested.filter(|r| *r != "latest") {
         if let Some(exact) = exact_tag {
-            // Signed entries remain authoritative over every forge tag alias.
-            // Otherwise an exact tag retains that release's own bundle URLs.
-            if list.is_some_and(|list| {
-                list.predicate
-                    .releases
+            // Signed entries remain authoritative over every forge tag alias,
+            // and an entry that maps this tag decides which release it names:
+            // a vendor who tags `1.2.3` and signs `1.2.3+build.5` maps the
+            // tag to that build. Otherwise an exact tag retains that
+            // release's own bundle URLs.
+            let listed = list.and_then(|list| {
+                let releases = &list.predicate.releases;
+                releases
                     .iter()
-                    .any(|entry| entry.version == exact.version)
-            }) {
+                    .find(|entry| entry.version == exact.version)
+                    .or_else(|| {
+                        releases
+                            .iter()
+                            .find(|entry| entry.tag.as_deref() == Some(exact.tag.as_str()))
+                    })
+            });
+            if let Some(entry) = listed {
                 return choices
-                    .get(&exact.version)
+                    .get(&entry.version)
                     .cloned()
                     .map(single)
                     .ok_or(Error::NoRelease);
@@ -1024,7 +1061,7 @@ pub fn candidates_with_latest(
             .filter(|r| matches_request(r, request))
             .collect();
         if releases.is_empty() {
-            return Err(Error::NoRelease);
+            return Err(yanked_build.map_or(Error::NoRelease, Error::Yanked));
         }
         return Ok(Candidates {
             recommendation: None,
@@ -1155,6 +1192,16 @@ fn numeric_request(request: &str) -> Option<String> {
     Some(format!("{}{tail}", numbers.join(".")))
 }
 
+// An exact request names a release whatever build metadata it carries, since
+// build metadata is not a component: `1.2.3` is `1.2.3+build.5`.
+fn same_version(requested: &str, version: &str) -> bool {
+    version == requested
+        || (!requested.contains('+')
+            && version
+                .split_once('+')
+                .is_some_and(|(core, _)| core == requested))
+}
+
 fn matches_request(release: &Release, request: &str) -> bool {
     let numeric = numeric_request(request);
     let requested = numeric
@@ -1175,8 +1222,14 @@ fn matches_request(release: &Release, request: &str) -> bool {
     if requested.as_bytes().first().is_some_and(u8::is_ascii_digit)
         && !requested.contains([' ', ',', '^', '~', '*', '<', '>', '='])
     {
+        // A prefix ends at a component boundary: `3.12` matches `3.12.1` but
+        // not `3.120.0`. Build metadata is not a component, so `1.2.3`
+        // matches `1.2.3+build.5`, as `1.2` and `=1.2.3` do.
         return release.version.starts_with(requested)
-            && release.version.as_bytes().get(requested.len()) == Some(&b'.');
+            && matches!(
+                release.version.as_bytes().get(requested.len()),
+                Some(b'.' | b'+')
+            );
     }
     semver::VersionReq::parse(requested).is_ok_and(|range| range.matches(&version))
 }
@@ -1406,6 +1459,130 @@ mod tests {
                 .version,
             "3.12.9"
         );
+    }
+    #[test]
+    fn exact_requests_match_build_metadata() {
+        let releases: Vec<_> = ["1.2.3+build.5", "1.2.2", "1.2.30", "1.3.0-rc.1+build.2"]
+            .into_iter()
+            .map(|version| Release {
+                version: version.into(),
+                tag: format!("release-{version}"),
+                bundles: vec!["https://example.test/bundle".into()],
+                recommended: false,
+            })
+            .collect();
+        for request in ["1.2.3", "v1.2.3", "1.2.03", "1.2.3+build.5", "=1.2.3"] {
+            assert_eq!(
+                choose(&releases, None, Some(request)).unwrap().version,
+                "1.2.3+build.5",
+                "{request}"
+            );
+        }
+        assert_eq!(
+            choose(&releases, None, Some("1.2.2")).unwrap().version,
+            "1.2.2"
+        );
+        assert_eq!(
+            choose(&releases, None, Some("1.3.0-rc.1")).unwrap().version,
+            "1.3.0-rc.1+build.2"
+        );
+        assert!(matches!(
+            choose(&releases, None, Some("1.2.4")),
+            Err(Error::NoRelease)
+        ));
+        // An explicit request for a withdrawn build reports the withdrawal.
+        let mut list = signed_list();
+        list.predicate.releases[0].version = "1.2.3+build.5".into();
+        list.predicate.releases[0].tag = None;
+        assert!(matches!(
+            choose(&releases, Some(&list), Some("1.2.3")),
+            Err(Error::Yanked(version)) if version == "1.2.3+build.5"
+        ));
+        assert_eq!(
+            choose(&releases, Some(&list), Some("1.2.2"))
+                .unwrap()
+                .version,
+            "1.2.2"
+        );
+    }
+    #[test]
+    fn exact_requests_select_the_build_a_signed_list_maps_a_tag_to() {
+        // A vendor tags `v1.2.3` or `1.2.3`, signs `1.2.3+build.5`, and maps
+        // the tag in the supplementary list. GitHub listing still derives a
+        // `1.2.3` candidate from the tag; selecting it would fail at install,
+        // where the signed version differs.
+        for tag in ["v1.2.3", "1.2.3"] {
+            let live = vec![Release {
+                version: "1.2.3".into(),
+                tag: tag.into(),
+                bundles: vec!["https://example.test/live".into()],
+                recommended: false,
+            }];
+            let mut list = signed_list();
+            list.predicate.releases[0].version = "1.2.3+build.5".into();
+            list.predicate.releases[0].tag = Some(tag.into());
+            list.predicate.releases[0].packslip = "https://example.test/listed".into();
+            list.predicate.releases[0].status = None;
+            for request in [
+                Some("1.2.3"),
+                Some("v1.2.3"),
+                Some("1.2.03"),
+                Some("=1.2.3"),
+                Some("1.2"),
+                Some("1.2.3+build.5"),
+                Some("latest"),
+                None,
+            ] {
+                let release = choose(&live, Some(&list), request).unwrap();
+                assert_eq!(release.version, "1.2.3+build.5", "{tag} {request:?}");
+                assert_eq!(release.bundles, vec!["https://example.test/listed"]);
+                assert_eq!(release.tag, tag);
+            }
+            // Withdrawing the build withdraws the tag that names it.
+            list.predicate.releases[0].status = Some(crate::model::ReleaseStatus::Yanked);
+            assert!(matches!(
+                choose(&live, Some(&list), Some(tag)),
+                Err(Error::Yanked(version)) if version == "1.2.3+build.5"
+            ));
+        }
+    }
+    #[test]
+    fn exact_requests_order_colliding_builds_like_equals() {
+        // The specification forbids two releases that differ only in build
+        // metadata. For a vendor who publishes both, an exact request picks
+        // as `=1.2.3` does; the plain release stays reachable by its tag.
+        let release = |version: &str| Release {
+            version: version.into(),
+            tag: format!("v{version}"),
+            bundles: vec!["https://example.test/bundle".into()],
+            recommended: false,
+        };
+        let releases = vec![release("1.2.3"), release("1.2.3+build.5")];
+        for request in ["1.2.3", "1.2.03", "=1.2.3", "1.2", "1.2.3+build.5"] {
+            assert_eq!(
+                choose(&releases, None, Some(request)).unwrap().version,
+                "1.2.3+build.5",
+                "{request}"
+            );
+        }
+        assert_eq!(
+            choose(&releases, None, Some("v1.2.3")).unwrap().version,
+            "1.2.3"
+        );
+        // Withdrawing the build leaves the release the request still matches.
+        let mut list = signed_list();
+        list.predicate.releases[0].version = "1.2.3+build.5".into();
+        list.predicate.releases[0].tag = None;
+        assert_eq!(
+            choose(&releases, Some(&list), Some("1.2.3"))
+                .unwrap()
+                .version,
+            "1.2.3"
+        );
+        assert!(matches!(
+            choose(&releases, Some(&list), Some("1.2.3+build.5")),
+            Err(Error::Yanked(_))
+        ));
     }
     #[test]
     fn list_preserves_forge_tags_and_maps_latest_hint() {
@@ -1823,6 +2000,59 @@ mod tests {
             candidates_with_latest(P, &live, None, None, Some("other_v9.0.0")).unwrap();
         assert!(candidates.skipped.is_empty());
         assert_eq!(tags(&candidates), ["v2.0.0", "v1.0.0"]);
+    }
+
+    #[test]
+    fn a_tag_a_signed_list_maps_names_no_derived_candidate() {
+        // The vendor tags `v1.2.3` and signs `1.2.3+build.5`. The `1.2.3`
+        // derived from the tag would fail at install, so it is not tried
+        // after the build; the next candidate is the older release.
+        let live = vec![
+            release("1.2.3", "v1.2.3", &["https://example.test/live"], false),
+            release("1.2.2", "v1.2.2", &["https://example.test/1.2.2"], false),
+        ];
+        let mut list = signed_list();
+        list.predicate.releases[0].version = "1.2.3+build.5".into();
+        list.predicate.releases[0].tag = Some("v1.2.3".into());
+        list.predicate.releases[0].packslip = "https://example.test/listed".into();
+        list.predicate.releases[0].status = None;
+        for request in [None, Some("1.2"), Some("1")] {
+            let candidates = candidates_with_latest(P, &live, Some(&list), request, None).unwrap();
+            let versions: Vec<_> = candidates
+                .releases
+                .iter()
+                .map(|r| r.version.as_str())
+                .collect();
+            assert_eq!(versions, ["1.2.3+build.5", "1.2.2"], "{request:?}");
+        }
+        // Withdrawing the build withdraws its tag's derived version too.
+        list.predicate.releases[0].status = Some(crate::model::ReleaseStatus::Yanked);
+        let candidates = candidates_with_latest(P, &live, Some(&list), None, None).unwrap();
+        assert_eq!(tags(&candidates), ["v1.2.2"]);
+        assert!(matches!(
+            candidates_with_latest(P, &live, Some(&list), Some("1.2.3"), None),
+            Err(Error::Yanked(version)) if version == "1.2.3+build.5"
+        ));
+        // A tag that a signed entry maps to an older version offers only
+        // that version, not the newer one derived from the tag.
+        let live = vec![
+            release("3.0.0", "v3.0.0", &["https://example.test/live"], false),
+            release("1.3.0", "v1.3.0", &["https://example.test/1.3.0"], false),
+        ];
+        list.predicate.releases[0].version = "1.4.0".into();
+        list.predicate.releases[0].tag = Some("v3.0.0".into());
+        list.predicate.releases[0].status = None;
+        let candidates = candidates_with_latest(P, &live, Some(&list), None, None).unwrap();
+        let versions: Vec<_> = candidates
+            .releases
+            .iter()
+            .map(|r| r.version.as_str())
+            .collect();
+        assert_eq!(versions, ["1.4.0", "1.3.0"]);
+        assert!(matches!(
+            candidates_with_latest(P, &live, Some(&list), Some("3.0.0"), None),
+            Err(Error::NoRelease)
+        ));
     }
 
     #[test]

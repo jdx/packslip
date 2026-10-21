@@ -355,13 +355,18 @@ pub fn channel(version: &semver::Version) -> Option<&str> {
 /// `jq-1.7.1` names `1.7.1` for `github.com/jqlang/jq`; `cli/v1.9.4`
 /// names `1.9.4` for `github.com/biomejs/biome/crates/cli`.
 ///
+/// Each allowed prefix is tried in that order, then no prefix, and the
+/// first that leaves a version wins. A prefix that begins the tag without
+/// leaving one does not end the search: `tool-suite-1.2.0` names `1.2.0`
+/// for `github.com/acme/tool-suite/tool` through the repository name,
+/// though `tool-` begins it too.
+///
 /// This is how a consumer lists a forge project's versions without
 /// downloading a bundle per release. The packslip inside the release is
 /// the authority: its `version` must equal what the tag names, or the
 /// consumer refuses it. A tag that names no version is skipped, and the
 /// release is reachable only through a signed release list.
 pub fn tag_version(tag: &str, project: &str) -> Option<String> {
-    let mut rest = tag;
     let mut prefixes: Vec<&str> = Vec::new();
     if let Some(sub) = repository_subpath(project) {
         prefixes.push(sub);
@@ -374,19 +379,16 @@ pub fn tag_version(tag: &str, project: &str) -> Option<String> {
     if let Some((_, _, repo)) = repository(project) {
         prefixes.push(repo);
     }
-    'strip: for prefix in prefixes {
-        for sep in ['/', '-', '_', '@'] {
-            if let Some(after) = rest.strip_prefix(prefix)
-                && let Some(after) = after.strip_prefix(sep)
-            {
-                rest = after;
-                break 'strip;
-            }
-        }
-    }
-    let version = normalize_version(rest.strip_prefix('v').unwrap_or(rest))?;
-    parse_version(&version).ok()?;
-    Some(version)
+    let after_prefixes = prefixes.into_iter().flat_map(|prefix| {
+        ['/', '-', '_', '@']
+            .into_iter()
+            .filter_map(move |sep| tag.strip_prefix(prefix)?.strip_prefix(sep))
+    });
+    after_prefixes.chain([tag]).find_map(|rest| {
+        let version = normalize_version(rest.strip_prefix('v').unwrap_or(rest))?;
+        parse_version(&version).ok()?;
+        Some(version)
+    })
 }
 
 /// The semver spelling of a version a vendor writes loosely: a missing
@@ -3061,6 +3063,24 @@ mod tests {
                 "crates/cli@1.9.4",
                 "github.com/biomejs/biome/crates/cli",
                 Some("1.9.4"),
+            ),
+            // A prefix that begins the tag but leaves no version does not
+            // end the search: the repository name is still tried.
+            (
+                "tool-suite-1.2.0",
+                "github.com/acme/tool-suite/tool",
+                Some("1.2.0"),
+            ),
+            (
+                "tool-v1.3.0",
+                "github.com/acme/tool-suite/tool",
+                Some("1.3.0"),
+            ),
+            ("x-y-1.0.0", "github.com/acme/x-y/x", Some("1.0.0")),
+            (
+                "tool-suite-nightly",
+                "github.com/acme/tool-suite/tool",
+                None,
             ),
             // Loose spellings normalize.
             ("v4.1", "github.com/Genymobile/scrcpy", Some("4.1.0")),

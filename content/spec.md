@@ -1607,8 +1607,11 @@ once and keep it. The tag retains the original spelling.
   list entry to map it.
 - A missing patch component is `0`: `4.1` is `4.1.0`.
 - Remove leading zeros: `25.07.1` becomes `25.7.1`, and the date
-  `2026.08.31` becomes `2026.8.31`. The dashed date `2026-08-31` uses
-  that same semver spelling.
+  `2026.08.31` becomes `2026.8.31`. A vendor whose dates use dashes
+  signs that same semver spelling: `2026-08-31` is version `2026.8.31`.
+  Consumers do not respell dashed dates, so the tag `2026-08-31` names
+  no version under [Tags](#tags). Map it with a signed list entry, or
+  tag the release `v2026.08.31`.
 - A fourth ordered component has no semver representation. The format
   cannot represent a scheme that needs one: build metadata does not
   affect ordering, and a prerelease part has a different meaning.
@@ -1623,7 +1626,10 @@ To derive a forge release's version from its tag, remove an optional
 project prefix and an optional `v`, then apply
 [Spelling a version](#spelling-a-version) to the remainder. An allowed
 prefix is the tool's full subpath, the last segment of that subpath, or
-the repository name, followed by `/`, `-`, `_`, or `@`.
+the repository name, followed by `/`, `-`, `_`, or `@`. Try the allowed
+prefixes in that order, then no prefix, and use the first whose
+remainder yields a version. A prefix that begins the tag but leaves no
+version does not end the search.
 
 | Project | Tag | Version |
 | --- | --- | --- |
@@ -1631,14 +1637,15 @@ the repository name, followed by `/`, `-`, `_`, or `@`.
 | `github.com/oxc-project/oxc/oxlint` | `oxlint_v1.0.0` | `1.0.0` |
 | `github.com/biomejs/biome/crates/cli` | `cli/v1.9.4` | `1.9.4` |
 | `github.com/jqlang/jq` | `jq-1.7.1` | `1.7.1` |
+| `github.com/acme/tool-suite/tool` | `tool-suite-1.2.0` | `1.2.0` |
 | Any project | `v4.1` | `4.1.0` |
 
 Deriving a version from a tag avoids fetching every bundle during
 listing. The signed packslip remains authoritative: if its `version`
 differs from the derived version, refuse the release. Tags such as
-`nightly` and `release-1.2.3` do not name versions under these rules and
-are omitted from tag-based listing. To expose such a release, publish a
-signed list entry mapping its tag to its version.
+`nightly`, `release-1.2.3`, and `2026-08-31` do not name versions under
+these rules and are omitted from tag-based listing. To expose such a
+release, publish a signed list entry mapping its tag to its version.
 
 ### Matching a request
 
@@ -1649,6 +1656,9 @@ A version request matches a prefix of dot-separated components:
 | `20` | Every `20.x.y` release. |
 | `3.12` | Every `3.12.x` release. |
 | `1.2.0-beta` | The betas of `1.2.0`. |
+
+Build metadata is not a component, so a request without it matches a
+release whose version adds it: `1.2.3` matches `1.2.3+build.5`.
 
 A request may also use the vendor's tag, with or without its leading
 `v`. Match that spelling against `source.tag` or the release-list entry's
