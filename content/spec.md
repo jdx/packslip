@@ -102,8 +102,14 @@ A project name is a host with an optional path, such as
 Its syntax is:
 
 - No URL scheme or trailing slash.
-- A lowercase host containing at least one dot.
-- Path segments that are neither empty, `.` nor `..`.
+- A host of DNS labels separated by dots, containing at least one dot and
+  no port. Each label is one or more lowercase ASCII letters, digits, and
+  hyphens (`a`–`z`, `0`–`9`, `-`), and neither starts nor ends with a
+  hyphen.
+- Optional path segments after the host, each preceded by `/`. A segment is
+  one or more ASCII letters, digits, `.`, `_`, `~`, and `-`
+  (`A`–`Z`, `a`–`z`, `0`–`9`, `.`, `_`, `~`, `-`), and is neither `.` nor
+  `..`.
 
 A consumer may offer a short-name alias such as `mise` for
 `github.com/jdx/mise`. That alias is a convenience outside the format.
@@ -135,6 +141,25 @@ the requested project, or the same repository under another name as
 [Repository identity and renames](#repository-identity-and-renames) allows.
 A forge name can change hands: the name locates the project, while the
 forge's repository ID pins its identity.
+
+GitHub and GitLab resolve owner, group, and repository names without
+regard to case, and neither lets two repositories' names differ only in
+case. On `github.com` and `gitlab.com`, a consumer must therefore compare
+the repository part of a name, `<owner>/<repo>` on GitHub and the whole
+path on GitLab, without regard to ASCII case wherever it compares one.
+Those comparisons include the `project` of a statement or release list
+with the requested project, with the certificate's Source Repository URI
+([Repository identity and renames](#repository-identity-and-renames)),
+and with the signing workflow's repository; two signing workflows'
+repositories with each other; a certificate identity or identity prefix
+the user supplies with the certificate's identity, and a source
+repository the user supplies with its Source Repository URI; and a
+project named in the consumer's pins or lockfile with the requested
+project.
+`github.com/jdx/mise` and `github.com/JDX/mise` name the same project, so
+a statement for one is a statement for the other, not a rename. A
+monorepo subpath, a workflow's path and ref, and a name on any other host
+compare exactly.
 
 ### Monorepos
 
@@ -336,7 +361,9 @@ or GitLab CI job, from the job's OIDC token:
 
 Each extension value is a DER UTF8String. An empty value means the forge
 supplied none. For these IDs to authenticate a packslip, the Source
-Repository URI must identify the repository named by `project`. That URI
+Repository URI must identify the repository named by `project`, its name
+compared without regard to case as [Project names](#project-names)
+defines. That URI
 names the repository whose run requested the certificate, whichever
 workflow signed, so the signer may be a reusable workflow of another
 repository. Only a certificate that records no Source Repository URI falls
@@ -1629,7 +1656,9 @@ prefix is the tool's full subpath, the last segment of that subpath, or
 the repository name, followed by `/`, `-`, `_`, or `@`. Try the allowed
 prefixes in that order, then no prefix, and use the first whose
 remainder yields a version. A prefix that begins the tag but leaves no
-version does not end the search.
+version does not end the search. The repository name matches without
+regard to ASCII case, as [Project names](#project-names) compares it; a
+subpath matches exactly.
 
 | Project | Tag | Version |
 | --- | --- | --- |

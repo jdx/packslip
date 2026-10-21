@@ -40,44 +40,26 @@ pub enum Error {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Project(String);
 impl Project {
+    /// Parse a project the user asks for into a project name, which follows
+    /// the specification's grammar ([`crate::model::valid_project`]).
+    /// `owner/repo[/subpath]`, whose first segment has no dot and so is not
+    /// a host, is short for a GitHub repository. The host's case is folded,
+    /// as DNS ignores it; the path keeps its case.
     pub fn parse(input: &str) -> Result<Self, Error> {
-        if input.is_empty()
-            || input.contains([':', '?', '#', '%', '\\'])
-            || input.starts_with('/')
-            || input.ends_with('/')
+        let name = match input.split_once('/') {
+            Some((first, _)) if !first.contains('.') => format!("github.com/{input}"),
+            _ => input.to_owned(),
+        };
+        let name = match name.split_once('/') {
+            Some((host, path)) => format!("{}/{path}", host.to_ascii_lowercase()),
+            None => name.to_ascii_lowercase(),
+        };
+        // A GitHub project names a repository, not the forge itself or an
+        // owner.
+        if !crate::model::valid_project(&name)
+            || (crate::model::project_host(&name) == "github.com"
+                && crate::model::repository(&name).is_none())
         {
-            return Err(Error::Project(input.into()));
-        }
-        if input.split('/').any(|s| {
-            s.is_empty()
-                || s == "."
-                || s == ".."
-                || !s
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
-        }) {
-            return Err(Error::Project(input.into()));
-        }
-        let name = if input.contains('/') && !input.split('/').next().unwrap().contains('.') {
-            format!("github.com/{input}")
-        } else {
-            input.to_owned()
-        };
-        // DNS host spelling is case-insensitive and URL parsing normalizes it.
-        // Preserve path case while canonicalizing the project authority.
-        let (host, suffix) = name
-            .split_once('/')
-            .map_or((name.as_str(), ""), |(host, suffix)| (host, suffix));
-        let name = if suffix.is_empty() {
-            host.to_ascii_lowercase()
-        } else {
-            format!("{}/{suffix}", host.to_ascii_lowercase())
-        };
-        let parts: Vec<_> = name.split('/').collect();
-        if parts[0] == "github.com" && parts.len() < 3 {
-            return Err(Error::Project(input.into()));
-        }
-        if !parts[0].contains('.') {
             return Err(Error::Project(input.into()));
         }
         Ok(Self(name))
@@ -1277,8 +1259,28 @@ mod tests {
             "localhost",
             "/jdx/mise",
             "evil.test\\file",
+            "github.com",
+            "github.com/jdx",
+            "jdx/mise/",
+            // The specification's grammar: LDH host labels, no port, and
+            // path segments of letters, digits, `.`, `_`, `~` and `-`.
+            "exa_mple.com/tool",
+            "-example.com/tool",
+            "example.com:8443/tool",
+            "example.com/a+b",
+            "example.com/@scope/pkg",
         ] {
             assert!(Project::parse(input).is_err(), "{input}");
+        }
+        // Every name a statement may carry can be asked for.
+        for name in [
+            "example.org/tool_1.2~x",
+            "github.com/jdx/mi~se",
+            "gitlab.com/group/sub/proj",
+            "mise.jdx.dev",
+        ] {
+            assert!(crate::model::valid_project(name), "{name}");
+            assert_eq!(Project::parse(name).unwrap().as_str(), name);
         }
     }
     #[test]

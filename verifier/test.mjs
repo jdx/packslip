@@ -17,7 +17,10 @@ import {
   certificateSigner,
   checkDeclaredIdentity,
   checkProjectSigner,
+  identityHasPrefix,
   readStatement,
+  sameIdentity,
+  sameProject,
   verifyFile,
   verifyRelease,
 } from './packslip-verify.mjs';
@@ -74,6 +77,16 @@ describe('verifyRelease', () => {
 
   it('accepts a Buffer', () => {
     assert.equal(verifyRelease(Buffer.from(mise), policy).predicate.project, 'github.com/jdx/mise');
+  });
+
+  it("matches a GitHub repository's name in any case, and the workflow's path and ref exactly", () => {
+    const statement = verifyRelease(mise, { ...policy, identity: IDENTITY.replace('jdx/mise', 'JDX/Mise'), project: 'github.com/JDX/MISE' });
+    assert.deepEqual(statement.signer, { identity: IDENTITY, issuer: ISSUER });
+    verifyRelease(hk, { issuer: ISSUER, sourceRepository: 'https://github.com/JDX/HK' });
+    for (const identity of [IDENTITY.replace('.github', '.GITHUB'), IDENTITY.replace('refs/tags/v', 'refs/tags/V')]) {
+      assert.throws(() => verifyRelease(mise, { ...policy, identity }), { code: 'identity' });
+    }
+    assert.throws(() => verifyRelease(hk, { issuer: ISSUER, sourceRepository: 'https://github.com/jdx/hk-fork' }), { code: 'identity' });
   });
 
   describe('the signer policy', () => {
@@ -258,6 +271,31 @@ describe('checkProjectSigner', () => {
   it("leaves a project that is not on a forge to the caller's identity policy", () => {
     checkProjectSigner('mise.jdx.dev', signer('jdx@example.com', 'https://accounts.google.com'));
     checkProjectSigner('github.com/jdx', signer('jdx@example.com', 'https://accounts.google.com'));
+  });
+
+  it("matches the repository's name in any case, as the forge resolves it", () => {
+    checkProjectSigner('github.com/JDX/Mise', signer(RELEASE, ISSUER, 'https://github.com/jdx/mise'));
+    checkProjectSigner('github.com/jdx/mise', signer(SHARED, ISSUER, 'https://github.com/JDX/MISE'));
+    checkProjectSigner('github.com/JDX/Mise', signer(RELEASE, ISSUER));
+    checkProjectSigner('gitlab.com/Group/Sub/Tool', signer('https://gitlab.com/group/sub/tool//.gitlab-ci.yml@refs/tags/v1', GITLAB_ISSUER));
+    refusesProject('github.com/JDX/Mise', signer(RELEASE, ISSUER, 'https://github.com/jdx/mise-fork'), /mise-fork/);
+    refusesProject('github.com/JDX/Mise', signer('https://github.com/jdx/mise-fork/.github/workflows/release.yml@refs/tags/v1', ISSUER), /mise-fork/);
+  });
+});
+
+describe('the case rule', () => {
+  it('compares a GitHub or GitLab repository name without case, and everything else exactly', () => {
+    assert.ok(sameProject('github.com/jdx/mise', 'github.com/JDX/Mise'));
+    assert.ok(sameProject('gitlab.com/group/sub/tool', 'gitlab.com/Group/SUB/tool'));
+    assert.ok(!sameProject('github.com/jdx/mise/tool', 'github.com/jdx/mise/Tool'));
+    assert.ok(!sameProject('example.com/Tool', 'example.com/tool'));
+    assert.ok(sameIdentity(IDENTITY, IDENTITY.replace('jdx/mise', 'JDX/MISE')));
+    assert.ok(!sameIdentity(IDENTITY.replace('https://github.com', 'HTTPS://GITHUB.COM'), IDENTITY));
+    assert.ok(!sameIdentity('Person@example.com', 'person@example.com'));
+    assert.ok(identityHasPrefix(IDENTITY, 'https://github.com/JDX/Mise/'));
+    assert.ok(identityHasPrefix(IDENTITY, 'https://github.com/JDX/'));
+    assert.ok(!identityHasPrefix(IDENTITY, 'https://github.com/jdx/mise/.GITHUB/'));
+    assert.ok(!identityHasPrefix('https://github.com/jdx/mise-fork/x', 'https://github.com/JDX/mise/'));
   });
 });
 
@@ -524,6 +562,11 @@ describe('readStatement', () => {
     assert.equal(readStatement(payload, {}).predicate.project, 'github.com/jdx/mise');
   });
 
+  it("matches the project's repository name in any case, and a subpath exactly", () => {
+    assert.equal(readStatement(payload, { project: 'github.com/JDX/Mise' }).predicate.project, 'github.com/jdx/mise');
+    assert.throws(() => readStatement(payload, { project: 'github.com/jdx/mise/Tool' }), { code: 'project' });
+  });
+
   it('requires a size on every artifact', () => {
     assert.throws(() => readStatement(withArtifact((a) => delete a.size), {}), { code: 'statement', message: /integer size/ });
     assert.throws(() => readStatement(withArtifact((a) => (a.size = -1)), {}), { code: 'statement' });
@@ -593,6 +636,13 @@ describe('command line', () => {
     const result = run(miseBundlePath, '--issuer', ISSUER, '--identity-prefix', 'https://github.com/jdx/mise/.github/workflows/', '--project', 'github.com/jdx/mise');
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /^verified github\.com\/jdx\/mise 2026\.10\.11, signed by /);
+  });
+
+  it("matches a repository's name in any case in --identity-prefix and --project", () => {
+    const result = run(miseBundlePath, '--issuer', ISSUER, '--identity-prefix', 'https://github.com/JDX/MISE/', '--project', 'github.com/Jdx/Mise');
+    assert.equal(result.status, 0, result.stderr);
+    const path = run(miseBundlePath, '--issuer', ISSUER, '--identity-prefix', 'https://github.com/jdx/mise/.GITHUB/');
+    assert.equal(path.status, 1);
   });
 
   it("accepts a broad identity prefix with --project when the project's repository signed", () => {

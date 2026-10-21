@@ -24,8 +24,8 @@ Keeps the complete installation tree. Does not run downloaded code, install depe
 - **`--pin <PIN>`** — Allowed signer fingerprint (repeatable, alternatives within this option)
 - **`--pubkey <PUBKEY>`** — The pinned minisign public key file, or its base64 line
 - **`--issuer <ISSUER>`** — Require this OIDC issuer as well as the project's default identity
-- **`--identity <IDENTITY>`** — Require this exact certificate identity
-- **`--identity-prefix <IDENTITY_PREFIX>`** — Require this certificate identity prefix
+- **`--identity <IDENTITY>`** — Require this certificate identity; a GitHub or GitLab repository name in it matches in any case
+- **`--identity-prefix <IDENTITY_PREFIX>`** — Require this certificate identity prefix; a GitHub or GitLab repository name in it matches in any case
 - **`--accept-trust-change <ACCEPT_TRUST_CHANGE>`** — Approve one exact displayed trust-change proposal (repeatable)
 - **`--trusted-root <TRUSTED_ROOT>`** — Administrator-supplied Sigstore trusted_root.json instead of TUF refresh
 - **`--allow-unlogged`** — Accept signatures without transparency-log entries for this attempt

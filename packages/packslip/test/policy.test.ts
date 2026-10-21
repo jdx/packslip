@@ -88,4 +88,17 @@ describe('checkSigned', () => {
       assert.equal(statement.predicate.version, '2026.10.11');
     }
   });
+
+  it('matches a GitHub repository name in a string identity and the project in any case', () => {
+    const statement = checkSigned(MISE, payload, {
+      identity: MISE_IDENTITY.replace('jdx/mise', 'JDX/Mise'),
+      issuer: GITHUB_ISSUER,
+      project: 'github.com/JDX/MISE',
+    });
+    assert.deepEqual(statement.signer, { identity: MISE_IDENTITY, issuer: GITHUB_ISSUER });
+    assert.throws(
+      () => checkSigned(MISE, payload, { identity: MISE_IDENTITY.replace('release.yml', 'Release.yml'), issuer: GITHUB_ISSUER }),
+      IdentityError,
+    );
+  });
 });

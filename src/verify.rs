@@ -523,6 +523,41 @@ mod tests {
                 .continues_signer("https://github.com/jdx/hk/.github/workflows/release.yml")
         );
 
+        // GitHub resolves jdx/HK as jdx/hk, so asking for it in another case
+        // is asking for this project, with no pin or forge lookup needed.
+        let ok =
+            verify_forge(HK, &Expected::new("github.com/JDX/HK"), options(&root), &[]).unwrap();
+        assert_eq!(ok.check.continuity, Continuity::Same);
+        // So does an identity prefix, the policy a GitHub name implies; the
+        // workflow's path inside the repository keeps its case.
+        let prefix = |prefix: &str| Policy {
+            issuer: Some(sigstore::GITHUB_ISSUER.into()),
+            identity: None,
+            identity_prefix: Some(prefix.into()),
+        };
+        let policy = prefix("https://github.com/JDX/HK/");
+        assert!(verify(HK, &Trust::Identity(&policy), options(&root), &[]).is_ok());
+        let policy = prefix("https://github.com/jdx/hk/.GITHUB/");
+        assert!(matches!(
+            verify(HK, &Trust::Identity(&policy), options(&root), &[]),
+            Err(Error::Sigstore(sigstore::Error::IdentityPrefix { .. }))
+        ));
+        // So does a pinned identity, apart from the workflow's path and ref.
+        let exact = |identity: &str| Policy {
+            issuer: Some(sigstore::GITHUB_ISSUER.into()),
+            identity: Some(identity.into()),
+            identity_prefix: None,
+        };
+        let policy =
+            exact("https://github.com/JDX/HK/.github/workflows/release.yml@refs/tags/v2.3.0");
+        assert!(verify(HK, &Trust::Identity(&policy), options(&root), &[]).is_ok());
+        let policy =
+            exact("https://github.com/jdx/hk/.github/workflows/Release.yml@refs/tags/v2.3.0");
+        assert!(matches!(
+            verify(HK, &Trust::Identity(&policy), options(&root), &[]),
+            Err(Error::Sigstore(sigstore::Error::Verification(_)))
+        ));
+
         // Were hk renamed to hook, a user asking for the new name with the
         // pin would still take this release, signed under the old name.
         let pinned = ForgePin::of("github.com/jdx/hook", "922514152");

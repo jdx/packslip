@@ -205,14 +205,68 @@ export function certificateSigner(der) {
 const GITHUB_ISSUER = 'https://token.actions.githubusercontent.com';
 const GITLAB_ISSUER = 'https://gitlab.com';
 
+// GitHub and GitLab resolve owner, group, and repository names in any case, and
+// never let two repositories differ only in case, so a repository's name
+// compares without regard to ASCII case. A monorepo subpath, a workflow's path
+// and ref, and names on other hosts compare exactly.
+const foldAscii = (text) => text.replace(/[A-Z]/g, (c) => c.toLowerCase());
+
+/**
+ * Where a repository's name lies in a GitHub or GitLab URL or certificate
+ * identity: `owner/repo` after `https://github.com/`, or the project path before
+ * `//` after `https://gitlab.com/`. Undefined for any other URL or identity.
+ */
+function repositorySpan(url) {
+  if (url.startsWith('https://github.com/')) {
+    const start = 'https://github.com/'.length;
+    const owner = url.indexOf('/', start);
+    const repo = owner < 0 ? -1 : url.indexOf('/', owner + 1);
+    return [start, repo < 0 ? url.length : repo];
+  }
+  if (url.startsWith('https://gitlab.com/')) {
+    const start = 'https://gitlab.com/'.length;
+    const config = url.indexOf('//', start);
+    return [start, config < 0 ? url.length : config];
+  }
+  return undefined;
+}
+
+/** Whether `identity` starts with `prefix`, the repository name `prefix` spells compared in any case. */
+export function identityHasPrefix(identity, prefix) {
+  const span = repositorySpan(prefix);
+  if (span === undefined) return identity.startsWith(prefix);
+  const [start, end] = span;
+  return (
+    identity.length >= end &&
+    identity.slice(0, start) === prefix.slice(0, start) &&
+    foldAscii(identity.slice(start, end)) === foldAscii(prefix.slice(start, end)) &&
+    identity.slice(end).startsWith(prefix.slice(end))
+  );
+}
+
+/** Whether two certificate identities or repository URLs are the same, a repository name compared in any case. */
+export function sameIdentity(actual, expected) {
+  return actual.length === expected.length && identityHasPrefix(actual, expected);
+}
+
+/** Whether two project names name the same project, a GitHub or GitLab repository name compared in any case. */
+export function sameProject(a, b) {
+  const x = forgeRepository(a);
+  const y = forgeRepository(b);
+  if (x === undefined || y === undefined) return a === b;
+  return x.host === y.host && foldAscii(x.repository) === foldAscii(y.repository) && x.subpath === y.subpath;
+}
+
 /** The forge and repository a GitHub or GitLab project name locates, or undefined for any other project. */
 function forgeRepository(project) {
   const [host, ...path] = project.split('/');
   // github.com/owner/repo, then an optional monorepo subpath that names a tool of the repository.
-  if (host === 'github.com') return path[0] && path[1] ? { host, repository: `${path[0]}/${path[1]}` } : undefined;
+  if (host === 'github.com') {
+    return path[0] && path[1] ? { host, repository: `${path[0]}/${path[1]}`, subpath: path.slice(2).join('/') } : undefined;
+  }
   // GitLab groups nest, so the whole path is the repository.
   if (host === 'gitlab.com' && path.length > 0 && path.every((segment) => segment !== '')) {
-    return { host, repository: path.join('/') };
+    return { host, repository: path.join('/'), subpath: '' };
   }
   return undefined;
 }
@@ -222,9 +276,10 @@ function forgeRepository(project) {
  * `project` names, as `packslip verify` does: issued through the forge's
  * issuer, and recording that repository as its source repository, so a
  * reusable workflow of another repository may sign; or, when it records none,
- * signed by a workflow of the repository. Any other project names no
- * repository, so the caller's identity policy is all there is. `signer` is
- * `{ identity, issuer, sourceRepository }` as the certificate gives them.
+ * signed by a workflow of the repository. The repository's name matches in any
+ * case. Any other project names no repository, so the caller's identity policy
+ * is all there is. `signer` is `{ identity, issuer, sourceRepository }` as the
+ * certificate gives them.
  */
 export function checkProjectSigner(project, signer) {
   const forge = forgeRepository(project);
@@ -235,10 +290,10 @@ export function checkProjectSigner(project, signer) {
     fail('project-signer', `${project} must be signed from its repository through ${issuer}, but ${signer.identity} signed it through ${signer.issuer}`);
   }
   if (signer.sourceRepository !== undefined) {
-    if (signer.sourceRepository !== repository) {
+    if (!sameIdentity(signer.sourceRepository, repository)) {
       fail('project-signer', `${project} must be signed from its repository ${repository}, but ${signer.identity} signed it from ${signer.sourceRepository}`);
     }
-  } else if (!signer.identity.startsWith(forge.host === 'gitlab.com' ? `${repository}//` : `${repository}/`)) {
+  } else if (!identityHasPrefix(signer.identity, forge.host === 'gitlab.com' ? `${repository}//` : `${repository}/`)) {
     fail('project-signer', `${project} must be signed from its repository ${repository}, but ${signer.identity} is not one of its workflows`);
   }
 }
@@ -472,7 +527,7 @@ export function readStatement(payload, expect) {
       fail('statement', `${subject.name}: sha512 must be 128 lowercase hexadecimal characters`);
     }
   }
-  if (expect.project !== undefined && predicate.project !== expect.project) {
+  if (expect.project !== undefined && !sameProject(predicate.project, expect.project)) {
     fail('project', `the statement is for ${predicate.project}, not ${expect.project}`);
   }
   if (expect.tag !== undefined) {
@@ -491,9 +546,12 @@ export function readStatement(payload, expect) {
 /**
  * Verify a keyless release bundle against a signer you already trust.
  *
- * `identity` is the exact certificate identity, or a function that accepts one,
- * and `issuer` the exact OIDC issuer; the policy must come from you, never from
- * the bundle. `project`, `tag` and `sourceRepository` are optional further
+ * `identity` is the certificate identity, or a function that accepts one, and
+ * `issuer` the exact OIDC issuer; the policy must come from you, never from the
+ * bundle. In a string `identity`, in `sourceRepository`, and in `project`, a
+ * github.com or gitlab.com repository's name matches in any case, as the forge
+ * resolves it; the rest matches exactly. A function `identity` receives the
+ * certificate's spelling. `project`, `tag` and `sourceRepository` are optional further
  * checks, and `trustedRoot` replaces the embedded trust root (same shape). For
  * a github.com or gitlab.com `project`, the certificate must also come from that
  * repository (see `checkProjectSigner`): `identity` narrows that requirement
@@ -553,12 +611,18 @@ function verifyBundle(bundleJson, options) {
   }
   // 4. The signer must be the one the caller trusts.
   const signer = certificateSigner(leafDer);
-  const accepted = typeof options.identity === 'function' ? options.identity(signer.identity) : options.identity === undefined || signer.identity === options.identity;
+  const accepted =
+    typeof options.identity === 'function'
+      ? options.identity(signer.identity)
+      : options.identity === undefined || sameIdentity(signer.identity, options.identity);
   if (!accepted) fail('identity', `the signing identity ${signer.identity} is not the expected one`);
   if (signer.issuer !== options.issuer) {
     fail('identity', `the certificate issuer ${signer.issuer} is not the expected ${options.issuer}`);
   }
-  if (options.sourceRepository !== undefined && signer.sourceRepository !== options.sourceRepository) {
+  if (
+    options.sourceRepository !== undefined &&
+    (signer.sourceRepository === undefined || !sameIdentity(signer.sourceRepository, options.sourceRepository))
+  ) {
     fail('identity', `the certificate's source repository is ${signer.sourceRepository}, not ${options.sourceRepository}`);
   }
   // 5. Only now read the statement, whose own identity block must name that signer.
@@ -607,7 +671,8 @@ const USAGE = `usage: node packslip-verify.mjs BUNDLE --issuer URL (--identity S
                                 [--artifact FILE]... [--json]
 
 Verifies a keyless packslip bundle and the files you downloaded. The policy flags
-must come from you, not from the release. For a github.com or gitlab.com
+must come from you, not from the release. A github.com or gitlab.com repository
+name in them, or in --project, matches in any case. For a github.com or gitlab.com
 --project, the certificate must also come from that repository;
 --allow-other-repository lifts that for a signer outside it, such as a
 repackager's, that the policy flags name; it needs --project.`;
@@ -656,7 +721,7 @@ async function main(argv) {
     const prefix = values['identity-prefix'];
     const statement = verifyRelease(readBundle(positionals[0]), {
       issuer: values.issuer,
-      identity: prefix === undefined ? values.identity : (san) => san.startsWith(prefix),
+      identity: prefix === undefined ? values.identity : (san) => identityHasPrefix(san, prefix),
       sourceRepository: values['source-repository'],
       project: values.project,
       allowOtherRepository: values['allow-other-repository'],

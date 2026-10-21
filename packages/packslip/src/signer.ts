@@ -5,6 +5,7 @@
 
 import { DeclaredIdentityError, IdentityError, ProjectSignerError } from './errors.ts';
 import type { Identity } from './model.ts';
+import { identityHasPrefix, sameIdentity } from './project.ts';
 
 export const GITHUB_ISSUER = 'https://token.actions.githubusercontent.com';
 export const GITLAB_ISSUER = 'https://gitlab.com';
@@ -111,8 +112,10 @@ function forgeRepository(project: string): { host: 'github.com' | 'gitlab.com'; 
  * identity sections require: the forge's issuer, and a Source Repository URI
  * that is the project's repository. The signer may then be a reusable workflow
  * of another repository. A certificate that records no Source Repository URI
- * must instead be signed by a workflow of the repository. Any other project has
- * no repository to compare, so the caller's identity policy is all there is.
+ * must instead be signed by a workflow of the repository. The repository's name
+ * compares without regard to ASCII case, as the forge resolves it. Any other
+ * project has no repository to compare, so the caller's identity policy is all
+ * there is.
  */
 export function checkProjectSigner(project: string, signer: CertificateSigner): void {
   const forge = forgeRepository(project);
@@ -128,13 +131,13 @@ export function checkProjectSigner(project: string, signer: CertificateSigner): 
   const repository = `https://${forge.host}/${forge.repository}`;
   if (signer.sourceRepository === undefined) {
     const prefix = forge.host === 'gitlab.com' ? `${repository}//` : `${repository}/`;
-    if (!signer.identity.startsWith(prefix)) {
+    if (!identityHasPrefix(signer.identity, prefix)) {
       throw new ProjectSignerError(`signed by ${signer.identity}, which is not a workflow of ${repository}`, {
         ...details,
         reason: 'signer',
       });
     }
-  } else if (signer.sourceRepository !== repository) {
+  } else if (!sameIdentity(signer.sourceRepository, repository)) {
     throw new ProjectSignerError(`the certificate's source repository is ${signer.sourceRepository}, not ${repository}`, {
       ...details,
       reason: 'source-repository',

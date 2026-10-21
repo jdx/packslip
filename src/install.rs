@@ -3,6 +3,7 @@
 use crate::{discovery, install_extract, install_fs, install_host, install_policy};
 use eyre::{Result, bail};
 use sha2::{Digest as _, Sha256};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 #[cfg(unix)]
@@ -122,6 +123,24 @@ impl Scope {
         }
         #[cfg(not(any(unix, windows)))]
         bail!("unsupported installation platform")
+    }
+}
+
+/// The name a project's alias history is kept under: the project, with a
+/// GitHub owner and repository name in lowercase, since GitHub resolves
+/// them in any case. A monorepo subpath keeps its case.
+fn alias_key(project: &str) -> String {
+    let Some((host, owner, repo)) = crate::model::repository(project) else {
+        return project.to_owned();
+    };
+    let repository = format!(
+        "{host}/{}/{}",
+        owner.to_ascii_lowercase(),
+        repo.to_ascii_lowercase()
+    );
+    match crate::model::repository_subpath(project) {
+        Some(subpath) => format!("{repository}/{subpath}"),
+        None => repository,
     }
 }
 
@@ -408,13 +427,25 @@ async fn install_in(
     // refuses one it cannot use, so an unreadable receipt is not an error here.
     let installed = session.receipt(&key).ok().flatten().map(|r| r.version);
     // ID-based ownership follows renames, but a remembered name must never
-    // silently become first use when that name is deleted and recreated.
-    let alias = session.history(project.as_str())?;
-    if let Some(previous) = alias.release.as_ref().or(alias.list.as_ref())
-        && let Some(pin) = &previous.repository
-        && repository_id != Some(pin.repository_id.as_str())
-    {
-        bail!("repository name now resolves to a different remembered repository ID");
+    // silently become first use when that name is deleted and recreated, in
+    // whatever case the request spells it. A history written before names
+    // folded case is under the spelling of the request that wrote it, which
+    // its records name.
+    let alias = alias_key(project.as_str());
+    let mut names: BTreeSet<String> = session
+        .remembered_projects()?
+        .into_iter()
+        .filter(|name| crate::forge::same_project(name, project.as_str()))
+        .collect();
+    names.extend([alias.clone(), project.as_str().to_owned()]);
+    for name in &names {
+        let prior = session.history(name)?;
+        if let Some(previous) = prior.release.as_ref().or(prior.list.as_ref())
+            && let Some(pin) = &previous.repository
+            && repository_id != Some(pin.repository_id.as_str())
+        {
+            bail!("repository name now resolves to a different remembered repository ID");
+        }
     }
     let mut constraints = constraints(&scope, project.as_str(), &request.constraints)?;
     if !constraints.iter().any(|c| c.pubkey.is_some())
@@ -481,7 +512,7 @@ async fn install_in(
     )?;
     if list.is_some() {
         session.remember(&key, &history)?;
-        session.remember(project.as_str(), &history)?;
+        session.remember(&alias, &history)?;
     }
     let signed_list = list.as_ref().map(|l| &l.verified.list);
     *withdrawn = signed_list
@@ -540,9 +571,9 @@ async fn install_in(
                 &history,
                 &constraints,
             )?;
-            let mut alias = history.clone();
-            alias.release = Some(release.record.clone());
-            session.remember(project.as_str(), &alias)?;
+            let mut remembered = history.clone();
+            remembered.release = Some(release.record.clone());
+            session.remember(&alias, &remembered)?;
             match crate::select_artifact(
                 &release.statement.predicate.artifacts,
                 &host.host(),
@@ -936,7 +967,9 @@ fn candidate(bundle: &str, project: &str, repository_id: Option<&str>) -> Candid
     {
         return Candidate::Other;
     }
-    if crate::model::repository(name) == crate::model::repository(project) {
+    // The subpaths are the same, so this compares the repositories, whose
+    // names GitHub resolves in any case.
+    if crate::forge::same_project(name, project) {
         return found;
     }
     // A renamed or transferred repository can keep publishing its old name.
@@ -950,7 +983,9 @@ fn candidate(bundle: &str, project: &str, repository_id: Option<&str>) -> Candid
             source.id.as_deref().is_some()
                 && source.id.as_deref() == repository_id
                 && crate::model::repository(name).is_some_and(|(host, owner, repo)| {
-                    source.uri == format!("https://{host}/{owner}/{repo}")
+                    source.uri.strip_prefix("https://").is_some_and(|uri| {
+                        crate::forge::same_project(uri, &format!("{host}/{owner}/{repo}"))
+                    })
                 })
         });
     if renamed { found } else { Candidate::Other }
@@ -1007,6 +1042,15 @@ mod tests {
             candidate(&f.signed(&statement), requested, Some("42")),
             Candidate::Requested
         );
+        // GitHub resolves names in any case; a subpath names a tool exactly.
+        assert_eq!(
+            candidate(&f.signed(&statement), "github.com/Owner/Repo/tool", None),
+            Candidate::Requested
+        );
+        assert_eq!(
+            candidate(&f.signed(&statement), "github.com/owner/repo/Tool", None),
+            Candidate::Other
+        );
         statement["predicate"]["project"] = json!("github.com/unrelated/repo/tool");
         assert_eq!(
             candidate(&f.signed(&statement), requested, Some("42")),
@@ -1049,6 +1093,8 @@ mod tests {
     fn forge_candidate_renames_require_the_resolved_repository_id() {
         let bundle = include_str!("../tests/fixtures/hk-v2.3.0.sigstore.json");
         for (project, id, expected) in [
+            // The same name in another case needs no repository ID.
+            ("github.com/JDX/HK", None, Candidate::Requested),
             (
                 "github.com/jdx/renamed-hk",
                 Some("922514152"),
@@ -1972,8 +2018,8 @@ mod tests {
     fn recreated_repository_name_cannot_become_first_use_even_with_force() {
         let f = Fixture::new();
         let report = f.run(f.request(true)).unwrap();
-        let name = "github.com/owner/tool";
-        {
+        // Remember `name` as the repository with ID 42, under the key `key`.
+        let remember = |name: &str, key: &str| {
             let scope = f.scope();
             let session = install_fs::Session::open_for(
                 &scope.state,
@@ -1991,29 +2037,56 @@ mod tests {
                 }))
                 .unwrap(),
             );
-            session.remember(name, &prior).unwrap();
-        }
-        let base = "https://api.github.com/repos/owner/tool";
-        for (url, value) in [
-            (base.to_owned(), json!({"id":43,"default_branch":"main"})),
-            (
-                format!("{base}/releases/latest"),
-                json!({"tag_name":"v1.0.0","draft":false}),
-            ),
-            (format!("{base}/releases?per_page=100&page=1"), json!([])),
-        ] {
-            f.cache(&url, false, &serde_json::to_vec(&value).unwrap());
-        }
-        let mut request = f.request(false);
-        request.project = name.into();
-        request.force = true;
-        assert!(
+            session.remember(key, &prior).unwrap();
+        };
+        // Ask for `name`, which GitHub now resolves to ID 43.
+        let refused = |name: &str| {
+            let base = format!(
+                "https://api.github.com/repos/{}",
+                name.strip_prefix("github.com/").unwrap()
+            );
+            for (url, value) in [
+                (base.clone(), json!({"id":43,"default_branch":"main"})),
+                (
+                    format!("{base}/releases/latest"),
+                    json!({"tag_name":"v1.0.0","draft":false}),
+                ),
+                (format!("{base}/releases?per_page=100&page=1"), json!([])),
+            ] {
+                f.cache(&url, false, &serde_json::to_vec(&value).unwrap());
+            }
+            let mut request = f.request(false);
+            request.project = name.into();
+            request.force = true;
             f.run(request)
                 .unwrap_err()
                 .to_string()
                 .contains("different remembered repository ID")
-        );
+        };
+        remember("github.com/owner/tool", "github.com/owner/tool");
+        assert!(refused("github.com/owner/tool"));
+        // GitHub resolves a name in any case, so the remembered name is
+        // remembered in every case.
+        assert!(refused("github.com/Owner/Tool"));
+        // A history written before names folded case is under the exact
+        // spelling, and still counts.
+        remember("github.com/Legacy/Tool", "github.com/Legacy/Tool");
+        assert!(refused("github.com/Legacy/Tool"));
+        // It counts for the name in any other case too: its record names the
+        // spelling it is kept under.
+        remember("github.com/Older/Tool", "github.com/Older/Tool");
+        assert!(refused("github.com/older/TOOL"));
         assert!(report.receipt.exports.keys().all(|p| p.exists()));
+    }
+
+    #[test]
+    fn alias_history_folds_the_case_of_a_github_repository_name() {
+        assert_eq!(alias_key("github.com/JDX/Mise"), "github.com/jdx/mise");
+        assert_eq!(
+            alias_key("github.com/Oxc-Project/OXC/OxLint"),
+            "github.com/oxc-project/oxc/OxLint"
+        );
+        assert_eq!(alias_key("tool.example.com/Tool"), "tool.example.com/Tool");
     }
 
     #[test]

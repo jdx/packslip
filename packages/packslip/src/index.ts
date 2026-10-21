@@ -17,7 +17,11 @@ export {
 } from './statement.ts';
 
 export interface VerifyReleaseOptions {
-  /** The exact certificate SAN URI, or a predicate that accepts it. */
+  /**
+   * The certificate SAN URI, or a predicate that accepts it. A github.com or
+   * gitlab.com repository's name in the URI matches in any case, as the forge
+   * resolves it; the rest, such as the workflow's path and ref, matches exactly.
+   */
   identity: string | ((identity: string) => boolean);
   /** The exact OIDC issuer of the certificate. */
   issuer: string;
@@ -27,7 +31,8 @@ export interface VerifyReleaseOptions {
    * belong to that repository: issued through the forge's OIDC issuer, and
    * recording the repository as its source repository (a reusable workflow of
    * another repository may sign) or, when it records none, signed by a workflow
-   * of the repository.
+   * of the repository. A github.com or gitlab.com repository's name matches in
+   * any case, as the forge resolves it.
    */
   project?: string;
   /**

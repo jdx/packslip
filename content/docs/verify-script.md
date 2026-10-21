@@ -53,13 +53,18 @@ The policy always comes from you. `--issuer` is required together with one of:
 
 | Flag | Accepts |
 | --- | --- |
-| `--identity` | One exact certificate identity, including the workflow's ref |
+| `--identity` | One certificate identity, including the workflow's ref |
 | `--identity-prefix` | Any identity starting with the prefix; keep the trailing slash |
 | `--source-repository` | Any workflow whose certificate records that repository, for reusable workflows |
 
 `--project` and `--tag` optionally require the signed statement to name that
 project and source tag. As with `packslip verify`, keep the downloaded file
 names: a renamed file is `not listed` in the statement.
+
+In the three policy flags and in `--project`, a GitHub or GitLab repository's
+name matches in any letter case, as the forge resolves it, so
+`--project github.com/JDX/mise` names jdx/mise. The workflow's path and ref,
+and a monorepo tool's subpath, match exactly.
 
 For a `github.com` or `gitlab.com` project, `--project` also requires, as
 `packslip verify` does, that the certificate come from that repository through
@@ -93,6 +98,10 @@ const statement = verifyRelease(await readFile('packslip.sigstore.json'), {
 });
 await verifyFile(statement, 'mise-v2026.10.11-linux-arm64');
 ```
+
+The same case rule applies to a string `identity`, `sourceRepository`, and
+`project`; a function `identity` receives the identity as the certificate
+spells it.
 
 `verifyRelease` throws a `VerifyError` whose `code` names the failed check,
 including for a malformed bundle. `verifyFile` rejects with a `VerifyError`

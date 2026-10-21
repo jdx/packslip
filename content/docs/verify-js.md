@@ -41,12 +41,16 @@ SHA-512 differs from the signed values.
 ## Choose the signer policy
 
 `identity` and `issuer` are required, because the policy must come from you,
-never from the bundle. `identity` is the exact certificate identity, or a
+never from the bundle. `identity` is the certificate identity, or a
 function that returns `true` for an acceptable one:
 
 ```ts
 identity: (san) => san.startsWith('https://github.com/jdx/mise/.github/workflows/'),
 ```
+
+A GitHub or GitLab repository's name in a string `identity`, and in
+`project`, matches in any letter case, as the forge resolves it. A
+function receives the identity as the certificate spells it.
 
 For a GitHub project, the issuer is `https://token.actions.githubusercontent.com`.
 The package keeps no state, so it cannot compare a signer with the last

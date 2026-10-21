@@ -6,6 +6,7 @@
 
 import { IdentityError } from './errors.ts';
 import type { VerifyReleaseOptions } from './index.ts';
+import { sameIdentity } from './project.ts';
 import { checkDeclaredIdentity, checkProjectSigner, type CertificateSigner } from './signer.ts';
 import { checkExpected, readRelease, type VerifiedStatement } from './statement.ts';
 
@@ -37,7 +38,7 @@ export function checkSigned(
 ): VerifiedStatement {
   const { identity, issuer } = certificate;
   const identityOk =
-    typeof options.identity === 'string' ? identity === options.identity : options.identity(identity);
+    typeof options.identity === 'string' ? sameIdentity(identity, options.identity) : options.identity(identity);
   if (!identityOk) {
     throw new IdentityError(`the signing identity ${identity} is not the expected one`, { identity, issuer });
   }

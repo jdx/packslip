@@ -784,7 +784,9 @@ pub fn create_release_list(request: &ListRequest<'_>) -> Result<CreatedList, Err
                 path: listed.bundle_path.display().to_string(),
                 why: e.to_string(),
             })?;
-        if statement.predicate.project != request.project {
+        // A GitHub or GitLab repository's name matches in any case, as
+        // consumers compare it.
+        if !crate::forge::same_project(&statement.predicate.project, request.project) {
             return Err(Error::NotAPackslip {
                 path: listed.bundle_path.display().to_string(),
                 why: format!(
@@ -1844,6 +1846,32 @@ mod tests {
             identity: key_identity(&key),
         })
         .unwrap_err();
+        assert!(err.to_string().contains("the list is for"), "{err}");
+    }
+
+    #[test]
+    fn a_release_list_takes_a_github_repository_name_in_any_case() {
+        let bundle_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/hk-v2.3.0.sigstore.json");
+        let key = SecretKey::from_seed([1u8; 32]);
+        let request = |project| ListRequest {
+            project,
+            generated_at: None,
+            valid_for: std::time::Duration::from_secs(60),
+            sequence: 1,
+            latest: None,
+            releases: vec![ListedRelease {
+                url: "https://x/packslip.sigstore.json",
+                bundle_path: &bundle_path,
+                yanked: None,
+                security: false,
+                evidence: vec![],
+            }],
+            identity: key_identity(&key),
+        };
+        // The bundle is for github.com/jdx/hk.
+        create_release_list(&request("github.com/JDX/HK")).unwrap();
+        let err = create_release_list(&request("github.com/jdx/hk/HK")).unwrap_err();
         assert!(err.to_string().contains("the list is for"), "{err}");
     }
 }

@@ -136,10 +136,12 @@ struct Install {
     /// Require this OIDC issuer as well as the project's default identity
     #[usage(long)]
     issuer: Option<String>,
-    /// Require this exact certificate identity
+    /// Require this certificate identity; a GitHub or GitLab repository
+    /// name in it matches in any case
     #[usage(long)]
     identity: Option<String>,
-    /// Require this certificate identity prefix
+    /// Require this certificate identity prefix; a GitHub or GitLab
+    /// repository name in it matches in any case
     #[usage(long)]
     identity_prefix: Option<String>,
     /// Approve one exact displayed trust-change proposal (repeatable)
@@ -1440,13 +1442,17 @@ fn parse_duration(s: &str) -> Result<std::time::Duration> {
 /// from a workflow of that repository). Any other project needs --pubkey
 /// or an identity flag. For a keyless release, --issuer with
 /// --identity-prefix (any workflow of a repository, such as
-/// https://github.com/owner/repo/) or --identity (one exact certificate
+/// https://github.com/owner/repo/) or --identity (one certificate
 /// identity, including its ref) pins the signer. --issuer with
 /// --source-repository instead pins the repository the certificate must
 /// record as its source, whichever workflow signed: unlike an identity
 /// prefix of that repository, it also matches a reusable workflow of
-/// another repository. For a key-signed release, pass --pubkey. --pin adds a check on top of the identity policy: the signing
-/// repository must have that signer fingerprint.
+/// another repository. In --identity, --identity-prefix, and
+/// --source-repository, a github.com or gitlab.com repository's name
+/// matches in any letter case, as the forge resolves it; the rest, such as
+/// a workflow's path and ref, matches exactly. For a key-signed release,
+/// pass --pubkey. --pin adds a check on top of the identity policy: the
+/// signing repository must have that signer fingerprint.
 ///
 /// For a GitHub or GitLab project, the identity flags narrow what the
 /// project's name requires and never replace it: the run that signed must
@@ -1491,13 +1497,15 @@ struct Verify {
     /// The pinned public key file, or its base64 line
     #[usage(short = 'p', long, help_heading = "Trust")]
     pubkey: Option<String>,
-    /// The exact certificate identity a keyless signer must have, including
-    /// its ref, such as
-    /// https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3
+    /// The certificate identity a keyless signer must have, including its
+    /// ref, such as
+    /// https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3;
+    /// a GitHub or GitLab repository name in it matches in any case
     #[usage(long, help_heading = "Trust")]
     identity: Option<String>,
     /// A prefix the certificate identity must start with, such as
-    /// https://github.com/owner/repo/
+    /// https://github.com/owner/repo/; a GitHub or GitLab repository name in
+    /// it matches in any case
     #[usage(long, help_heading = "Trust")]
     identity_prefix: Option<String>,
     /// The OIDC issuer a keyless signer must have; pass it with --identity
@@ -1835,13 +1843,21 @@ impl Verify {
 
 /// Whether a verified certificate records `want` as its source repository.
 /// Fulcio derives the record from the forge's token, so it names the
-/// repository whose run signed, whichever workflow that was.
+/// repository whose run signed, whichever workflow that was. A GitHub or
+/// GitLab repository's name matches in any case, as the forge resolves it.
 fn require_source_repository(
     want: &str,
     source: Option<&sigstore::SourceRepository>,
 ) -> std::result::Result<(), String> {
+    let wanted = |uri: &str| {
+        let want = want.trim_end_matches('/');
+        match (uri.strip_prefix("https://"), want.strip_prefix("https://")) {
+            (Some(uri), Some(want)) => packslip::forge::same_project(uri, want),
+            _ => uri == want,
+        }
+    };
     match source {
-        Some(source) if source.uri == want.trim_end_matches('/') => Ok(()),
+        Some(source) if wanted(&source.uri) => Ok(()),
         Some(source) => Err(format!(
             "the certificate's source repository is {}, expected {want}",
             source.uri
@@ -2029,13 +2045,15 @@ struct Pin {
     /// Local release bundle to verify and fingerprint
     #[usage(value_hint = usage_rs::ValueHint::FilePath)]
     bundle: PathBuf,
-    /// The exact certificate identity a keyless signer must have, including
-    /// its ref, such as
-    /// https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3
+    /// The certificate identity a keyless signer must have, including its
+    /// ref, such as
+    /// https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3;
+    /// a GitHub or GitLab repository name in it matches in any case
     #[usage(long, help_heading = "Trust")]
     identity: Option<String>,
     /// A prefix the certificate identity must start with, such as
-    /// https://github.com/owner/repo/
+    /// https://github.com/owner/repo/; a GitHub or GitLab repository name in
+    /// it matches in any case
     #[usage(long, help_heading = "Trust")]
     identity_prefix: Option<String>,
     /// The OIDC issuer a keyless signer must have; pass it with --identity
