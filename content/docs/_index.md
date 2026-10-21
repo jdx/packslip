@@ -39,7 +39,7 @@ guides cover what a release needs beyond the action's defaults.
 - [Release recipes](/docs/recipes/): complete configurations for a Rust,
   Go, monorepo, or desktop release.
 - [Go and npm libraries](/docs/libraries/): create and sign statements from
-  Go (unreleased), or verify a downloaded keyless release from Node.js.
+  Go, or verify a downloaded keyless release from Node.js.
 - [Manage release lists](/docs/release-lists/): withdraw versions, mark
   security fixes, and recommend a default release. A list is optional on
   GitHub and required for a project on its own domain.

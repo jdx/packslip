@@ -55,7 +55,7 @@ what that fixes and what a revision may add.
   with packslip and using mise to manage tools with packslip releases, including
   their completions, man pages, and skills.
 - **Use a library:** [Go and npm libraries](https://packslip.dev/docs/libraries/)
-  explains the publisher-facing Go module (currently unreleased) and the
+  explains the publisher-facing Go module and the
   published Node.js package for consumer verification.
 
 [How packslip fits a release](https://packslip.dev/docs/release-workflow/)
