@@ -388,6 +388,182 @@
         1
       ],
       "comment": "A resource's identity includes the name of the file it points at, so a Windows text file is not a scoped alternative to a roff man page: both survive and the consumer installs each. Naming the file the same way is what makes one entry override the other, as the preceding case shows."
+    },
+    {
+      "name": "icons at different hicolor sizes are different things",
+      "artifact": "tool-linux-x64.tar.xz",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "github.com/example/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "size": 1,
+              "format": "tar.xz",
+              "bin": [
+                "tool"
+              ]
+            }
+          ],
+          "resources": [
+            {
+              "kind": "icon",
+              "os": "linux",
+              "archive": "share/icons/hicolor/512x512/apps/tool.png"
+            },
+            {
+              "kind": "icon",
+              "archive": "share/icons/hicolor/256x256/apps/tool.png"
+            },
+            {
+              "kind": "icon",
+              "archive": "share/icons/hicolor/48x48@2/apps/tool.png"
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-key",
+            "key_id": "5a0a0b8b9c6d7e1f"
+          }
+        }
+      },
+      "expect": [
+        0,
+        1,
+        2
+      ],
+      "comment": "An icon whose path's last four segments are `hicolor`, SIZE, CONTEXT, and FILE has that size directory in its identity, so one icon at three hicolor sizes is three resources and the consumer installs each. The Linux-scoped 512x512 entry is the most specific, but it describes a different thing from the other two and hides neither."
+    },
+    {
+      "name": "icons outside a hicolor size directory that share a file name are one thing",
+      "artifact": "tool-linux-x64.tar.xz",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "github.com/example/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "size": 1,
+              "format": "tar.xz",
+              "bin": [
+                "tool"
+              ]
+            }
+          ],
+          "resources": [
+            {
+              "kind": "icon",
+              "os": "linux",
+              "archive": "share/pixmaps/tool.png"
+            },
+            {
+              "kind": "icon",
+              "archive": "icons/tool.png"
+            },
+            {
+              "kind": "icon",
+              "archive": "share/icons/myhicolor/48x48/apps/tool.png"
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-key",
+            "key_id": "5a0a0b8b9c6d7e1f"
+          }
+        }
+      },
+      "expect": [
+        0
+      ],
+      "comment": "Outside a hicolor size directory, an icon's identity is its file name without the directory, so these entries are alternatives for one icon and the Linux-scoped entry, the more specific, hides the others. The hicolor match is on whole path segments: `myhicolor/48x48/apps/tool.png` is not in a hicolor size directory."
+    },
+    {
+      "name": "exec man pages for different executables are different things",
+      "artifact": "tool-linux-x64.tar.xz",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "github.com/example/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "size": 1,
+              "format": "tar.xz",
+              "bin": [
+                "tool",
+                "toolctl"
+              ]
+            }
+          ],
+          "resources": [
+            {
+              "kind": "man",
+              "bin": "tool",
+              "os": "linux",
+              "exec": [
+                "tool",
+                "man"
+              ]
+            },
+            {
+              "kind": "man",
+              "bin": "toolctl",
+              "exec": [
+                "toolctl",
+                "man"
+              ]
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-key",
+            "key_id": "5a0a0b8b9c6d7e1f"
+          }
+        }
+      },
+      "expect": [
+        0,
+        1
+      ],
+      "comment": "A man page's identity includes `bin`, and an `exec` source has no file name, so these two entries are for different things: the Linux-scoped page for `tool` does not hide the unscoped page for `toolctl`."
     }
   ]
 }
