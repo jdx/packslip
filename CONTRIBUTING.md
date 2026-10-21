@@ -80,7 +80,7 @@ edit that file by hand only when
 The [conformance vectors](tests/conformance/README.md) express format rules
 as test cases. Change the affected vectors in the same pull request as a
 rule change, and explain whether you changed the specification or corrected
-a vector that required behavior outside it. An editorial clarification
+a vector that contradicted it. An editorial clarification
 should leave the cases and expected results unchanged.
 
 ## Preview and build the docs
