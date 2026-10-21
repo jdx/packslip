@@ -1349,8 +1349,8 @@ release.
 ### The signed list
 
 A release list uses the same signed bundle structure as a release
-packslip, but its statement has the `releases/v1` predicate. Its subjects
-pin release bundles rather than artifacts:
+packslip, but its statement has the `releases/v1` predicate. The subjects
+for listed packslips pin release bundles rather than artifacts:
 
 ```json
 {
@@ -1400,15 +1400,23 @@ version absent from the list makes the list invalid. A listed target that
 is yanked or otherwise ineligible leaves the list valid but triggers the
 [Latest](#latest) fallback rules.
 
+A list may have no releases, as when a GitHub vendor retires its last
+supplementary entry or a project on its own domain has no release to
+list. Its statement must still carry a subject, with a `sha256` digest
+like any other: in-toto's statement validator requires at least one
+subject, and sigstore binds the signature to a subject digest. The
+reference CLI writes one named `_`, in-toto's name for a subject without
+a meaningful name, with the SHA-256 of empty input.
+
 #### List fields
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
 | `_type` | string | required | Always `https://in-toto.io/Statement/v1`. |
-| `subject[]` | array | required | One entry per listed packslip. |
-| `subject[].name` | string | required | The packslip's URL, as its entry's `packslip` gives it. |
-| `subject[].digest.sha256` | string | required | SHA-256 of the bundle file, lowercase hex. |
-| `subject[].digest.sha512` | string | optional | SHA-512 of the bundle file, lowercase hex. |
+| `subject[]` | array | required | At least one subject, including one for every listed packslip; a subject need not belong to a listed release. |
+| `subject[].name` | string | required | For a listed packslip, its URL, as its entry's `packslip` gives it. |
+| `subject[].digest.sha256` | string | required | SHA-256, lowercase hex; for a listed packslip, of its bundle file. |
+| `subject[].digest.sha512` | string | optional | SHA-512, lowercase hex; for a listed packslip, of its bundle file. |
 | `predicateType` | string | required | Always `https://packslip.dev/releases/v1`. |
 | `predicate.project` | string | required | The project the list is for. See [Project names](#project-names). |
 | `predicate.generated_at` | string | required | When the list was produced, RFC 3339 UTC. |
@@ -1416,7 +1424,7 @@ is yanked or otherwise ineligible leaves the list valid but triggers the
 | `predicate.sequence` | integer | required | A nonnegative counter. A consumer refuses a list whose sequence is lower than one it has accepted. |
 | `predicate.latest` | string | optional | The vendor's recommended default: the exact `version` of an entry. See [Latest](#latest). |
 | `predicate.identity` | object | required | How the list is signed, with the fields a release statement's `identity` has. See [Field reference](#field-reference). |
-| `predicate.releases[]` | array | required | The listed releases, in any order. |
+| `predicate.releases[]` | array | required | The listed releases, in any order. It may be empty. |
 | `releases[].version` | string | required | Semver 2.0.0, copied from the packslip. |
 | `releases[].tag` | string | optional | The packslip's `source.tag`. |
 | `releases[].published_at` | string | required | RFC 3339 UTC, copied from the packslip. |
@@ -1429,17 +1437,19 @@ is yanked or otherwise ineligible leaves the list valid but triggers the
 
 #### Freshness and rollback protection
 
-Each subject names a listed packslip's URL and carries the digest of its
-bundle file. The consumer therefore checks the exact document the list
-selected, even when a URL's contents change.
+Each listed packslip has a subject that names its URL and carries the
+digest of its bundle file. The consumer therefore checks the exact
+document the list selected, even when a URL's contents change.
 
 The list also carries two freshness controls, borrowed from TUF's
 timestamp role:
 
 - `expires_at` limits how long the list can be used. A consumer refuses
   an expired list, so a mirror cannot serve an old view indefinitely.
-- `sequence` prevents rollback. A consumer remembers the highest value
-  it has accepted and refuses a lower one.
+- `sequence` prevents rollback. The publisher must give each new list a
+  higher value than the last. A consumer remembers the highest value it
+  has accepted and refuses a lower one; it accepts an equal value, such
+  as the same list fetched again.
 
 These controls apply to the list, separately from verification of its
 release bundles.
@@ -1536,9 +1546,9 @@ endpoint-only discovery would silently undo signed withdrawals.
 
 The vendor must re-sign the list before every `expires_at`, even if no
 new release has shipped, because consumers refuse expired lists. To
-retire its entries, publish a fresh, unexpired list with a nondecreasing
-sequence. A user may explicitly clear the remembered list policy for
-that project.
+retire its entries, publish a fresh, unexpired list with a higher
+sequence that omits them, even if that leaves it with no releases. A
+user may explicitly clear the remembered list policy for that project.
 
 ### Lists from other publishers
 

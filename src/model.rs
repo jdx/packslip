@@ -1256,7 +1256,8 @@ pub struct ReleaseList {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "schema", schemars(regex(pattern = SEMVER_PATTERN)))]
     pub latest: Option<String>,
-    /// In any order; consumers rank by semver precedence.
+    /// In any order, and possibly empty; consumers rank by semver
+    /// precedence.
     #[serde(deserialize_with = "object::list")]
     pub releases: Vec<ReleaseRef>,
     /// Vendor- or consumer-defined data about the list. See
@@ -1448,6 +1449,8 @@ pub enum InvalidDocument {
     AppSource(String),
     #[error("sbom {0:?} needs a format (cyclonedx or spdx) and a static source, not exec")]
     Sbom(String),
+    /// Never returned: a release list may have no releases.
+    #[deprecated(note = "a release list may be empty, so validation never returns this")]
     #[error("at least one release is required")]
     NoReleases,
     #[error("release {0:?} appears more than once")]
@@ -1905,9 +1908,6 @@ impl ReleaseListStatement {
         if expires <= generated {
             return Err(InvalidDocument::Expiry);
         }
-        if p.releases.is_empty() {
-            return Err(InvalidDocument::NoReleases);
-        }
         check_extensions("the release list", &p.extensions)?;
         let mut seen = std::collections::BTreeSet::new();
         for release in &p.releases {
@@ -1947,6 +1947,15 @@ impl ReleaseListStatement {
     pub fn schema() -> serde_json::Value {
         let mut schema = serde_json::to_value(schemars::schema_for!(ReleaseListStatement))
             .expect("schema serialises");
+        // A list always carries a subject, even with no releases, because
+        // sigstore binds the signature to a subject digest. `Envelope` is
+        // shared with release statements, so say so here.
+        if let Some(subject) = schema
+            .pointer_mut("/properties/subject")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            subject.insert("minItems".into(), 1.into());
+        }
         set_schema_id(&mut schema, RELEASES_SCHEMA_URL);
         schema
     }
@@ -2902,13 +2911,25 @@ mod tests {
             bad.validate(),
             Err(InvalidDocument::DuplicateRelease(_))
         ));
-        let mut bad = sample_list();
-        bad.predicate.releases.clear();
-        assert_eq!(bad.validate(), Err(InvalidDocument::NoReleases));
+        // A list may have no releases, and may carry a subject no entry
+        // names: every listed packslip needs a subject, not the reverse.
+        let mut empty = sample_list();
+        empty.predicate.releases.clear();
+        empty.validate().unwrap();
+        let mut extra = sample_list();
+        extra.subject.push(Subject {
+            name: "https://dl.example/extra.json".into(),
+            digest: Digest {
+                sha256: "d".repeat(64),
+                sha512: None,
+            },
+        });
+        extra.validate().unwrap();
         #[cfg(feature = "schema")]
         {
             let schema = ReleaseListStatement::schema();
             assert!(schema["properties"]["predicate"].is_object());
+            assert_eq!(schema["properties"]["subject"]["minItems"], 1);
         }
     }
 

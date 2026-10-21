@@ -102,7 +102,7 @@
           "type": "string"
         },
         "releases": {
-          "description": "In any order; consumers rank by semver precedence.",
+          "description": "In any order, and possibly empty; consumers rank by semver\nprecedence.",
           "items": {
             "$ref": "#/$defs/ReleaseRef"
           },
@@ -242,6 +242,7 @@
       "items": {
         "$ref": "#/$defs/Subject"
       },
+      "minItems": 1,
       "type": "array"
     }
   },

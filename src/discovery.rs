@@ -1346,6 +1346,24 @@ mod tests {
             )
             .is_ok()
         );
+        // A later list with no releases retires the withdrawal.
+        let mut retired = signed_list();
+        retired.predicate.releases.clear();
+        retired.predicate.sequence = 6;
+        assert!(
+            list_freshness(
+                Some(&retired),
+                Some(5),
+                "2026-10-03T00:00:00Z".parse().unwrap()
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            choose(&releases, Some(&retired), Some("v2.0.0"))
+                .unwrap()
+                .version,
+            "2.0.0"
+        );
     }
     #[test]
     fn offline_fetch_never_uses_transport_and_enforces_limits() {
