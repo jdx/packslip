@@ -3,9 +3,10 @@ package packslip
 import "strings"
 
 // ArchFromGo returns the packslip architecture for a GOARCH. goarm is
-// GOARM and only matters for "arm"; empty means 6, the Go default, and a
-// floating-point option such as ",softfloat" is ignored. A
-// universal macOS binary (GOARCH "all" in GoReleaser) returns "", because an
+// GOARM and only matters for "arm"; empty means 6, GoReleaser's default, and a
+// floating-point option such as ",softfloat" is ignored. Callers using raw Go
+// cross-build settings must pass the effective GOARM, since an unset
+// cross-build defaults to 7. A universal macOS binary (GOARCH "all" in GoReleaser) returns "", because an
 // absent arch means the build runs on every architecture.
 //
 // Architectures outside the documented vocabulary use Rust's spelling
