@@ -1,0 +1,29 @@
+# Fragment ids that pages published and later moved. Shipped binaries, the
+# man page, install scripts, vectors, and other sites keep linking the old
+# ids, so each one stays resolvable.
+#
+# Each table is a page URL. In it, write old-id = "new-id" when the section
+# moved on the same page: the heading with new-id also gets old-id. Write
+# old-id = "/docs/other/#new-id" when it moved to another page: static/docs.js
+# sends a reader who arrives with old-id to that URL. Moves to another page
+# need JavaScript; prefer a same-page entry when a heading on the old page
+# still covers the topic.
+#
+# scripts/check-docs.py fails when a page, a target, or a heading named here
+# does not exist, when an old id is still a real id on its page, or when a
+# link in the site uses an old id instead of its current location.
+
+# Renamed by #192 (b3134ff); 1.5.x binaries, conformance vectors, and the
+# older agent skill link them.
+["/release/v1/"]
+forge-identity = "repository-identity-and-renames"
+goal = "purpose-and-scope"
+names = "project-names"
+reusable-workflows = "workflow-pinning"
+scope-and-identity = "resource-scope"
+signer-fingerprint = "signer-fingerprints"
+the-file = "bundle-format"
+
+# The agent skill through 1.5.x linked this before #192 renamed the section.
+["/docs/describing-releases/"]
+manifest-keys = "keys-in-releasetoml"

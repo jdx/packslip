@@ -19,6 +19,14 @@ disableKinds = ["rss", "sitemap", "taxonomy", "term"]
     dir = ":cacheDir/images"
 
 [markup]
+  # Typographer turns "--key" in prose into an en dash and curls the quotes
+  # in commands, so a reader copying them gets something that does not run.
+  [markup.goldmark.extensions.typographer]
+    disable = true
+  # A {.class} line under a table gives it that class; render-table.html
+  # copies it onto the <table>. scripts/render-actions.py marks its tables.
+  [markup.goldmark.parser.attribute]
+    block = true
   [markup.tableOfContents]
     startLevel = 2
     endLevel = 3

@@ -20,6 +20,7 @@
 {{ partial "social-image.html" . }}
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/style.css">
+{{ partial "legacy-anchors.html" . }}
 </head>
 <body>
 
@@ -30,22 +31,11 @@
     <details class="doc-navigation" open>
       <summary>Browse this documentation</summary>
 
-    <div class="toc-group">
-      <div class="toc-title">CLI reference</div>
-      <ul>
-        {{ $current := .RelPermalink }}
-        {{ with site.GetPage "/cli" }}
-          <li><a{{ if eq $current .RelPermalink }} class="active"{{ end }} href="{{ .RelPermalink }}">Overview</a></li>
-          {{ range .RegularPagesRecursive }}
-            <li><a{{ if eq $current .RelPermalink }} class="active"{{ end }} href="{{ .RelPermalink }}">packslip {{ .File.ContentBaseName }}</a></li>
-          {{ end }}
-        {{ end }}
-      </ul>
-    </div>
+    {{ partial "site-nav.html" . }}
     {{ if .TableOfContents }}
       <div class="toc-group">
         <div class="toc-title">On this page</div>
-        {{ .TableOfContents }}
+        {{ partial "page-toc.html" . }}
       </div>
     {{ end }}
 

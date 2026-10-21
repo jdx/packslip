@@ -5,7 +5,8 @@
 Read [CONTRIBUTING.md](CONTRIBUTING.md); it says where each kind of change
 belongs and lists the checks CI runs. Never edit generated files.
 `mise run render` writes `content/spec.md`, `content/cli/`, `packslip.1`,
-`packslip.usage.kdl`, and `static/schema/`: edit their sources, then run it.
+`packslip.usage.kdl`, `static/schema/`, and `content/docs/actions.md`: edit
+their sources, then run it.
 release-plz adds each release's entry to `CHANGELOG.md`; edit it by hand
 only for the procedure in
 [RELEASING.md](RELEASING.md#publishing-a-version-release-plz-would-not-propose).

@@ -14,54 +14,19 @@
 <meta name="twitter:description" content="{{ .Description }}">
 {{ partial "seo.html" . }}
 <link rel="stylesheet" href="/style.css">
+{{ partial "legacy-anchors.html" . }}
 </head>
 <body>
 {{ partial "header.html" . }}
 <main id="main" class="wrap doc">
-  <aside class="toc" aria-label="Documentation navigation">
+  <aside class="toc">
     <details class="doc-navigation" open>
       <summary>Browse this documentation</summary>
 
-    {{ if eq .Section "docs" }}
-    {{/* Guides are grouped by the `group` front-matter param and ordered
-         by weight inside each group. The index link leads the first group.
-         A page with no group, or an unknown one, is listed last under
-         "Other guides" so it never drops out of the navigation. */}}
-    {{ $current := .RelPermalink }}
-    {{ with site.GetPage "/docs" }}
-    {{ $index := . }}
-    {{ $pages := .RegularPages.ByWeight }}
-    {{ $groups := slice
-      (dict "key" "start" "title" "Start")
-      (dict "key" "publish" "title" "Publish")
-      (dict "key" "consume" "title" "Install and verify")
-    }}
-    {{ $keys := slice }}
-    {{ range $groups }}{{ $keys = $keys | append .key }}{{ end }}
-    {{ $other := slice }}
-    {{ range $pages }}{{ if not (in $keys (.Params.group | default "")) }}{{ $other = $other | append . }}{{ end }}{{ end }}
-    {{ with $other }}{{ $groups = $groups | append (dict "key" "other" "title" "Other guides") }}{{ end }}
-    {{ range $groups }}
-    {{ $members := cond (eq .key "other") $other (where $pages "Params.group" .key) }}
-    {{ if or $members (eq .key "start") }}
-    <div class="toc-group">
-      <div class="toc-title">{{ .title }}</div>
-      <ul>
-        {{ if eq .key "start" }}
-        <li><a href="{{ $index.RelPermalink }}"{{ if eq $current $index.RelPermalink }} class="active" aria-current="page"{{ end }}>Documentation</a></li>
-        {{ end }}
-        {{ range $members }}
-        <li><a href="{{ .RelPermalink }}"{{ if eq $current .RelPermalink }} class="active" aria-current="page"{{ end }}>{{ .Title }}</a></li>
-        {{ end }}
-      </ul>
-    </div>
-    {{ end }}
-    {{ end }}
-    {{ end }}
-    {{ end }}
+    {{ partial "site-nav.html" . }}
     <div class="toc-group">
       <div class="toc-title">On this page</div>
-      {{ .TableOfContents }}
+      {{ partial "page-toc.html" . }}
     </div>
 
     </details>

@@ -1,3 +1,43 @@
+// Send a link to a section that moved to another page on to its new URL.
+// layouts/partials/legacy-anchors.html embeds this page's moved ids from
+// data/legacy_anchors.toml. A section that moved on the same page needs
+// nothing here: its heading carries the old id as well.
+(() => {
+  const data = document.querySelector("script[data-legacy-anchors]");
+  if (!data) return;
+  let moved;
+  try {
+    moved = JSON.parse(data.textContent);
+  } catch {
+    return;
+  }
+  function follow() {
+    let id;
+    try {
+      id = decodeURIComponent(window.location.hash.slice(1));
+    } catch {
+      return;
+    }
+    if (!id || document.getElementById(id) || !Object.prototype.hasOwnProperty.call(moved, id)) return;
+    const target = moved[id];
+    if (typeof target !== "string") return;
+    // Resolve the target as the browser would and follow it only within this
+    // site, even if the data file is wrong: a prefix test alone lets
+    // "/\evil.example/" through, which browsers read as "//evil.example/".
+    let url;
+    try {
+      url = new URL(target, window.location.href);
+    } catch {
+      return;
+    }
+    if (url.origin === window.location.origin && /^https?:$/.test(url.protocol)) {
+      window.location.replace(url.href);
+    }
+  }
+  follow();
+  window.addEventListener("hashchange", follow);
+})();
+
 // Start with compact navigation on small screens. Native details keeps the
 // toggle keyboard-accessible and the links usable without JavaScript.
 const narrowDocs = window.matchMedia("(max-width: 860px)");

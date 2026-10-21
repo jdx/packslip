@@ -68,9 +68,11 @@ toolchain, for example `RUSTUP_TOOLCHAIN=1.93.0 mise run docs`.
 | Release process | `RELEASING.md`, `.github/workflows/`, `release-plz.toml`, `cliff.toml` (changelog), `communique.toml` (release notes), `scripts/describe-release.sh` (packslip.dev's own packslip) |
 
 `mise run render` generates `content/spec.md`, `content/cli/`,
-`packslip.usage.kdl`, `packslip.1`, and `static/schema/`. Do not edit
-them directly: edit their sources and run `mise run render` again, because
-the next render overwrites any direct edit. release-plz adds each
+`packslip.usage.kdl`, `packslip.1`, `static/schema/`, and
+`content/docs/actions.md` (from `docs/actions.md`, both `action.yml`
+files, and `docs/actions-since.toml`). Do not edit them directly: edit
+their sources and run `mise run render` again, because the next render
+overwrites any direct edit. release-plz adds each
 release's section to `CHANGELOG.md` from the merged pull request titles;
 edit that file by hand only when
 [publishing a version release-plz would not propose](RELEASING.md#publishing-a-version-release-plz-would-not-propose).
@@ -110,6 +112,8 @@ features, and use site paths such as `/docs/verifying/` for internal links.
 When renaming a section, update its links in the guides, specification,
 fixture metadata, and repository documentation. `mise run docs:check`
 checks links within the built site; check repository-only links separately.
+Released binaries and other sites keep linking the old anchor, so add it to
+`data/legacy_anchors.toml`, which explains how to map it to its new place.
 Use ordinary Markdown headings in `docs/spec/packslip.md`, because it is
 also rendered on GitHub and Hugo's `{#id}` syntax is not portable there.
 
@@ -168,6 +172,8 @@ The check covers:
 - Local links, anchors, assets, and the guide URLs listed in
   `scripts/check-docs.py`.
 - One H1 per page, unique element IDs, and spacing around inline markup.
+- Every entry in `data/legacy_anchors.toml` names a page, target, and
+  heading that exist.
 - The quickstart and release recipes, run in temporary directories with
   unlogged keys and no uploads.
 - The shared homepage/quickstart example in
