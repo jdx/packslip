@@ -20,7 +20,7 @@ Keeps the complete installation tree. Does not run downloaded code, install depe
 - **`--bin-dir <BIN_DIR>`** — Override the command directory without moving trust state
 - **`--variant <VARIANT>`** — Select a publisher's named variant
 - **`--pin <PIN>`** — Allowed signer fingerprint (repeatable, alternatives within this option)
-- **`--pubkey <PUBKEY>`** — Ed25519 public key or path to its public-key file
+- **`--pubkey <PUBKEY>`** — The pinned minisign public key file, or its base64 line
 - **`--issuer <ISSUER>`** — Require this OIDC issuer as well as the project's default identity
 - **`--identity <IDENTITY>`** — Require this exact certificate identity
 - **`--identity-prefix <IDENTITY_PREFIX>`** — Require this certificate identity prefix
