@@ -111,7 +111,7 @@ pub struct VerifiedList {
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("statement is not valid JSON: {0}")]
+    #[error("statement is not well-formed: {0}")]
     Json(#[from] serde_json::Error),
     #[error("statement is invalid: {0}")]
     Invalid(#[from] InvalidDocument),

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path"
 	"regexp"
 	"strings"
 	"time"
@@ -454,7 +453,10 @@ func validMin(v string) bool {
 	return v != "" && v[0] >= '0' && v[0] <= '9' && regexp.MustCompile(`^[A-Za-z0-9.+-]+$`).MatchString(v)
 }
 func validShell(v string) bool { return v != "" && regexp.MustCompile(`^[a-z0-9_-]+$`).MatchString(v) }
-func fileName(v string) string { return path.Base(v) }
+
+// fileName is the last path segment, as the Rust crate reads it: empty for a
+// path ending in "/", which Validate then refuses as an empty name.
+func fileName(v string) string { return v[strings.LastIndex(v, "/")+1:] }
 func commandName(v string) string {
 	if len(v) >= 4 && strings.EqualFold(v[len(v)-4:], ".exe") {
 		return v[:len(v)-4]
