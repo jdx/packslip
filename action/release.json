@@ -1,52 +1,52 @@
 {
   "assets": {
     "install.ps1": {
-      "sha256": "8ac55d4d0b8f40d11eea295fb10aa13c87b216438e17f1c5b1a279cd658e6f41",
+      "sha256": "2a451f8aaa94cb5b4e3365be0d17d25015dc478f39d59124bea75b00861113f8",
       "size": 4723
     },
     "install.sh": {
-      "sha256": "25c27a418b2798fd82e98b44cd45c72ebefd5dc7648822a084fa2e8a43a329fc",
+      "sha256": "6e57fee8c8f3395eb6cfab2beca6b60b04af015341af7a2b082072bcf4d9005f",
       "size": 5411
     },
-    "packslip-v1.10.0-darwin-arm64": {
-      "sha256": "5faab8dc3c2379095717d82278c27255426ae5f9fd437cafebdbbc4946432b1f",
-      "size": 10319808
+    "packslip-v1.10.1-darwin-arm64": {
+      "sha256": "76044a9704baafbfd4969f95e5005dbf59a3ee6d2e0810ffa1a836e786497f09",
+      "size": 10319824
     },
-    "packslip-v1.10.0-darwin-arm64.tar.xz": {
-      "sha256": "11d9c8d6812bd53f21c3ee983317619837a485dfe864c8ea9b7607a5f2e43240",
-      "size": 3196320
+    "packslip-v1.10.1-darwin-arm64.tar.xz": {
+      "sha256": "be8878da91212c405cb0f7c0bade53cf2da069fb7ffbfdbf28902213facbd741",
+      "size": 3196316
     },
-    "packslip-v1.10.0-linux-arm64": {
-      "sha256": "5f5ce693f39669578574dce16e2783559c877c14a54f4fcf6e35b68a86d68983",
+    "packslip-v1.10.1-linux-arm64": {
+      "sha256": "4f5f43c6e23da221c23795910002382c3b5482ff2d632f32f238c82b38a26cef",
       "size": 10173952
     },
-    "packslip-v1.10.0-linux-arm64.tar.xz": {
-      "sha256": "b04b588756978f7cb9ce1b11831d7da4ef2ae70de3252dde5aeb06cded82be62",
-      "size": 3317104
+    "packslip-v1.10.1-linux-arm64.tar.xz": {
+      "sha256": "2f6297096c220cc4e8fd81389dc11a12327e3467cc1ce3dda6dd0e88eb8ed603",
+      "size": 3316632
     },
-    "packslip-v1.10.0-linux-x64": {
-      "sha256": "5d61fd1d35382900f343aebf58c784bc13ff4290754bbd34247b98509b1b9500",
+    "packslip-v1.10.1-linux-x64": {
+      "sha256": "a510749a81e28ba86a996bad09ca65f2d3288249400893de03a6c985727c2a41",
       "size": 12808240
     },
-    "packslip-v1.10.0-linux-x64.tar.xz": {
-      "sha256": "deb031db66c289114b267b5bc996de3bdf58d95ecec828788031fcea375a15c3",
-      "size": 3866444
+    "packslip-v1.10.1-linux-x64.tar.xz": {
+      "sha256": "a36cfe6023df44071f079fb45051c5e33f7c2b91a45b4f0facda86b9719691b0",
+      "size": 3865040
     },
-    "packslip-v1.10.0-windows-arm64.exe": {
-      "sha256": "6f80996fe1bc8f32adbcab3618f70d63e80480b238aa0b68ccf6b80ba98ac0b6",
-      "size": 10878464
+    "packslip-v1.10.1-windows-arm64.exe": {
+      "sha256": "ac872ead102f442e4f6c23feaa42d943a6c48608caf32e7f58c63ee088fb4e39",
+      "size": 10875904
     },
-    "packslip-v1.10.0-windows-arm64.zip": {
-      "sha256": "3abf23b2a2f06825d4488fee10ef634651cf118f0b8596e7dd1bb86257d365ec",
-      "size": 4811543
+    "packslip-v1.10.1-windows-arm64.zip": {
+      "sha256": "d65fb131a0aaef2d7646873701a8164a8316022caf57bc9a4048867913ccbb45",
+      "size": 4810131
     },
-    "packslip-v1.10.0-windows-x64.exe": {
-      "sha256": "4f4424f1d12573d666e3aa680a3bd53d56270813ddae8a167d8671bf31c842ba",
+    "packslip-v1.10.1-windows-x64.exe": {
+      "sha256": "aa613b1b3933de3fb3e70205f0eae699478dc5cfa9c3697188b9053b95790d67",
       "size": 12459008
     },
-    "packslip-v1.10.0-windows-x64.zip": {
-      "sha256": "9e75e28145f108492bcb0e7890f664ba223cbc1d4eb13c659d0b5829dba93df5",
-      "size": 5096471
+    "packslip-v1.10.1-windows-x64.zip": {
+      "sha256": "cf680b85558a0c45346f2717ede3b088e7b99286afdf3f00e9e5252f4f7ab06b",
+      "size": 5096848
     },
     "packslip.1": {
       "sha256": "7de1ebbc48d08484356d76d4553d9e8fbb78a8d0c4dee5929af119a79446a4f5",
@@ -65,7 +65,7 @@
       "size": 4630
     },
     "packslip.usage.kdl": {
-      "sha256": "041200e0f20bf84993ec617166d17dd2d4b0caaafd6acab61d9bd1cfed2bfd7b",
+      "sha256": "4808ad4e6d7ecc0b6f578f18c22ea61c852c3d6ba219d17b85dcc1f36ef8c72b",
       "size": 28140
     },
     "packslip.zsh": {
@@ -73,8 +73,8 @@
       "size": 4280
     }
   },
-  "run_id": 39590103561,
+  "run_id": 39607260331,
   "schema": 1,
-  "source_commit": "129b3084e007ada01ed6c3505d1494491bf989f3",
-  "version": "1.10.0"
+  "source_commit": "92bf3ec2dd291406e2c90e4beae3b83b6fad2ea2",
+  "version": "1.10.1"
 }
