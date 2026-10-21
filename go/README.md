@@ -2,11 +2,10 @@
 
 This module is the publisher-facing Go library for [packslip release-v1](https://packslip.dev/release/v1/) statements. It constructs release statements from explicit artifact metadata, streams artifact digests, validates the statement, and signs it keylessly with Sigstore.
 
-> **Unreleased:** the module is not yet available from the Go module proxy.
-> Its first published version will be installed as
-> `go get github.com/jdx/packslip/go@vX.Y.Z` and requires Go 1.25.8 or newer.
-> See [the library guide](https://packslip.dev/docs/libraries/) for the Go and
-> npm roles and release cadence.
+Install it with `go get github.com/jdx/packslip/go@latest`; it requires Go
+1.25.8 or newer. The first proxy-installable version is v1.9.1. See
+[the library guide](https://packslip.dev/docs/libraries/) for the Go and npm
+roles and release cadence.
 
 It is intentionally not a GoReleaser adapter or a release CLI. Mapping build platforms, archive names, upload destinations, and release-tool configuration stays in an adapter owned by that tool or its users.
 
@@ -15,7 +14,7 @@ statement, err := packslip.Build(packslip.Predicate{
     Project: "github.com/acme/tool",
     Version: "0.1.0",
     PublishedAt: time.Now().UTC(),
-    Source: &packslip.Source{Repo: "github.com/acme/tool", Tag: "v0.1.0"},
+    Source: &packslip.Source{Repo: "https://github.com/acme/tool", Tag: "v0.1.0"},
     Identity: packslip.Identity{
         Scheme: "sigstore-oidc",
         KeyID: "https://github.com/acme/tool/.github/workflows/release.yml@refs/tags/v0.1.0",
@@ -31,6 +30,27 @@ options, err := packslip.ProductionKeylessOptions(ctx, oidcToken)
 if err != nil { /* handle public-good TUF discovery */ }
 bundle, err := packslip.SignKeyless(statement, options)
 ```
+
+In CI, `AmbientIDToken` returns the OIDC token (`SIGSTORE_ID_TOKEN`, or a
+GitHub Actions token requested for the `sigstore` audience) and
+`IdentityFromToken` derives the `Identity` Fulcio will certify for it, so the
+statement and the certificate agree:
+
+```go
+oidcToken, err := packslip.AmbientIDToken(ctx) // packslip.ErrNoIDToken when there is none
+identity, err := packslip.IdentityFromToken(oidcToken)
+```
+
+These are the only functions that read the environment or make an OIDC
+request; `SignKeyless` and `ProductionKeylessOptions` never do. The token is
+not verified by `IdentityFromToken`: a mismatch fails in `SignKeyless` before
+anything is logged.
+
+Two helpers map a build matrix to the documented vocabularies:
+`ArchFromGo(goarch, goarm)` translates a `GOARCH` (`amd64` to `x86_64`,
+`arm` with `GOARM=7` to `armv7`; a universal macOS binary gets no arch), and
+`NewBareBin(artifactName, format, command)` names the executable inside a
+`raw`, `gz`, `xz`, `zst`, or `bz2` artifact.
 
 When a resource references a separately uploaded release asset, pass it as
 `packslip.BuildOptions{Assets: []packslip.AssetInput{{Name: "...", Path: "..."}}}`.
