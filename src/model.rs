@@ -260,7 +260,7 @@ pub struct Predicate {
     /// tag names this version: see [`tag_version`].
     #[cfg_attr(feature = "schema", schemars(regex(pattern = SEMVER_PATTERN)))]
     pub version: String,
-    /// RFC 3339 UTC.
+    /// RFC 3339. Publishers write UTC with `Z`; consumers accept any offset.
     #[cfg_attr(feature = "schema", schemars(extend("format" = "date-time")))]
     pub published_at: String,
     #[serde(
@@ -1242,9 +1242,10 @@ impl std::fmt::Display for Scheme {
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct ReleaseList {
     pub project: String,
-    /// When the list was produced, RFC 3339 UTC.
+    /// When the list was produced, RFC 3339, written in UTC.
     pub generated_at: String,
-    /// After this the list is stale and a consumer refuses it, RFC 3339 UTC.
+    /// After this the list is stale and a consumer refuses it, RFC 3339,
+    /// written in UTC.
     pub expires_at: String,
     /// Increases with every list published; a consumer refuses a lower one
     /// than it has seen.
@@ -1275,7 +1276,7 @@ pub struct ReleaseRef {
     /// `source.tag`, so a consumer can accept a request in either form.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tag: Option<String>,
-    /// RFC 3339 UTC, copied from the release's packslip.
+    /// RFC 3339, copied from the release's packslip and written in UTC.
     #[cfg_attr(feature = "schema", schemars(extend("format" = "date-time")))]
     pub published_at: String,
     /// URL of the release's `packslip.sigstore.json`. The statement's
@@ -1473,6 +1474,9 @@ fn check_extensions(owner: &str, extensions: &Extensions) -> Result<(), InvalidD
     Ok(())
 }
 
+/// A timestamp with any offset, read as an instant. jiff also reads some
+/// spellings outside RFC 3339, such as `20260901T120000Z`; accepting them
+/// is this implementation's leniency, not a rule other consumers follow.
 fn check_timestamp(field: &'static str, value: &str) -> Result<jiff::Timestamp, InvalidDocument> {
     value.parse().map_err(|_| InvalidDocument::Timestamp {
         field,
@@ -2897,6 +2901,16 @@ mod tests {
         let mut bad = sample_list();
         bad.predicate.expires_at = bad.predicate.generated_at.clone();
         assert_eq!(bad.validate(), Err(InvalidDocument::Expiry));
+        // Any offset is read, and timestamps compare as instants.
+        let mut offset = sample_list();
+        offset.predicate.expires_at = "2026-10-01T14:00:00+02:00".into();
+        offset.predicate.releases[0].published_at = "2026-09-01T08:00:00-04:00".into();
+        offset.validate().unwrap();
+        assert!(offset.is_current("2026-10-01T11:59:59Z".parse().unwrap()));
+        assert!(!offset.is_current("2026-10-01T12:00:00Z".parse().unwrap()));
+        // 13:00 at +02:00 is an hour before the list's 12:00 UTC.
+        offset.predicate.expires_at = "2026-09-01T13:00:00+02:00".into();
+        assert_eq!(offset.validate(), Err(InvalidDocument::Expiry));
         let mut bad = sample_list();
         bad.subject.clear();
         assert!(matches!(

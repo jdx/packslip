@@ -676,8 +676,15 @@ download location.
 `project` follows the [project-name rules](#project-names). `version` is
 [semver 2.0.0](https://semver.org/spec/v2.0.0.html); its prerelease part,
 if present, marks a prerelease and names its channel. See
-[Versions](#versions). `published_at` is a UTC timestamp in
+[Versions](#versions). `published_at` is a timestamp in
 [RFC 3339](https://www.rfc-editor.org/rfc/rfc3339) format.
+
+A publisher writes `published_at`, and a
+[release list's](#the-signed-list) `generated_at`, `expires_at`, and
+`releases[].published_at`, in UTC with the `Z` suffix, such as
+`2026-09-01T12:00:00Z`. A consumer accepts any RFC 3339 offset in these
+fields and compares them as instants: `2026-09-01T14:00:00+02:00` and
+`2026-09-01T12:00:00Z` are the same time.
 
 The optional `source` object identifies where the release was built
 from. When present, it requires a repository URL in `repo`; `commit` and
@@ -850,7 +857,7 @@ Paths beginning with `artifacts[]` or `resources[]` below are relative to
 |---|---|---|---|
 | `predicate.project` | string | required | Host path naming the project, such as `github.com/jdx/mise` or `github.com/oxc-project/oxc/oxlint`. |
 | `predicate.version` | string | required | Semver 2.0.0. Its prerelease part marks a prerelease and names the channel. |
-| `predicate.published_at` | string | required | RFC 3339 UTC publish time. |
+| `predicate.published_at` | string | required | RFC 3339 publish time, written in UTC. See [Project, version, and source](#project-version-and-source). |
 | `predicate.notes_url` | string | optional | URL of the release notes. |
 | `predicate.source` | object | optional | Where the release was built from. |
 | `predicate.source.repo` | string | required | Source repository URL. |
@@ -1376,8 +1383,9 @@ for listed packslips pin release bundles rather than artifacts:
 ```
 
 Each entry copies `version` and `published_at` from the release's
-packslip. If the packslip has a `source.tag`, the entry also copies it as
-`tag`, preserving the vendor's spelling. Entries may additionally carry:
+packslip, writing `published_at` as the same instant in UTC. If the
+packslip has a `source.tag`, the entry also copies it as `tag`,
+preserving the vendor's spelling. Entries may additionally carry:
 
 - `status: "yanked"` for a withdrawn release, optionally with a
   `status_reason`.
@@ -1413,15 +1421,15 @@ a meaningful name, with the SHA-256 of empty input.
 | `subject[].digest.sha512` | string | optional | SHA-512, lowercase hex; for a listed packslip, of its bundle file. |
 | `predicateType` | string | required | Always `https://packslip.dev/releases/v1`. |
 | `predicate.project` | string | required | The project the list is for. See [Project names](#project-names). |
-| `predicate.generated_at` | string | required | When the list was produced, RFC 3339 UTC. |
-| `predicate.expires_at` | string | required | When the list goes stale, RFC 3339 UTC. A consumer refuses an expired list. |
+| `predicate.generated_at` | string | required | When the list was produced, RFC 3339, written in UTC. See [Project, version, and source](#project-version-and-source). |
+| `predicate.expires_at` | string | required | When the list goes stale, RFC 3339, written in UTC. A consumer refuses an expired list. |
 | `predicate.sequence` | integer | required | A nonnegative counter. A consumer refuses a list whose sequence is lower than one it has accepted. |
 | `predicate.latest` | string | optional | The vendor's recommended default: the exact `version` of an entry. See [Latest](#latest). |
 | `predicate.identity` | object | required | How the list is signed, with the fields a release statement's `identity` has. See [Field reference](#field-reference). |
 | `predicate.releases[]` | array | required | The listed releases, in any order. It may be empty. |
 | `releases[].version` | string | required | Semver 2.0.0, copied from the packslip. |
 | `releases[].tag` | string | optional | The packslip's `source.tag`. |
-| `releases[].published_at` | string | required | RFC 3339 UTC, copied from the packslip. |
+| `releases[].published_at` | string | required | RFC 3339, copied from the packslip and written in UTC. |
 | `releases[].packslip` | string | required | URL of the release's bundle. The subject of that name carries its digest. |
 | `releases[].status` | string | optional | `yanked` when the release was withdrawn. |
 | `releases[].status_reason` | string | optional | Why it was withdrawn. |
