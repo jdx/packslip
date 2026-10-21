@@ -10,16 +10,19 @@ roles and release cadence.
 It is intentionally not a GoReleaser adapter or a release CLI. Mapping build platforms, archive names, upload destinations, and release-tool configuration stays in an adapter owned by that tool or its users.
 
 ```go
+// In CI: the OIDC token (SIGSTORE_ID_TOKEN, or a GitHub Actions token for the
+// `sigstore` audience) and the identity Fulcio will certify for it.
+oidcToken, err := packslip.AmbientIDToken(ctx) // packslip.ErrNoIDToken when there is none
+if err != nil { /* handle a missing token */ }
+identity, err := packslip.IdentityFromToken(oidcToken)
+if err != nil { /* handle an unusable token */ }
+
 statement, err := packslip.Build(packslip.Predicate{
     Project: "github.com/acme/tool",
     Version: "0.1.0",
     PublishedAt: time.Now().UTC(),
     Source: &packslip.Source{Repo: "https://github.com/acme/tool", Tag: "v0.1.0"},
-    Identity: packslip.Identity{
-        Scheme: "sigstore-oidc",
-        KeyID: "https://github.com/acme/tool/.github/workflows/release.yml@refs/tags/v0.1.0",
-        Issuer: "https://token.actions.githubusercontent.com",
-    },
+    Identity: identity,
 }, []packslip.ArtifactInput{{
     Path: "dist/tool-linux-x64.tar.xz",
     Artifact: packslip.Artifact{Name: "tool-linux-x64.tar.xz", OS: "linux", Arch: "x86_64", Format: "tar.xz", Bin: []packslip.Bin{packslip.NewBin("tool")}},
@@ -31,15 +34,8 @@ if err != nil { /* handle public-good TUF discovery */ }
 bundle, err := packslip.SignKeyless(statement, options)
 ```
 
-In CI, `AmbientIDToken` returns the OIDC token (`SIGSTORE_ID_TOKEN`, or a
-GitHub Actions token requested for the `sigstore` audience) and
-`IdentityFromToken` derives the `Identity` Fulcio will certify for it, so the
-statement and the certificate agree:
-
-```go
-oidcToken, err := packslip.AmbientIDToken(ctx) // packslip.ErrNoIDToken when there is none
-identity, err := packslip.IdentityFromToken(oidcToken)
-```
+`IdentityFromToken` derives the `Identity` Fulcio will certify for the token,
+so the statement and the certificate agree.
 
 These are the only functions that read the environment or make an OIDC
 request; `SignKeyless` and `ProductionKeylessOptions` never do. The token is

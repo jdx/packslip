@@ -32,6 +32,25 @@ Import it as `packslip`:
 import packslip "github.com/jdx/packslip/go"
 ```
 
+In CI, `AmbientIDToken` returns `SIGSTORE_ID_TOKEN` or, in a GitHub Actions
+job with `id-token: write`, a token for the `sigstore` audience. Other CI
+systems export their token as `SIGSTORE_ID_TOKEN`. `IdentityFromToken` derives
+the `Identity` that Fulcio will certify, which is the workflow URI for GitHub
+Actions and GitLab CI, otherwise the verified email or subject. Use it for the
+statement's `Predicate.Identity`; `SignKeyless` refuses a certificate that does
+not match:
+
+```go
+oidcToken, err := packslip.AmbientIDToken(ctx)
+if err != nil {
+    return err
+}
+identity, err := packslip.IdentityFromToken(oidcToken)
+if err != nil {
+    return err
+}
+```
+
 Build a statement from explicit metadata and the final, already-uploaded
 artifact bytes. `Build` streams each file once to record its size, SHA-256, and
 SHA-512 digest:
@@ -42,11 +61,7 @@ statement, err := packslip.Build(packslip.Predicate{
     Version: "0.1.0",
     PublishedAt: time.Now().UTC(),
     Source: &packslip.Source{Repo: "https://github.com/acme/tool", Tag: "v0.1.0"},
-    Identity: packslip.Identity{
-        Scheme: "sigstore-oidc",
-        KeyID: "https://github.com/acme/tool/.github/workflows/release.yml@refs/tags/v0.1.0",
-        Issuer: "https://token.actions.githubusercontent.com",
-    },
+    Identity: identity,
 }, []packslip.ArtifactInput{{
     Path: "dist/tool-linux-x64.tar.xz",
     Artifact: packslip.Artifact{
@@ -59,25 +74,10 @@ if err != nil {
 }
 ```
 
-In CI, `AmbientIDToken` returns `SIGSTORE_ID_TOKEN` or, in a GitHub Actions
-job with `id-token: write`, a token for the `sigstore` audience. Other CI
-systems export their token as `SIGSTORE_ID_TOKEN`. `IdentityFromToken` derives
-the `Identity` that Fulcio will certify, which is the workflow URI for GitHub
-Actions and GitLab CI, otherwise the verified email or subject. Use it for the
-statement's `Predicate.Identity`; `SignKeyless` refuses a certificate that does
-not match. Pass the token explicitly to production Sigstore configuration and
+Pass the same token explicitly to production Sigstore configuration and
 sign:
 
 ```go
-oidcToken, err := packslip.AmbientIDToken(ctx)
-if err != nil {
-    return err
-}
-identity, err := packslip.IdentityFromToken(oidcToken)
-if err != nil {
-    return err
-}
-// Set identity as Predicate.Identity when calling Build, then:
 options, err := packslip.ProductionKeylessOptions(ctx, oidcToken)
 if err != nil {
     return err

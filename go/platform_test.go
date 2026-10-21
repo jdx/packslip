@@ -10,6 +10,8 @@ func TestArchFromGo(t *testing.T) {
 		{"arm", "", "armv6"},
 		{"arm", "6", "armv6"},
 		{"arm", "7", "armv7"},
+		{"arm", "7,softfloat", "armv7"},
+		{"arm", ",hardfloat", "armv6"},
 		{"riscv64", "", "riscv64"},
 		{"s390x", "", "s390x"},
 		{"ppc64le", "", "powerpc64le"},

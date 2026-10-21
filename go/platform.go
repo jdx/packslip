@@ -1,7 +1,10 @@
 package packslip
 
+import "strings"
+
 // ArchFromGo returns the packslip architecture for a GOARCH. goarm is
-// GOARM and only matters for "arm"; empty means 6, the Go default. A
+// GOARM and only matters for "arm"; empty means 6, the Go default, and a
+// floating-point option such as ",softfloat" is ignored. A
 // universal macOS binary (GOARCH "all" in GoReleaser) returns "", because an
 // absent arch means the build runs on every architecture.
 //
@@ -17,6 +20,8 @@ func ArchFromGo(goarch, goarm string) string {
 	case "386":
 		return "i686"
 	case "arm":
+		// GOARM may carry a float option, as in "7,softfloat".
+		goarm, _, _ = strings.Cut(goarm, ",")
 		if goarm == "" {
 			goarm = "6"
 		}
