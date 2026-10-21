@@ -162,12 +162,16 @@ packslip verify packslip.sigstore.json \
 
 Replace the identity with the project's actual trusted workflow. A repository
 prefix such as `https://github.com/owner/mytool/` accepts any workflow of the
-repository; the workflow-file prefix above is narrower. Repeat `--artifact` for
-additional local files. Also compare the verified statement's project and
-version with the requested release; `packslip verify` does not enforce that
-match. For key-signed releases, use the vendor's trusted public key with
-`--pubkey`; do not obtain a new trust anchor from the same untrusted download
-just to make verification pass.
+repository; the workflow-file prefix above is narrower. For a GitHub or GitLab
+project, the identity flags only narrow what the project's name requires: the
+release must still be signed from that repository, and a document signed
+elsewhere, such as a repackager's, also needs `--allow-other-repository`
+with `--issuer`.
+Repeat `--artifact` for additional local files. Also compare the verified
+statement's project and version with the requested release; `packslip verify`
+does not enforce that match. For key-signed releases, use the vendor's trusted
+public key with `--pubkey`; do not obtain a new trust anchor from the same
+untrusted download just to make verification pass.
 
 After the first keyless release, `packslip pin packslip.sigstore.json` prints
 the repository's signer fingerprint (`ps1_` and 26 characters). Run it on a

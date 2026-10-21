@@ -9,7 +9,7 @@ Verify a release bundle and print the signer fingerprint of the repository that 
 
 The fingerprint is derived from the forge's issuer and repository ID only. It stays the same when the repository is renamed, moves to another owner, or signs from another workflow, and a repository that later takes over the old name gets a different one. Only keyless releases whose certificate records a repository ID have one; for a key-signed release, pin the key with `packslip verify --pubkey`.
 
-Verification works as in `packslip verify`: the policy is the one the project's name implies unless --identity, --identity-prefix, or --issuer replace it. See https://packslip.dev/docs/verifying/.
+Verification works as in `packslip verify` without --allow-other-repository: the policy is the one the project's name implies, and --identity, --identity-prefix, and --issuer narrow it without replacing it, so a GitHub or GitLab project's release must still be signed from its repository. See https://packslip.dev/docs/verifying/.
 
 ## Arguments
 - **`<BUNDLE>`** — Local release bundle to verify and fingerprint
@@ -20,7 +20,7 @@ Verification works as in `packslip verify`: the policy is the one the project's 
 ## Trust
 - **`--identity <IDENTITY>`** — The exact certificate identity a keyless signer must have, including its ref, such as https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3
 - **`--identity-prefix <IDENTITY_PREFIX>`** — A prefix the certificate identity must start with, such as https://github.com/owner/repo/
-- **`--issuer <ISSUER>`** — The OIDC issuer a keyless signer must have; pass it with --identity or --identity-prefix, since alone it accepts any signer from that issuer
+- **`--issuer <ISSUER>`** — The OIDC issuer a keyless signer must have; pass it with --identity or --identity-prefix, since for a project not on GitHub or GitLab it alone accepts any signer from that issuer
 - **`--allow-unlogged`** — Accept a bundle without a transparency log entry
 - **`--trusted-root <TRUSTED_ROOT>`** — A sigstore trusted_root.json to use instead of the embedded one
 

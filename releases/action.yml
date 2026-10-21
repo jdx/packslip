@@ -91,6 +91,18 @@ inputs:
     description: The OIDC issuer of that identity
     required: false
     default: https://token.actions.githubusercontent.com
+  allow-other-repository:
+    description: >
+      Set to true to accept bundles that match identity-prefix or identity
+      but were signed from a repository other than the project's, such as
+      an owner's shared build repository. Otherwise packslip verify also
+      requires a github.com or gitlab.com project's bundles to be signed
+      from the repository its name gives. The action lifts that on its own
+      when project names a repository other than the one running it, as a
+      registry's or repackager's list does, so set this only for the
+      project's own repository.
+    required: false
+    default: "false"
   out:
     description: >
       Where to write the list. Publish it at the project's well-known URL:
@@ -164,10 +176,15 @@ runs:
         IN_IDENTITY_PREFIX: ${{ inputs.identity-prefix }}
         IN_IDENTITY: ${{ inputs.identity }}
         IN_ISSUER: ${{ inputs.issuer }}
+        IN_ALLOW_OTHER_REPOSITORY: ${{ inputs.allow-other-repository }}
         REPO: ${{ github.repository }}
         SERVER: ${{ github.server_url }}
       run: |
         set -euo pipefail
+        case "$IN_ALLOW_OTHER_REPOSITORY" in
+          true | false) ;;
+          *) echo "allow-other-repository must be true or false, not \"$IN_ALLOW_OTHER_REPOSITORY\"" >&2; exit 1 ;;
+        esac
         dir="${IN_DIR%/}"
         base="${IN_URL_BASE%/}"
         name="${IN_BUNDLE:-packslip.sigstore.json}"
@@ -176,6 +193,28 @@ runs:
           pin+=(--identity "$IN_IDENTITY")
         else
           pin+=(--identity-prefix "${IN_IDENTITY_PREFIX:-${SERVER}/${REPO}/}")
+        fi
+        # verify also requires a GitHub or GitLab project to be signed from
+        # the repository its name gives. A registry or repackager signs a
+        # list for another repository's project, and the bundles it names,
+        # from its own repository, so there the pin is the whole policy, as
+        # it is when allow-other-repository is set. A packslip from before
+        # --allow-other-repository treats it so anyway.
+        case "$IN_PROJECT" in
+          github.com/*/*)
+            repo_path="${IN_PROJECT#github.com/}"
+            rest="${repo_path#*/}"
+            project_repo="https://github.com/${repo_path%%/*}/${rest%%/*}"
+            ;;
+          gitlab.com/*) project_repo="https://${IN_PROJECT}" ;;
+          *) project_repo="" ;;
+        esac
+        if [ "$IN_ALLOW_OTHER_REPOSITORY" = true ] ||
+          { [ -n "$project_repo" ] && [ "$project_repo" != "${SERVER}/${REPO}" ]; }; then
+          help="$(packslip verify --help 2>&1 || true)"
+          if [[ "$help" == *--allow-other-repository* ]]; then
+            pin+=(--allow-other-repository)
+          fi
         fi
         printf '%s\n' "${pin[@]}" > "${RUNNER_TEMP}/packslip-pin"
         shopt -s nullglob

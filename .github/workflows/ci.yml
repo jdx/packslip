@@ -364,6 +364,41 @@ jobs:
             echo "verification accepted the wrong identity" >&2
             exit 1
           fi
+      # A release and a release list this job signs for a GitHub project
+      # that is not this repository, as a repackager would. Identity flags
+      # that match this job must still refuse both until
+      # --allow-other-repository accepts a signer outside the project.
+      - name: Keyless, for another repository's project
+        run: |
+          set -euo pipefail
+          other="github.com/${GITHUB_REPOSITORY}-elsewhere"
+          mkdir -p elsewhere
+          ./target/release/packslip create \
+            --project "$other" \
+            --version 0.0.0 \
+            --out elsewhere \
+            --url-base https://example.invalid/elsewhere/0.0.0 \
+            --attested-by repackager \
+            --evidence none \
+            dist/tool-v0.0.0-linux-x64.tar.xz
+          ./target/release/packslip releases \
+            --project "$other" --sequence 1 --valid-for 1d \
+            --release "https://example.invalid/elsewhere/0.0.0/packslip.sigstore.json=elsewhere/packslip.sigstore.json" \
+            --out elsewhere/releases.sigstore.json
+          refused() {
+            if ./target/release/packslip verify "$@" 2> elsewhere/err; then
+              echo "verify $* accepted a signer outside $other" >&2
+              exit 1
+            fi
+            grep -F "must be signed from its repository" elsewhere/err
+          }
+          issuer=https://token.actions.githubusercontent.com
+          this_repo=(--issuer "$issuer" --identity-prefix "https://github.com/${GITHUB_REPOSITORY}/")
+          for doc in elsewhere/packslip.sigstore.json elsewhere/releases.sigstore.json; do
+            refused "$doc" --issuer "$issuer"
+            refused "$doc" "${this_repo[@]}"
+            ./target/release/packslip verify "$doc" "${this_repo[@]}" --allow-other-repository
+          done
       - name: With a key, logged to Rekor, plus a release list
         run: |
           set -euo pipefail
@@ -420,6 +455,34 @@ jobs:
           test "$COUNT" = 1
           ./target/release/packslip show "$LIST" \
             | jq -e '.predicate.project == "ci.packslip.invalid" and (.predicate.releases | length == 1)' >/dev/null
+      # The releases action for another repository's project, as a registry
+      # or repackager runs it: the bundle and the list this job signs come
+      # from outside the project's repository, and the action accepts them
+      # under its pin, this repository's workflows.
+      - name: A repackager's bundle for the releases action
+        run: |
+          set -euo pipefail
+          mkdir -p repackaged/v0.0.0
+          cp elsewhere/packslip.sigstore.json repackaged/v0.0.0/
+      - uses: $/releases
+        id: repackaged
+        with:
+          project: github.com/${{ github.repository }}-elsewhere
+          dir: repackaged
+          url-base: https://example.invalid/elsewhere
+          valid-for: 1d
+          out: repackaged/packslip-releases.sigstore.json
+          packslip-path: target/release/packslip
+      - name: The repackager's list names that release
+        env:
+          COUNT: ${{ steps.repackaged.outputs.count }}
+          LIST: ${{ steps.repackaged.outputs.list }}
+          PROJECT: github.com/${{ github.repository }}-elsewhere
+        run: |
+          set -euo pipefail
+          test "$COUNT" = 1
+          ./target/release/packslip show "$LIST" \
+            | jq -e --arg project "$PROJECT" '.predicate.project == $project and (.predicate.releases | length == 1)' >/dev/null
 
   # install.sh on each host it supports, with the shells, download tools,
   # and hash tools each one has: dash and GNU coreutils on Ubuntu, bash 3.2,
