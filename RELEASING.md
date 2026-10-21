@@ -245,6 +245,10 @@ leaves out the site, `.github/`, `RELEASING.md`, `CHANGELOG.md`,
 those files gets no changelog line and does not raise the version.
 `communique.toml`, `mise.toml`, and `mise.lock` are in the package, so a
 change to them counts, as a change under `scripts/` does.
+The Go module under `go/` is in the package too, so a `fix(go): ...` or
+`feat(go): ...` pull request raises the version and gets a changelog line.
+The Go module shares the release version, and its `go/vX.Y.Z` tag is created
+from the root tag, so a change there can only reach users through a release.
 
 Give action changes conventional-commit titles such as `fix(action): ...`
 or `feat(action): ...`. A breaking action change raises the shared major
