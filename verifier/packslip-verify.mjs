@@ -10,8 +10,11 @@
 //      sigstore public-good root embedded below;
 //   3. the DSSE signature over the statement;
 //   4. the signer: the certificate's identity and OIDC issuer, against a policy
-//      you pass (never one the bundle names);
-//   5. the statement, then each file you pass: signed size and SHA-256/SHA-512.
+//      you pass (never one the bundle names), and, for a github.com or
+//      gitlab.com --project, that the certificate comes from that repository
+//      unless you pass --allow-other-repository;
+//   5. the statement, including that its own identity block names that signer,
+//      then each file you pass: signed size and SHA-256/SHA-512.
 //
 // It does not check the certificate's signed certificate timestamp, an RFC 3161
 // timestamp, or key-signed bundles; use `packslip verify` for those. The trust
@@ -22,6 +25,7 @@
 // Run: node packslip-verify.mjs packslip.sigstore.json \
 //        --issuer https://token.actions.githubusercontent.com \
 //        --identity-prefix https://github.com/owner/repo/.github/workflows/ \
+//        --project github.com/owner/repo \
 //        --artifact mytool-1.2.3-linux-x64.tar.gz
 
 import { createHash, createPublicKey, verify as cryptoVerify, X509Certificate } from 'node:crypto';
@@ -154,8 +158,13 @@ const OID_ISSUER_V2 = '1.3.6.1.4.1.57264.1.8';
 const OID_ISSUER_V1 = '1.3.6.1.4.1.57264.1.1';
 const OID_SOURCE_REPOSITORY = '1.3.6.1.4.1.57264.1.12';
 
-/** The identity Fulcio certified: the first URI or email in the SAN, and the OIDC issuer. */
-function certificateSigner(der) {
+/**
+ * The identity Fulcio certified in a DER certificate: its one URI or email SAN,
+ * the OIDC issuer, and the Source Repository URI when it records a non-empty
+ * one. Verifies nothing; `verifyRelease` reads the certificate only once it
+ * has checked it.
+ */
+export function certificateSigner(der) {
   const extensions = certificateExtensions(der);
   const eku = extensions[OID_EKU];
   if (eku === undefined || !children(tlv(eku, 0).body).some((n) => n.tag === 0x06 && oidString(n.body) === OID_CODE_SIGNING)) {
@@ -178,9 +187,82 @@ function certificateSigner(der) {
   }
   let sourceRepository;
   if (extensions[OID_SOURCE_REPOSITORY] !== undefined) {
-    sourceRepository = tlv(extensions[OID_SOURCE_REPOSITORY], 0).body.toString('utf8');
+    const raw = extensions[OID_SOURCE_REPOSITORY];
+    const value = tlv(raw, 0);
+    let text;
+    try {
+      if (value.tag === 0x0c && value.end === raw.length) text = new TextDecoder('utf-8', { fatal: true }).decode(value.body);
+    } catch {
+      // Not UTF-8: refused below.
+    }
+    if (text === undefined) fail('identity', 'the certificate source repository is not a UTF8String');
+    // An empty value means the forge had none to give.
+    if (text !== '') sourceRepository = text;
   }
   return { identity, issuer, sourceRepository };
+}
+
+const GITHUB_ISSUER = 'https://token.actions.githubusercontent.com';
+const GITLAB_ISSUER = 'https://gitlab.com';
+
+/** The forge and repository a GitHub or GitLab project name locates, or undefined for any other project. */
+function forgeRepository(project) {
+  const [host, ...path] = project.split('/');
+  // github.com/owner/repo, then an optional monorepo subpath that names a tool of the repository.
+  if (host === 'github.com') return path[0] && path[1] ? { host, repository: `${path[0]}/${path[1]}` } : undefined;
+  // GitLab groups nest, so the whole path is the repository.
+  if (host === 'gitlab.com' && path.length > 0 && path.every((segment) => segment !== '')) {
+    return { host, repository: path.join('/') };
+  }
+  return undefined;
+}
+
+/**
+ * Check that a certificate belongs to the repository a GitHub or GitLab
+ * `project` names, as `packslip verify` does: issued through the forge's
+ * issuer, and recording that repository as its source repository, so a
+ * reusable workflow of another repository may sign; or, when it records none,
+ * signed by a workflow of the repository. Any other project names no
+ * repository, so the caller's identity policy is all there is. `signer` is
+ * `{ identity, issuer, sourceRepository }` as the certificate gives them.
+ */
+export function checkProjectSigner(project, signer) {
+  const forge = forgeRepository(project);
+  if (forge === undefined) return;
+  const repository = `https://${forge.host}/${forge.repository}`;
+  const issuer = forge.host === 'gitlab.com' ? GITLAB_ISSUER : GITHUB_ISSUER;
+  if (signer.issuer !== issuer) {
+    fail('project-signer', `${project} must be signed from its repository through ${issuer}, but ${signer.identity} signed it through ${signer.issuer}`);
+  }
+  if (signer.sourceRepository !== undefined) {
+    if (signer.sourceRepository !== repository) {
+      fail('project-signer', `${project} must be signed from its repository ${repository}, but ${signer.identity} signed it from ${signer.sourceRepository}`);
+    }
+  } else if (!signer.identity.startsWith(forge.host === 'gitlab.com' ? `${repository}//` : `${repository}/`)) {
+    fail('project-signer', `${project} must be signed from its repository ${repository}, but ${signer.identity} is not one of its workflows`);
+  }
+}
+
+/**
+ * Check the statement's own `identity` block against the certificate that
+ * signed it, as the specification's consumer rule 2 requires and the Rust
+ * crate and npm package do. This file verifies keyless bundles only, so the
+ * scheme must be `sigstore-oidc`, `key_id` the certificate's identity, and
+ * `issuer` the certificate's OIDC issuer. `signer` is `{ identity, issuer }` as
+ * the certificate gives them.
+ */
+export function checkDeclaredIdentity(declared, signer) {
+  if (!isObject(declared)) fail('declared-identity', 'the statement declares no identity');
+  if (declared.scheme !== 'sigstore-oidc') {
+    fail('declared-identity', `the statement declares scheme ${JSON.stringify(declared.scheme)}, but the bundle was signed by an OIDC identity`);
+  }
+  if (declared.key_id !== signer.identity) {
+    fail('declared-identity', `the statement declares signer ${JSON.stringify(declared.key_id)}, but the bundle was signed by ${JSON.stringify(signer.identity)}`);
+  }
+  if (declared.issuer !== signer.issuer) {
+    const what = declared.issuer === undefined ? 'no issuer' : `issuer ${JSON.stringify(declared.issuer)}`;
+    fail('declared-identity', `the statement declares ${what}, but the certificate says ${JSON.stringify(signer.issuer)}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -412,7 +494,14 @@ export function readStatement(payload, expect) {
  * `identity` is the exact certificate identity, or a function that accepts one,
  * and `issuer` the exact OIDC issuer; the policy must come from you, never from
  * the bundle. `project`, `tag` and `sourceRepository` are optional further
- * checks, and `trustedRoot` replaces the embedded trust root (same shape).
+ * checks, and `trustedRoot` replaces the embedded trust root (same shape). For
+ * a github.com or gitlab.com `project`, the certificate must also come from that
+ * repository (see `checkProjectSigner`): `identity` narrows that requirement
+ * and never replaces it. `allowOtherRepository: true` lifts it for a document
+ * signed outside the project's repository, such as a repackager's, leaving
+ * `identity` or `sourceRepository` to name that signer; it needs `project`.
+ * The statement's own `identity` block must name the certificate's signer
+ * (see `checkDeclaredIdentity`).
  * Returns the signed statement plus `signer`.
  * Throws a `VerifyError` for every failure, including a malformed bundle.
  */
@@ -428,6 +517,9 @@ export function verifyRelease(bundleJson, options) {
 function verifyBundle(bundleJson, options) {
   if (typeof options?.issuer !== 'string' || (options.identity === undefined && options.sourceRepository === undefined)) {
     fail('usage', 'a signer policy needs an issuer and an identity or a source repository');
+  }
+  if (options.allowOtherRepository === true && options.project === undefined) {
+    fail('usage', "allowOtherRepository lifts the repository requirement a project brings, so it needs a project");
   }
   let bundle;
   try {
@@ -469,8 +561,12 @@ function verifyBundle(bundleJson, options) {
   if (options.sourceRepository !== undefined && signer.sourceRepository !== options.sourceRepository) {
     fail('identity', `the certificate's source repository is ${signer.sourceRepository}, not ${options.sourceRepository}`);
   }
-  // 5. Only now read the statement.
+  // 5. Only now read the statement, whose own identity block must name that signer.
   const statement = readStatement(envelope.payload, options);
+  checkDeclaredIdentity(statement.predicate.identity, signer);
+  // A GitHub or GitLab project you name must be signed from its repository,
+  // whatever the identity policy accepts, unless you allow another repository.
+  if (options.project !== undefined && options.allowOtherRepository !== true) checkProjectSigner(options.project, signer);
   return { ...statement, signer: { identity: signer.identity, issuer: signer.issuer } };
 }
 
@@ -507,10 +603,14 @@ export async function verifyFile(statement, path) {
 // ---------------------------------------------------------------------------
 
 const USAGE = `usage: node packslip-verify.mjs BUNDLE --issuer URL (--identity SAN | --identity-prefix PREFIX | --source-repository URL)
-                                [--project HOST/OWNER/REPO] [--tag TAG] [--artifact FILE]... [--json]
+                                [--project HOST/OWNER/REPO [--allow-other-repository]] [--tag TAG]
+                                [--artifact FILE]... [--json]
 
 Verifies a keyless packslip bundle and the files you downloaded. The policy flags
-must come from you, not from the release.`;
+must come from you, not from the release. For a github.com or gitlab.com
+--project, the certificate must also come from that repository;
+--allow-other-repository lifts that for a signer outside it, such as a
+repackager's, that the policy flags name; it needs --project.`;
 
 function readBundle(path) {
   try {
@@ -532,6 +632,7 @@ async function main(argv) {
         'identity-prefix': { type: 'string' },
         'source-repository': { type: 'string' },
         project: { type: 'string' },
+        'allow-other-repository': { type: 'boolean' },
         tag: { type: 'string' },
         artifact: { type: 'string', multiple: true },
         json: { type: 'boolean' },
@@ -547,6 +648,10 @@ async function main(argv) {
     console.error(USAGE);
     return 2;
   }
+  if (values['allow-other-repository'] && values.project === undefined) {
+    console.error(`--allow-other-repository lifts the repository requirement --project brings, so it needs --project\n${USAGE}`);
+    return 2;
+  }
   try {
     const prefix = values['identity-prefix'];
     const statement = verifyRelease(readBundle(positionals[0]), {
@@ -554,6 +659,7 @@ async function main(argv) {
       identity: prefix === undefined ? values.identity : (san) => san.startsWith(prefix),
       sourceRepository: values['source-repository'],
       project: values.project,
+      allowOtherRepository: values['allow-other-repository'],
       tag: values.tag,
     });
     const files = [];
@@ -570,7 +676,9 @@ async function main(argv) {
     // Anything that is not a VerifyError is a bug here, but still a failure, not a crash.
     const code = error instanceof VerifyError ? error.code : 'error';
     if (values.json) console.log(JSON.stringify({ ok: false, code, error: error.message }));
-    else console.error(`verification failed: ${error.message}`);
+    else if (code === 'project-signer') {
+      console.error(`verification failed: ${error.message}\nTo accept a signer outside that repository, such as a repackager's, name it with --identity, --identity-prefix, or --source-repository and add --allow-other-repository.`);
+    } else console.error(`verification failed: ${error.message}`);
     return 1;
   }
 }

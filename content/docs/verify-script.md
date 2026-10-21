@@ -45,8 +45,8 @@ verified github.com/jdx/mise 2026.10.11, signed by https://github.com/jdx/mise/.
 On a failure it prints the reason and exits 1, for example
 `verification failed: the signing identity … is not the expected one`.
 With `--json` it prints one JSON object instead, with `ok` and, on failure, a
-`code` such as `signature`, `identity`, `digest-mismatch`, `artifact-not-found`,
-or `file` for a bundle or download it cannot read. A usage error, such as a
+`code` such as `signature`, `identity`, `declared-identity`, `digest-mismatch`,
+`artifact-not-found`, or `file` for a bundle or download it cannot read. A usage error, such as a
 missing policy flag, exits 2 with usage text on stderr and no JSON.
 
 The policy always comes from you. `--issuer` is required together with one of:
@@ -60,6 +60,25 @@ The policy always comes from you. `--issuer` is required together with one of:
 `--project` and `--tag` optionally require the signed statement to name that
 project and source tag. As with `packslip verify`, keep the downloaded file
 names: a renamed file is `not listed` in the statement.
+
+For a `github.com` or `gitlab.com` project, `--project` also requires, as
+`packslip verify` does, that the certificate come from that repository through
+the forge's OIDC issuer (`https://token.actions.githubusercontent.com` or
+`https://gitlab.com`). A certificate that records a source repository must
+record that one, so a reusable workflow of another repository may sign; one
+that records none must be signed by a workflow of the repository. The identity
+flags narrow this and never replace it: with `--project github.com/jdx/mise`,
+the prefix `https://github.com/jdx/` accepts only bundles signed from jdx/mise.
+A bundle that passes the identity flags and the statement checks, but whose
+certificate fails this one, fails with the code `project-signer`.
+
+A repackager's document names the vendor's project but is signed from the
+repackager's repository, so `--project` refuses it when that project is on
+GitHub or GitLab. To verify one, name the repackager's signer with the identity
+flags and add `--allow-other-repository`: the statement must still name the
+project, but the certificate may come from another repository. Without
+`--project` there is no repository requirement to lift, so
+`--allow-other-repository` alone is a usage error.
 
 ## Use it as a module
 
@@ -77,7 +96,9 @@ await verifyFile(statement, 'mise-v2026.10.11-linux-arm64');
 
 `verifyRelease` throws a `VerifyError` whose `code` names the failed check,
 including for a malformed bundle. `verifyFile` rejects with a `VerifyError`
-too, with the code `file` when it cannot read the download.
+too, with the code `file` when it cannot read the download. The option
+`allowOtherRepository: true` stands for `--allow-other-repository` and, like
+it, needs `project`.
 
 ## What it checks
 
@@ -86,8 +107,14 @@ too, with the code `file` when it cannot read the download.
 2. The Fulcio certificate, valid when the entry was logged, chained to the
    sigstore public-good root embedded in the file.
 3. The signature over the statement.
-4. The certificate's identity and OIDC issuer against your policy.
-5. The statement's structure, then each file's signed size and digests.
+4. The certificate's identity and OIDC issuer against your policy, and for a
+   GitHub or GitLab `--project`, that the certificate comes from that
+   repository unless you pass `--allow-other-repository`.
+5. The statement's structure, and that its own `identity` block names the
+   certificate that signed it: the `sigstore-oidc` scheme, the certificate's
+   identity as `key_id`, and its OIDC issuer as `issuer`. A statement that
+   declares another signer fails with the code `declared-identity`. Then each
+   file's signed size and digests.
 
 It does **not** check the certificate's signed certificate timestamp or an
 RFC 3161 timestamp, and it refuses key-signed bundles and ones from a Rekor
