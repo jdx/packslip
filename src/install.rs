@@ -487,204 +487,463 @@ async fn install_in(
     *withdrawn = signed_list
         .zip(installed.as_deref())
         .and_then(|(list, installed)| Withdrawn::find(list, installed));
-    let selected = match &github {
-        Some(github) => github.choose(signed_list, request.version.as_deref())?,
-        None => discovery::choose(&[], signed_list, request.version.as_deref())?,
+    let candidates = match &github {
+        Some(github) => {
+            github.candidates(project.as_str(), signed_list, request.version.as_deref())?
+        }
+        None => discovery::candidates_with_latest(
+            project.as_str(),
+            &[],
+            signed_list,
+            request.version.as_deref(),
+            None,
+        )?,
     };
-    let mut accepted = None;
-    for url in &selected.bundles {
-        let listed_digest = signed_list.and_then(|list| list.digest_of(url));
-        let may_skip = github.is_some() && listed_digest.is_none();
-        let host_authority = github.is_none()
-            && reqwest::Url::parse(url).ok().is_some_and(|u| {
-                u.host_str() == Some(project.as_str().split('/').next().unwrap())
-                    && u.port_or_known_default() == Some(443)
-            });
-        let document = if host_authority {
-            Some(
-                client
-                    .fetch_host(&project, url, 16 * 1024 * 1024)
-                    .await?
-                    .ok_or_else(|| eyre::eyre!("release bundle is missing"))?,
-            )
-        } else {
-            None
-        };
-        let fetched: Result<String> = async {
-            Ok(match &document {
-                Some(document) => std::str::from_utf8(document.bytes())?.to_owned(),
-                None => String::from_utf8(
-                    client
-                        .fetch(url, 16 * 1024 * 1024)
-                        .await?
-                        .ok_or_else(|| eyre::eyre!("release bundle is missing"))?,
-                )?,
-            })
-        }
-        .await;
-        let bundle = match fetched {
-            Ok(bundle) => bundle,
-            Err(_) if may_skip => continue,
-            Err(error) => return Err(error),
-        };
-        if let Some(expected) = listed_digest
-            && hex::encode(Sha256::digest(bundle.as_bytes())) != expected
-        {
-            bail!("release bundle differs from its signed list digest");
-        }
-        // A forge release can describe several monorepo tools. The peek only
-        // filters candidates; it never establishes identity or authorizes use.
-        if may_skip && !candidate_matches(&bundle, project.as_str(), repository_id) {
-            continue;
-        }
-        let release = match &document {
-            Some(document) => install_policy::release_host(document, &constraints, options)?,
-            None if host_list_document.is_some() && listed_digest.is_some() => {
-                install_policy::release_listed_host(
-                    host_list_document.as_ref().unwrap(),
-                    url,
-                    &bundle,
-                    &constraints,
-                    options,
-                )?
-            }
-            None => install_policy::release(
-                project.as_str(),
-                repository_id,
-                &bundle,
-                &constraints,
-                options,
-            )?,
-        };
-        if accepted.is_some() {
-            bail!("multiple authenticated packslips describe the requested project");
-        }
-        accepted = Some((release, bundle, url.clone()));
-    }
-    let (release, bundle, url) = accepted.ok_or_else(|| {
-        eyre::eyre!("release has no authenticated packslip for the requested project")
-    })?;
-    check_release(
-        &release,
-        &bundle,
-        &selected,
-        signed_list,
-        &request,
-        &history,
-        &constraints,
-    )?;
-    let mut alias = history.clone();
-    alias.release = Some(release.record.clone());
-    session.remember(project.as_str(), &alias)?;
+    let lookup = Lookup {
+        client: &client,
+        project: &project,
+        repository_id,
+        forge: github.is_some(),
+        list: signed_list,
+        host_list: host_list_document.as_ref(),
+        constraints: &constraints,
+        options,
+    };
     let mut host = install_host::Snapshot::detect()?;
-    let artifact = crate::select_artifact(
-        &release.statement.predicate.artifacts,
-        &host.host(),
-        request.variant.as_deref(),
-        &[
-            "tar.xz", "tar.zst", "tar.gz", "tgz", "tar.bz2", "tar", "zip", "xz", "zst", "gz",
-            "bz2", "raw",
-        ],
-    )?;
-    host.observe(artifact);
-    let report = host.check(artifact.requires.as_ref());
-    report.require_compatible(request.allow_incompatible_host)?;
-    let artifact_url = match &artifact.url {
-        Some(url) => url.clone(),
-        None => {
-            let mut base = reqwest::Url::parse(&url)?;
-            base.set_query(None);
-            base.set_fragment(None);
-            base.path_segments_mut()
-                .map_err(|_| eyre::eyre!("bundle URL cannot locate artifacts"))?
-                .pop()
-                .push(&artifact.name);
-            base.to_string()
-        }
-    };
-    let input = client.download(&artifact_url, artifact.size).await?;
-    let (digest, size) = crate::digest_file(input.path())?;
-    if size != artifact.size || release.statement.digest_of(&artifact.name) != Some(digest.as_str())
-    {
-        bail!("downloaded artifact differs from its signed size or digest");
-    }
-    let parent = std::fs::canonicalize(
-        tree.parent()
-            .ok_or_else(|| eyre::eyre!("installation tree has no parent"))?,
-    )?;
-    let extracted = install_extract::extract(input.path(), artifact, &parent, request.limits)?;
-    history.release = Some(release.record.clone());
-    remember_key(&mut history, &constraints);
-    if request.force {
-        eprintln!(
-            "Replacement allowed at installation destination: {}",
-            tree.display()
-        );
-        for (name, _) in &extracted.bins {
-            eprintln!(
-                "Replacement allowed at command destination: {}",
-                bin.join(if cfg!(windows) {
-                    format!("{name}.exe")
-                } else {
-                    name.clone()
-                })
-                .display()
+    let mut skipped = candidates.skipped.clone();
+    let mut fetched = 0;
+    let mut chosen = None;
+    for (index, selected) in candidates.releases.iter().enumerate() {
+        // The first candidate is always examined in full, as before fallback
+        // existed. A later one is examined only while its bundles fit.
+        if index > 0 && fetched + selected.bundles.len() > MAX_BUNDLES {
+            bail!(
+                "stopped looking for an installable release of {} after fetching {} from {}; {}; name an older release with --version",
+                project.as_str(),
+                count(fetched, "bundle"),
+                count(index, "release"),
+                report_skips(&skipped)
             );
         }
+        fetched += selected.bundles.len();
+        let step = async {
+            let (release, bundle, url) = match lookup.bundles(selected).await? {
+                Packslip::Accepted(found) => *found,
+                Packslip::Missing(reason) => return Ok(Step::Skip(reason)),
+            };
+            check_release(
+                &release,
+                &bundle,
+                selected,
+                signed_list,
+                &request,
+                &history,
+                &constraints,
+            )?;
+            let mut alias = history.clone();
+            alias.release = Some(release.record.clone());
+            session.remember(project.as_str(), &alias)?;
+            match crate::select_artifact(
+                &release.statement.predicate.artifacts,
+                &host.host(),
+                request.variant.as_deref(),
+                FORMATS,
+            ) {
+                Ok(artifact) => {
+                    let artifact = artifact.clone();
+                    Ok(Step::Install(Box::new((release, url, artifact))))
+                }
+                // Only a latest request counts a release without an artifact
+                // for this host as ineligible. Ties and host requirements
+                // never redirect installation to another release.
+                Err(crate::model::Selection::NoMatch) if candidates.latest => {
+                    Ok(Step::Skip(no_artifact(&host, request.variant.as_deref())))
+                }
+                Err(error) => Err(eyre::Report::from(error)),
+            }
+        }
+        .await
+        .map_err(|error| after_skips(error, &candidates.describe(selected), &skipped))?;
+        match step {
+            Step::Install(found) => {
+                chosen = Some((selected, *found));
+                break;
+            }
+            Step::Skip(reason) => skipped.push(candidates.skip(selected, reason)),
+        }
     }
-    let pin = release
-        .record
-        .repository
-        .as_ref()
-        .and_then(|r| crate::Fingerprint::of(release.record.issuer.as_deref()?, &r.repository_id))
-        .map(|p| p.to_string());
-    let receipt = session.commit(
-        extracted,
-        &key,
-        &release.verified.version,
-        request.force,
-        history,
-        crate::install_launcher::write_export,
-    )?;
-    let mut warnings = report.warnings;
-    for resource in crate::select_resources(&release.statement, artifact) {
-        warnings.push(format!("resource {} is retained in the release metadata; bootstrap installs only declared commands", resource.kind));
+    let Some((selected, (release, url, artifact))) = chosen else {
+        bail!(
+            "no installable release of {}; {}",
+            project.as_str(),
+            report_skips(&skipped)
+        );
+    };
+    let label = candidates.describe(selected);
+    let notes = skip_notes(&skipped);
+    let installed = async {
+        host.observe(&artifact);
+        let report = host.check(artifact.requires.as_ref());
+        report.require_compatible(request.allow_incompatible_host)?;
+        let artifact_url = match &artifact.url {
+            Some(url) => url.clone(),
+            None => {
+                let mut base = reqwest::Url::parse(&url)?;
+                base.set_query(None);
+                base.set_fragment(None);
+                base.path_segments_mut()
+                    .map_err(|_| eyre::eyre!("bundle URL cannot locate artifacts"))?
+                    .pop()
+                    .push(&artifact.name);
+                base.to_string()
+            }
+        };
+        let input = client.download(&artifact_url, artifact.size).await?;
+        let (digest, size) = crate::digest_file(input.path())?;
+        if size != artifact.size
+            || release.statement.digest_of(&artifact.name) != Some(digest.as_str())
+        {
+            bail!("downloaded artifact differs from its signed size or digest");
+        }
+        let parent = std::fs::canonicalize(
+            tree.parent()
+                .ok_or_else(|| eyre::eyre!("installation tree has no parent"))?,
+        )?;
+        let extracted =
+            install_extract::extract(input.path(), &artifact, &parent, request.limits)?;
+        history.release = Some(release.record.clone());
+        remember_key(&mut history, &constraints);
+        if request.force {
+            eprintln!(
+                "Replacement allowed at installation destination: {}",
+                tree.display()
+            );
+            for (name, _) in &extracted.bins {
+                eprintln!(
+                    "Replacement allowed at command destination: {}",
+                    bin.join(if cfg!(windows) {
+                        format!("{name}.exe")
+                    } else {
+                        name.clone()
+                    })
+                    .display()
+                );
+            }
+        }
+        let pin = release
+            .record
+            .repository
+            .as_ref()
+            .and_then(|r| {
+                crate::Fingerprint::of(release.record.issuer.as_deref()?, &r.repository_id)
+            })
+            .map(|p| p.to_string());
+        let receipt = session.commit(
+            extracted,
+            &key,
+            &release.verified.version,
+            request.force,
+            history,
+            crate::install_launcher::write_export,
+        )?;
+        let mut warnings = notes;
+        warnings.extend(report.warnings);
+        for resource in crate::select_resources(&release.statement, &artifact) {
+            warnings.push(format!("resource {} is retained in the release metadata; bootstrap installs only declared commands", resource.kind));
+        }
+        if !std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|p| p == bin))
+        {
+            warnings.push(format!("{} is absent from PATH; invoke the reported command paths or add this directory yourself", bin.display()));
+        }
+        Ok::<_, eyre::Report>(Report {
+            project: project.as_str().into(),
+            receipt,
+            pin,
+            warnings,
+        })
     }
-    if !std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|p| p == bin)) {
-        warnings.push(format!("{} is absent from PATH; invoke the reported command paths or add this directory yourself", bin.display()));
+    .await;
+    installed.map_err(|error| after_skips(error, &label, &skipped))
+}
+
+/// Formats a bootstrap install can unpack, best first.
+const FORMATS: &[&str] = &[
+    "tar.xz", "tar.zst", "tar.gz", "tgz", "tar.bz2", "tar", "zip", "xz", "zst", "gz", "bz2", "raw",
+];
+
+/// The bundle budget for one install's search for a release it can use. A
+/// latest request skips a release whose forge release carries no packslip
+/// for the project or whose packslip has no artifact for this host, and any
+/// request skips the first kind; each skip costs that release's bundles.
+/// The first candidate is always examined in full, however many bundles it
+/// has. A later one is examined only if the total, its bundles included,
+/// stays within this budget, so a host that no release supports does not
+/// walk a long release history. The install command's `--version` help
+/// states this number.
+const MAX_BUNDLES: usize = 32;
+
+/// What one candidate release holds for the project.
+enum Packslip {
+    /// The one authenticated packslip, with its text and URL.
+    Accepted(Box<(install_policy::Release, String, String)>),
+    /// No packslip this consumer reads, and why, for the skip report.
+    Missing(String),
+}
+
+/// One candidate release's outcome: install it, or skip it for a reason.
+enum Step {
+    Install(Box<(install_policy::Release, String, crate::model::Artifact)>),
+    Skip(String),
+}
+
+/// One line for a skipped recommendation, then one per run of the other
+/// skipped releases that share a reason. Install tries those others in
+/// descending version order, so a run reads as a range, such as
+/// `skipped 5.0.0 to 2.0.0 (4 releases): no artifact fits this host (...)`.
+fn skip_notes(skipped: &[discovery::Skipped]) -> Vec<String> {
+    skipped
+        .chunk_by(|a, b| a.reason == b.reason && !a.recommendation && !b.recommendation)
+        .map(|run| match run {
+            [one] => format!("skipped {one}"),
+            [first, second] => format!(
+                "skipped {} and {}: {}",
+                first.release, second.release, first.reason
+            ),
+            [first, .., last] => format!(
+                "skipped {} to {} ({} releases): {}",
+                first.release,
+                last.release,
+                run.len(),
+                first.reason
+            ),
+            [] => unreachable!("chunks are never empty"),
+        })
+        .collect()
+}
+
+fn report_skips(skipped: &[discovery::Skipped]) -> String {
+    skip_notes(skipped).join("; ")
+}
+
+/// `1 bundle`, `2 bundles`.
+fn count(n: usize, noun: &str) -> String {
+    if n == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{n} {noun}s")
     }
-    Ok(Report {
-        project: project.as_str().into(),
-        receipt,
-        pin,
-        warnings,
-    })
+}
+
+/// A failure after a skip names what was skipped, so the error explains
+/// why install tried this release.
+fn after_skips(error: eyre::Report, release: &str, skipped: &[discovery::Skipped]) -> eyre::Report {
+    if skipped.is_empty() {
+        return error;
+    }
+    error.wrap_err(format!(
+        "failed to install {release}; {}",
+        report_skips(skipped)
+    ))
+}
+
+fn no_artifact(host: &install_host::Snapshot, variant: Option<&str>) -> String {
+    let host = host.host();
+    let mut place = format!("{} {}", host.os, host.arch);
+    if let Some(libc) = host.libc {
+        place = format!("{place} {libc}");
+    }
+    match variant {
+        Some(variant) => format!("no artifact with variant {variant} fits this host ({place})"),
+        None => format!("no artifact fits this host ({place})"),
+    }
+}
+
+/// What install needs to authenticate one candidate release's bundles.
+struct Lookup<'a> {
+    client: &'a discovery::Client,
+    project: &'a discovery::Project,
+    repository_id: Option<&'a str>,
+    forge: bool,
+    list: Option<&'a crate::ReleaseListStatement>,
+    host_list: Option<&'a discovery::HostDocument>,
+    constraints: &'a [install_policy::Constraints],
+    options: crate::Options<'a>,
+}
+
+impl Lookup<'_> {
+    /// The one authenticated packslip for the project among a release's
+    /// bundles, or why there is none once every bundle was read: none
+    /// describes the project, or the only one that does is a release
+    /// statement of a format version this consumer does not read, which
+    /// the specification has it ignore. A forge asset that cannot be
+    /// fetched or read might be the project's packslip, which fails rather
+    /// than skipping the release: fallback never follows a fetch or
+    /// verification failure.
+    async fn bundles(&self, selected: &discovery::Release) -> Result<Packslip> {
+        let project = self.project.as_str();
+        let mut accepted = None;
+        let mut unknown: Option<eyre::Report> = None;
+        let mut unsupported: Option<Option<String>> = None;
+        for url in &selected.bundles {
+            let listed_digest = self.list.and_then(|list| list.digest_of(url));
+            let may_skip = self.forge && listed_digest.is_none();
+            let host_authority = !self.forge
+                && reqwest::Url::parse(url).ok().is_some_and(|u| {
+                    u.host_str() == Some(project.split('/').next().unwrap())
+                        && u.port_or_known_default() == Some(443)
+                });
+            let document = if host_authority {
+                Some(
+                    self.client
+                        .fetch_host(self.project, url, 16 * 1024 * 1024)
+                        .await?
+                        .ok_or_else(|| eyre::eyre!("release bundle is missing"))?,
+                )
+            } else {
+                None
+            };
+            let fetched: Result<String> = async {
+                Ok(match &document {
+                    Some(document) => std::str::from_utf8(document.bytes())?.to_owned(),
+                    None => String::from_utf8(
+                        self.client
+                            .fetch(url, 16 * 1024 * 1024)
+                            .await?
+                            .ok_or_else(|| eyre::eyre!("release bundle is missing"))?,
+                    )?,
+                })
+            }
+            .await;
+            let bundle = match fetched {
+                Ok(bundle) => bundle,
+                Err(error) if may_skip => {
+                    unknown.get_or_insert(error);
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            if let Some(expected) = listed_digest
+                && hex::encode(Sha256::digest(bundle.as_bytes())) != expected
+            {
+                bail!("release bundle differs from its signed list digest");
+            }
+            // A forge release can describe several monorepo tools. The peek only
+            // filters candidates; it never establishes identity or authorizes use.
+            if may_skip {
+                match candidate(&bundle, project, self.repository_id) {
+                    Candidate::Requested => {}
+                    Candidate::Other => continue,
+                    Candidate::Unsupported(predicate_type) => {
+                        unsupported.get_or_insert(predicate_type);
+                        continue;
+                    }
+                    Candidate::Unreadable => {
+                        unknown.get_or_insert_with(|| {
+                            eyre::eyre!("a packslip asset is not a readable bundle")
+                        });
+                        continue;
+                    }
+                }
+            }
+            let release = match &document {
+                Some(document) => {
+                    install_policy::release_host(document, self.constraints, self.options)?
+                }
+                None if self.host_list.is_some() && listed_digest.is_some() => {
+                    install_policy::release_listed_host(
+                        self.host_list.unwrap(),
+                        url,
+                        &bundle,
+                        self.constraints,
+                        self.options,
+                    )?
+                }
+                None => install_policy::release(
+                    project,
+                    self.repository_id,
+                    &bundle,
+                    self.constraints,
+                    self.options,
+                )?,
+            };
+            if accepted.is_some() {
+                bail!("multiple authenticated packslips describe the requested project");
+            }
+            accepted = Some((release, bundle, url.clone()));
+        }
+        match (accepted, unknown, unsupported) {
+            (Some(found), _, _) => Ok(Packslip::Accepted(Box::new(found))),
+            (None, Some(error), _) => Err(error.wrap_err(format!(
+                "cannot tell whether release {} carries a packslip for {project}",
+                selected.tag
+            ))),
+            (None, None, Some(Some(predicate_type))) => Ok(Packslip::Missing(format!(
+                "its packslip for {project} has predicate type {predicate_type}, which this version of packslip cannot read"
+            ))),
+            (None, None, Some(None)) => Ok(Packslip::Missing(format!(
+                "its packslip for {project} uses a release format this version of packslip cannot read"
+            ))),
+            (None, None, None) => Ok(Packslip::Missing(discovery::no_packslip(project))),
+        }
+    }
+}
+
+/// What an unverified peek says a forge asset describes.
+#[derive(Debug, PartialEq, Eq)]
+enum Candidate {
+    /// The requested project, or the same repository under an older name.
+    Requested,
+    /// The requested project in another version of the release format,
+    /// such as a future `release/v2`, which this consumer cannot read and
+    /// skips like a release without the project's packslip. The predicate
+    /// type comes from an unverified peek, so it is kept for the report
+    /// only when it is a short run of URL characters.
+    Unsupported(Option<String>),
+    /// Another project, or a document that is not a release packslip, such
+    /// as a signed release list attached to the release.
+    Other,
+    /// Nothing: the asset is not a bundle with a readable statement.
+    Unreadable,
 }
 
 // Unlisted forge assets are discovery candidates. Invalid siblings do not
 // establish policy and must not prevent finding the requested monorepo tool.
-fn candidate_matches(bundle: &str, project: &str, repository_id: Option<&str>) -> bool {
+fn candidate(bundle: &str, project: &str, repository_id: Option<&str>) -> Candidate {
     let Ok(payload) = crate::sigstore::peek_statement(bundle) else {
-        return false;
+        return Candidate::Unreadable;
     };
     let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&payload) else {
-        return false;
+        return Candidate::Unreadable;
     };
     let name = payload["predicate"]["project"].as_str().unwrap_or_default();
-    if payload["predicateType"] != crate::model::PREDICATE_TYPE
-        || crate::model::repository(name).is_none()
+    let predicate_type = payload["predicateType"].as_str().unwrap_or_default();
+    // Release statements of every format version share this prefix; the
+    // signed list's `releases/v1` does not.
+    let release_types = crate::model::PREDICATE_TYPE.trim_end_matches("v1");
+    let found = if predicate_type == crate::model::PREDICATE_TYPE {
+        Candidate::Requested
+    } else if predicate_type.starts_with(release_types) {
+        let printable = predicate_type.len() <= 64
+            && predicate_type
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"/:.-_".contains(&b));
+        Candidate::Unsupported(printable.then(|| predicate_type.to_owned()))
+    } else {
+        return Candidate::Other;
+    };
+    if crate::model::repository(name).is_none()
         || crate::model::repository_subpath(name) != crate::model::repository_subpath(project)
     {
-        return false;
+        return Candidate::Other;
     }
     if crate::model::repository(name) == crate::model::repository(project) {
-        return true;
+        return found;
     }
     // A renamed or transferred repository can keep publishing its old name.
     // This unverified certificate peek only keeps a candidate for subsequent
     // authentication; the resolved ID and every trust constraint are checked
     // again by release verification before anything can be installed.
-    crate::sigstore::source_repository(bundle)
+    let renamed = crate::sigstore::source_repository(bundle)
         .ok()
         .flatten()
         .is_some_and(|source| {
@@ -693,7 +952,8 @@ fn candidate_matches(bundle: &str, project: &str, repository_id: Option<&str>) -
                 && crate::model::repository(name).is_some_and(|(host, owner, repo)| {
                     source.uri == format!("https://{host}/{owner}/{repo}")
                 })
-        })
+        });
+    if renamed { found } else { Candidate::Other }
 }
 
 #[cfg(test)]
@@ -733,57 +993,82 @@ mod tests {
     fn malformed_and_unrelated_forge_candidates_are_skipped() {
         let f = Fixture::new();
         let requested = "github.com/owner/repo/tool";
-        assert!(!candidate_matches("not a bundle", requested, Some("42")));
-        assert!(!candidate_matches(
-            &f.signed(&f.statement),
-            requested,
-            Some("42")
-        ));
+        assert_eq!(
+            candidate("not a bundle", requested, Some("42")),
+            Candidate::Unreadable
+        );
+        assert_eq!(
+            candidate(&f.signed(&f.statement), requested, Some("42")),
+            Candidate::Other
+        );
         let mut statement = f.statement.clone();
         statement["predicate"]["project"] = json!(requested);
-        assert!(candidate_matches(
-            &f.signed(&statement),
-            requested,
-            Some("42")
-        ));
+        assert_eq!(
+            candidate(&f.signed(&statement), requested, Some("42")),
+            Candidate::Requested
+        );
         statement["predicate"]["project"] = json!("github.com/unrelated/repo/tool");
-        assert!(!candidate_matches(
-            &f.signed(&statement),
-            requested,
-            Some("42")
-        ));
+        assert_eq!(
+            candidate(&f.signed(&statement), requested, Some("42")),
+            Candidate::Other
+        );
         statement["predicate"]["project"] = json!("github.com/owner/repo/other");
-        assert!(!candidate_matches(
-            &f.signed(&statement),
-            requested,
-            Some("42")
-        ));
+        assert_eq!(
+            candidate(&f.signed(&statement), requested, Some("42")),
+            Candidate::Other
+        );
+        // A release statement of another format version for this project
+        // is recognized, so install can say why it skipped the release; one
+        // for another tool, or a signed release list, is not this
+        // project's packslip.
+        statement["predicateType"] = json!("https://packslip.dev/release/v2");
+        assert_eq!(
+            candidate(&f.signed(&statement), requested, Some("42")),
+            Candidate::Other
+        );
+        statement["predicate"]["project"] = json!(requested);
+        assert_eq!(
+            candidate(&f.signed(&statement), requested, Some("42")),
+            Candidate::Unsupported(Some("https://packslip.dev/release/v2".into()))
+        );
+        // The type is unverified, so one a terminal could misread is not
+        // repeated in a report.
+        statement["predicateType"] = json!("https://packslip.dev/release/v2\u{1b}[2J");
+        assert_eq!(
+            candidate(&f.signed(&statement), requested, Some("42")),
+            Candidate::Unsupported(None)
+        );
+        statement["predicateType"] = json!(crate::model::RELEASES_PREDICATE_TYPE);
+        assert_eq!(
+            candidate(&f.signed(&statement), requested, Some("42")),
+            Candidate::Other
+        );
     }
 
     #[test]
     fn forge_candidate_renames_require_the_resolved_repository_id() {
         let bundle = include_str!("../tests/fixtures/hk-v2.3.0.sigstore.json");
-        assert!(candidate_matches(
-            bundle,
-            "github.com/jdx/renamed-hk",
-            Some("922514152")
-        ));
-        assert!(candidate_matches(
-            bundle,
-            "github.com/new-owner/hk",
-            Some("922514152")
-        ));
-        assert!(!candidate_matches(
-            bundle,
-            "github.com/unrelated/hk",
-            Some("43")
-        ));
-        assert!(!candidate_matches(bundle, "github.com/new-owner/hk", None));
-        assert!(!candidate_matches(
-            bundle,
-            "github.com/new-owner/hk/other",
-            Some("922514152")
-        ));
+        for (project, id, expected) in [
+            (
+                "github.com/jdx/renamed-hk",
+                Some("922514152"),
+                Candidate::Requested,
+            ),
+            (
+                "github.com/new-owner/hk",
+                Some("922514152"),
+                Candidate::Requested,
+            ),
+            ("github.com/unrelated/hk", Some("43"), Candidate::Other),
+            ("github.com/new-owner/hk", None, Candidate::Other),
+            (
+                "github.com/new-owner/hk/other",
+                Some("922514152"),
+                Candidate::Other,
+            ),
+        ] {
+            assert_eq!(candidate(bundle, project, id), expected, "{project}");
+        }
     }
 
     #[test]
@@ -985,16 +1270,34 @@ mod tests {
                 self.signed(&list).as_bytes(),
             );
         }
-        /// Publish a list of the given versions, each with its own signed
-        /// bundle; `Some(reason)` yanks that version.
+        /// Publish a list of the fixture's release at the given versions,
+        /// each with its own signed bundle; `Some(reason)` yanks that version.
         fn publish_versions(&self, sequence: u64, releases: &[(&str, Option<&str>)]) {
-            let mut subjects = vec![];
-            let mut entries = vec![];
-            for (version, yanked) in releases {
-                let mut statement = self.statement.clone();
-                statement["predicate"]["version"] = json!(version);
+            let releases: Vec<_> = releases
+                .iter()
+                .map(|(version, yanked)| {
+                    let mut statement = self.statement.clone();
+                    statement["predicate"]["version"] = json!(version);
+                    (statement, *yanked)
+                })
+                .collect();
+            self.publish_list(sequence, &releases);
+        }
+        /// `publish_list` with no release yanked.
+        fn publish_releases(&self, sequence: u64, statements: &[serde_json::Value]) {
+            let releases: Vec<_> = statements.iter().map(|s| (s.clone(), None)).collect();
+            self.publish_list(sequence, &releases);
+        }
+        /// Publish a signed list naming one release per statement, each
+        /// bundle under its version's directory on the host; `Some(reason)`
+        /// yanks that release.
+        fn publish_list(&self, sequence: u64, releases: &[(serde_json::Value, Option<&str>)]) {
+            let mut subjects = Vec::new();
+            let mut entries = Vec::new();
+            for (statement, yanked) in releases {
+                let version = statement["predicate"]["version"].as_str().unwrap();
                 let url = format!("https://example.test/releases/{version}/packslip.sigstore.json");
-                let bundle = self.signed(&statement);
+                let bundle = self.signed(statement);
                 self.cache(&url, true, bundle.as_bytes());
                 subjects.push(json!({"name":url,"digest":{"sha256":hex::encode(Sha256::digest(bundle.as_bytes()))}}));
                 let mut entry =
@@ -1016,6 +1319,83 @@ mod tests {
                 true,
                 self.signed(&list).as_bytes(),
             );
+        }
+        /// The fixture's release at another version, with its one artifact
+        /// limited to a platform no test host runs.
+        fn foreign(&self, version: &str) -> serde_json::Value {
+            let mut statement = self.statement.clone();
+            statement["predicate"]["version"] = json!(version);
+            statement["predicate"]["artifacts"][0]["os"] = json!("illumos");
+            statement["predicate"]["artifacts"][0]["arch"] = json!("x86_64");
+            statement
+        }
+        /// Serve github.com/jdx/hk from the cache: GitHub's latest release is
+        /// v3.0.0, whose only packslip asset holds `decoy`, and v2.3.0 carries
+        /// the real hk packslip.
+        fn github_hk(&self, decoy: &[u8]) {
+            self.github_hk_releases("v3.0.0", &[("v3.0.0", decoy), ("v2.3.0", HK.as_bytes())]);
+        }
+        /// Serve github.com/jdx/hk from the cache with `releases` in the
+        /// releases endpoint's order, each with one packslip asset holding
+        /// the given bytes, and `latest` as GitHub's latest release. The
+        /// repository has no supplementary list.
+        fn github_hk_releases(&self, latest: &str, releases: &[(&str, &[u8])]) {
+            let base = "https://api.github.com/repos/jdx/hk";
+            let download = "https://github.com/jdx/hk/releases/download";
+            let listed: Vec<_> = releases
+                .iter()
+                .map(|(tag, _)| {
+                    json!({"tag_name":tag,"draft":false,"assets":[{"name":"packslip.sigstore.json",
+                        "browser_download_url":format!("{download}/{tag}/packslip.sigstore.json")}]})
+                })
+                .collect();
+            for (url, value) in [
+                (
+                    base.to_owned(),
+                    json!({"id":922514152,"default_branch":"main"}),
+                ),
+                (
+                    format!("{base}/releases/latest"),
+                    json!({"tag_name":latest,"draft":false}),
+                ),
+                (
+                    format!("{base}/releases?per_page=100&page=1"),
+                    json!(listed),
+                ),
+            ] {
+                self.cache(&url, false, &serde_json::to_vec(&value).unwrap());
+            }
+            let list = format!("{base}/contents/.well-known/packslip.json?ref=main");
+            std::fs::write(
+                self.scope()
+                    .state
+                    .join("downloads")
+                    .join(format!("{}.missing", hex::encode(Sha256::digest(&list)))),
+                b"404",
+            )
+            .unwrap();
+            for (tag, bytes) in releases {
+                self.cache(
+                    &format!("{download}/{tag}/packslip.sigstore.json"),
+                    false,
+                    bytes,
+                );
+            }
+        }
+        /// A key-signed packslip for another tool in jdx/hk, which install
+        /// passes over when it looks for hk's own packslip.
+        fn sibling(&self, version: &str) -> Vec<u8> {
+            let mut sibling = self.statement.clone();
+            sibling["predicate"]["project"] = json!("github.com/jdx/hk/other");
+            sibling["predicate"]["version"] = json!(version);
+            self.signed(&sibling).into_bytes()
+        }
+        fn hk_request(&self, version: Option<&str>) -> Request {
+            let mut request = self.request(false);
+            request.project = "github.com/jdx/hk".into();
+            request.version = version.map(Into::into);
+            request.allow_unlogged = false;
+            request
         }
         fn request(&self, first: bool) -> Request {
             Request {
@@ -1228,6 +1608,286 @@ mod tests {
         assert!(Withdrawn::find(&list("x"), "1.0.1").is_none());
         assert!(Withdrawn::find(&list("x"), "1.0.0+build.5").is_none());
         assert!(Withdrawn::find(&list("x"), "not a version").is_none());
+    }
+
+    #[test]
+    fn latest_falls_back_past_a_release_without_an_artifact_for_this_host() {
+        let f = Fixture::new();
+        f.publish_releases(8, &[f.foreign("2.0.0"), f.statement.clone()]);
+        let report = f.run(f.request(true)).unwrap();
+        assert_eq!(report.receipt.version, "1.0.0");
+        assert!(
+            report.warnings[0].starts_with("skipped 2.0.0: no artifact fits this host ("),
+            "{:?}",
+            report.warnings
+        );
+        // A version request names what it wants; a missing artifact for this
+        // host fails instead of selecting an older release.
+        for version in ["2.0.0", ">=1"] {
+            let mut request = f.request(true);
+            request.version = Some(version.into());
+            let error = f.run(request).unwrap_err();
+            assert!(
+                error.to_string().contains("no artifact fits this host"),
+                "{version}: {error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_withdrawal_warning_comes_before_the_releases_a_fallback_skipped() {
+        let f = Fixture::new();
+        assert_eq!(f.run(f.request(true)).unwrap().receipt.version, "1.0.0");
+        let mut replacement = f.statement.clone();
+        replacement["predicate"]["version"] = json!("1.1.0");
+        f.publish_list(
+            8,
+            &[
+                (f.foreign("2.0.0"), None),
+                (replacement, None),
+                (f.statement.clone(), Some("CVE-2026-1234")),
+            ],
+        );
+        let report = f.run(f.request(false)).unwrap();
+        assert_eq!(report.receipt.version, "1.1.0");
+        assert_eq!(
+            report.warnings[0],
+            "the example.test 1.0.0 you installed was withdrawn in its signed release list: \
+             CVE-2026-1234; this run installed 1.1.0 instead"
+        );
+        assert!(
+            report.warnings[1].starts_with("skipped 2.0.0: no artifact fits this host ("),
+            "{:?}",
+            report.warnings
+        );
+    }
+
+    #[test]
+    fn host_requirements_never_redirect_installation_to_another_release() {
+        let f = Fixture::new();
+        let mut newer = f.statement.clone();
+        newer["predicate"]["version"] = json!("2.0.0");
+        newer["predicate"]["artifacts"][0]["requires"] = json!({
+            "libs": ["libpackslip-test-missing.so.1"],
+            "glibc_min": "999999",
+            "os_min": "999999"
+        });
+        f.publish_releases(8, &[newer, f.statement.clone()]);
+        match f.run(f.request(true)) {
+            Ok(report) => assert_eq!(report.receipt.version, "2.0.0"),
+            Err(error) => assert!(
+                error.to_string().contains("incompatible with this host"),
+                "{error:?}"
+            ),
+        }
+    }
+
+    #[test]
+    fn an_artifact_tie_fails_instead_of_falling_back() {
+        // One artifact names this host's os and the other its arch. Both
+        // fit, equally specific and in the same format, so neither wins.
+        let f = Fixture::new();
+        let snapshot = install_host::Snapshot::detect().unwrap();
+        let host = snapshot.host();
+        let mut tied = f.statement.clone();
+        tied["predicate"]["version"] = json!("2.0.0");
+        let mut copy = tied["predicate"]["artifacts"][0].clone();
+        tied["predicate"]["artifacts"][0]["os"] = json!(host.os);
+        copy["name"] = json!("tool-copy.tar");
+        copy["arch"] = json!(host.arch);
+        tied["predicate"]["artifacts"]
+            .as_array_mut()
+            .unwrap()
+            .push(copy);
+        let mut subject = tied["subject"][0].clone();
+        subject["name"] = json!("tool-copy.tar");
+        tied["subject"].as_array_mut().unwrap().push(subject);
+        f.publish_releases(8, &[tied, f.statement.clone()]);
+        let error = f.run(f.request(true)).unwrap_err().to_string();
+        assert_eq!(
+            error,
+            r#"artifacts "tool.tar" and "tool-copy.tar" both fit this host and nothing tells them apart"#
+        );
+    }
+
+    #[test]
+    fn fallback_stops_after_a_bounded_number_of_bundles() {
+        let f = Fixture::new();
+        let mut statements: Vec<_> = (2..42).map(|n| f.foreign(&format!("{n}.0.0"))).collect();
+        statements.push(f.statement.clone());
+        f.publish_releases(8, &statements);
+        let error = f.run(f.request(true)).unwrap_err().to_string();
+        assert!(
+            error.starts_with(&format!(
+                "stopped looking for an installable release of example.test after fetching {MAX_BUNDLES} bundles from {MAX_BUNDLES} releases; skipped 41.0.0 to 10.0.0 ({MAX_BUNDLES} releases): no artifact fits this host ("
+            )),
+            "{error}"
+        );
+        assert!(
+            error.ends_with("); name an older release with --version"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn counts_agree_with_their_number() {
+        assert_eq!(count(1, "bundle"), "1 bundle");
+        assert_eq!(count(2, "bundle"), "2 bundles");
+        assert_eq!(count(1, "release"), "1 release");
+    }
+
+    #[test]
+    fn skips_sharing_a_reason_are_reported_together() {
+        let skip = |release: &str, reason: &str| discovery::Skipped::new(release, reason);
+        // The recommendation, tried first, gets its own line even when the
+        // releases after it share its reason; they follow by version.
+        let recommendation = |release: &str, reason: &str| discovery::Skipped {
+            recommendation: true,
+            ..skip(release, reason)
+        };
+        assert_eq!(
+            skip_notes(&[
+                recommendation("2.0.0, GitHub's latest release", "no artifact fits"),
+                skip("4.0.0", "no artifact fits"),
+                skip("3.0.0", "no artifact fits"),
+                skip("1.9.0", "no artifact fits"),
+                skip("1.8.0", "its release carries no packslip for p"),
+                skip("1.7.0", "no artifact fits"),
+                skip("1.6.0", "no artifact fits"),
+            ]),
+            [
+                "skipped 2.0.0, GitHub's latest release: no artifact fits",
+                "skipped 4.0.0 to 1.9.0 (3 releases): no artifact fits",
+                "skipped 1.8.0: its release carries no packslip for p",
+                "skipped 1.7.0 and 1.6.0: no artifact fits",
+            ]
+        );
+        assert_eq!(
+            skip_notes(&[
+                recommendation("2.3.0, GitHub's latest release", "no packslip"),
+                skip("2.4.0", "no packslip"),
+            ]),
+            [
+                "skipped 2.3.0, GitHub's latest release: no packslip",
+                "skipped 2.4.0: no packslip",
+            ]
+        );
+    }
+
+    /// hk's real v2.3.0 packslip, signed keylessly by its release workflow.
+    const HK: &str = include_str!("../tests/fixtures/hk-v2.3.0.sigstore.json");
+
+    /// The error a latest install of the GitHub hk fixture reports once it
+    /// reaches hk 2.3.0, named `release`, after the skips `notes`. A forge
+    /// project accepts only a packslip its forge signed, and the fixture
+    /// cache holds none of hk's multi-megabyte archives, so the install
+    /// cannot finish offline. On a host that an hk 2.3.0 artifact fits, it
+    /// fails after selecting 2.3.0, and the error names what it skipped
+    /// with the text a successful install would print as warnings. On
+    /// any other host, 2.3.0 is skipped too.
+    fn hk_outcome(release: &str, notes: &str) -> String {
+        let host = install_host::Snapshot::detect().unwrap();
+        let statement: crate::Statement =
+            serde_json::from_slice(&crate::sigstore::peek_statement(HK).unwrap()).unwrap();
+        match crate::select_artifact(&statement.predicate.artifacts, &host.host(), None, FORMATS) {
+            Err(crate::model::Selection::NoMatch) => format!(
+                "no installable release of github.com/jdx/hk; {notes}; skipped {release}: {}",
+                no_artifact(&host, None)
+            ),
+            _ => format!("failed to install {release}; {notes}"),
+        }
+    }
+
+    #[test]
+    fn forge_release_without_this_projects_packslip_is_skipped_and_reported() {
+        let f = Fixture::new();
+        // A monorepo sibling's packslip under a tag that names a version
+        // of github.com/jdx/hk.
+        f.github_hk(&f.sibling("3.0.0"));
+        let error = f.run(f.hk_request(None)).unwrap_err().to_string();
+        assert_eq!(
+            error,
+            hk_outcome(
+                "2.3.0",
+                "skipped 3.0.0, GitHub's latest release: its release carries no packslip for github.com/jdx/hk"
+            )
+        );
+        // An exact tag names one release and does not fall back. The
+        // recommendation has no place in that request, so the report does
+        // not name it.
+        let error = f.run(f.hk_request(Some("v3.0.0"))).unwrap_err().to_string();
+        assert_eq!(
+            error,
+            "no installable release of github.com/jdx/hk; skipped 3.0.0: its release carries no packslip for github.com/jdx/hk"
+        );
+    }
+
+    #[test]
+    fn a_forge_release_sharing_the_recommended_version_keeps_its_place() {
+        let f = Fixture::new();
+        // GitHub's latest release, v2.3.0, carries only another tool's
+        // packslip, and GitHub lists hk-v2.3.0, which carries hk's, before
+        // it. Install tries GitHub's latest release first and then the
+        // other releases from the highest down, so 2.4.0 comes before
+        // hk-v2.3.0, though hk-v2.3.0 shares the recommended version. The
+        // report names the recommendation on its own line and by tag.
+        f.github_hk_releases(
+            "v2.3.0",
+            &[
+                ("hk-v2.3.0", HK.as_bytes()),
+                ("v2.3.0", &f.sibling("2.3.0")),
+                ("v2.4.0", &f.sibling("2.4.0")),
+            ],
+        );
+        let error = f.run(f.hk_request(None)).unwrap_err().to_string();
+        assert_eq!(
+            error,
+            hk_outcome(
+                "2.3.0 (tag hk-v2.3.0)",
+                "skipped 2.3.0 (tag v2.3.0), GitHub's latest release: its release carries no packslip for github.com/jdx/hk; skipped 2.4.0: its release carries no packslip for github.com/jdx/hk"
+            )
+        );
+    }
+
+    #[test]
+    fn an_unreadable_forge_asset_fails_instead_of_falling_back() {
+        let f = Fixture::new();
+        f.github_hk(b"not a bundle");
+        let error = format!("{:?}", f.run(f.hk_request(None)).unwrap_err());
+        assert!(
+            error.contains(
+                "cannot tell whether release v3.0.0 carries a packslip for github.com/jdx/hk"
+            ),
+            "{error}"
+        );
+        assert!(!error.contains("2.3.0"), "{error}");
+    }
+
+    #[test]
+    fn a_packslip_in_an_unread_format_is_skipped_and_reported() {
+        let f = Fixture::new();
+        // The specification has a consumer keep only release/v1 packslips,
+        // so a release whose only hk packslip is a future format is one it
+        // does not discover, and the report says why.
+        let mut newer = f.statement.clone();
+        newer["predicateType"] = json!("https://packslip.dev/release/v2");
+        newer["predicate"]["project"] = json!("github.com/jdx/hk");
+        newer["predicate"]["version"] = json!("3.0.0");
+        f.github_hk(f.signed(&newer).as_bytes());
+        let reason = "its packslip for github.com/jdx/hk has predicate type https://packslip.dev/release/v2, which this version of packslip cannot read";
+        let error = f.run(f.hk_request(None)).unwrap_err().to_string();
+        assert_eq!(
+            error,
+            hk_outcome(
+                "2.3.0",
+                &format!("skipped 3.0.0, GitHub's latest release: {reason}")
+            )
+        );
+        let error = f.run(f.hk_request(Some("v3.0.0"))).unwrap_err().to_string();
+        assert_eq!(
+            error,
+            format!("no installable release of github.com/jdx/hk; skipped 3.0.0: {reason}")
+        );
     }
 
     #[test]
