@@ -52,6 +52,16 @@ describe('verifyRelease (public-good sigstore)', () => {
     assert.match(artifact.sha512 ?? '', /^[0-9a-f]{128}$/);
   });
 
+  it('still verifies a release from the project repository with allowOtherRepository', async () => {
+    const statement = await verifyRelease(bundleText, {
+      identity: IDENTITY,
+      issuer: ISSUER,
+      project: 'github.com/jdx/mise',
+      allowOtherRepository: true,
+    });
+    assert.deepEqual(statement.signer, { identity: IDENTITY, issuer: ISSUER });
+  });
+
   it('accepts an identity predicate', async () => {
     const statement = await verifyRelease(bundleText, {
       identity: (san) => san.startsWith('https://github.com/jdx/mise/.github/workflows/'),

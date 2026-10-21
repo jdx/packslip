@@ -125,8 +125,11 @@ const artifact = findArtifact(statement, 'mise-v2026.10.11-linux-arm64');
 await verifyFileDigest('/tmp/mise-v2026.10.11-linux-arm64', artifact);
 ```
 
-`verifyRelease` verifies the keyless Sigstore bundle and enforces the identity,
-issuer, and optional project/tag policy. `verifyFileDigest` streams the asset
+`verifyRelease` verifies the keyless Sigstore bundle and enforces the identity
+and issuer you pass. It checks the statement against the release statement
+rules and the signer it declares, then applies the optional project and tag
+checks: a GitHub or GitLab `project` must be signed from its repository unless
+you set `allowOtherRepository`. `verifyFileDigest` streams the asset
 and checks its signed size and digests. The package does not download a
 release, select a platform, create a statement, or sign; keep those concerns
 in your application. See [Verify a release from JavaScript](/docs/verify-js/)

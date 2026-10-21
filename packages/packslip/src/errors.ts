@@ -3,6 +3,8 @@ export type PackslipErrorCode =
   | 'signature'
   | 'identity'
   | 'statement'
+  | 'declared-identity'
+  | 'project-signer'
   | 'predicate-type'
   | 'project'
   | 'tag'
@@ -46,10 +48,75 @@ export class IdentityError extends PackslipError {
   }
 }
 
-/** The signed statement is malformed or is not a packslip release statement. */
+/**
+ * The signed statement is not a packslip release statement (`predicate-type`),
+ * breaks the release/v1 structural rules (`statement`), or names another project
+ * or tag than the caller requires (`project`, `tag`).
+ */
 export class StatementError extends PackslipError {
   constructor(message: string, code: 'statement' | 'predicate-type' | 'project' | 'tag' = 'statement') {
     super(code, message);
+  }
+}
+
+/**
+ * The statement's `identity` block does not describe the certificate that
+ * signed it: it declares a key-signed release (`sigstore-key`), another signer,
+ * or another issuer.
+ */
+export class DeclaredIdentityError extends PackslipError {
+  /** The field of the statement's `predicate.identity` that differs. */
+  readonly field: 'scheme' | 'key_id' | 'issuer';
+  /** What the statement declares. */
+  readonly declared: string;
+  /** What the signing certificate says. */
+  readonly actual: string;
+
+  constructor(field: 'scheme' | 'key_id' | 'issuer', declared: string, actual: string) {
+    super(
+      'declared-identity',
+      field === 'scheme'
+        ? `the statement declares scheme ${declared}, but the bundle was signed by an OIDC identity`
+        : field === 'key_id'
+          ? `the statement declares signer ${JSON.stringify(declared)}, but the bundle was signed by ${JSON.stringify(actual)}`
+          : `the statement declares issuer ${JSON.stringify(declared)}, but the certificate says ${JSON.stringify(actual)}`,
+    );
+    this.field = field;
+    this.declared = declared;
+    this.actual = actual;
+  }
+}
+
+/**
+ * The certificate does not belong to the GitHub or GitLab repository that the
+ * requested `project` names. It came through another issuer (`issuer`), records
+ * another source repository (`source-repository`), or records none and was
+ * signed outside the repository (`signer`).
+ */
+export class ProjectSignerError extends PackslipError {
+  readonly project: string;
+  readonly reason: 'issuer' | 'source-repository' | 'signer';
+  readonly actualIdentity: string;
+  readonly actualIssuer: string;
+  /** The Source Repository URI the certificate records, if any. */
+  readonly sourceRepository: string | undefined;
+
+  constructor(
+    message: string,
+    details: {
+      project: string;
+      reason: 'issuer' | 'source-repository' | 'signer';
+      identity: string;
+      issuer: string;
+      sourceRepository: string | undefined;
+    },
+  ) {
+    super('project-signer', message);
+    this.project = details.project;
+    this.reason = details.reason;
+    this.actualIdentity = details.identity;
+    this.actualIssuer = details.issuer;
+    this.sourceRepository = details.sourceRepository;
   }
 }
 
