@@ -64,7 +64,9 @@ jobs:
 
   # Go module tags must carry the module directory prefix, but share the
   # release version and commit with the CLI and npm package. Go module proxies
-  # distribute directly from this tag; no registry publish is needed.
+  # distribute directly from this tag; no registry publish is needed. The
+  # repository ruleset restricts tag creation, which github.token cannot bypass,
+  # so this job pushes with RELEASE_PLZ_TOKEN.
   go-module-tag:
     needs: version
     if: github.ref_type == 'tag'
@@ -80,7 +82,7 @@ jobs:
       - name: Create the matching Go module tag
         env:
           VERSION_TAG: ${{ needs.version.outputs.tag }}
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
         run: |
           set -euo pipefail
           tag="go/$VERSION_TAG"
