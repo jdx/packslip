@@ -85,7 +85,18 @@ pub struct Record {
     pub repository: Option<ForgePin>,
     pub pin_workflow: bool,
     pub attested_by: Attestor,
+    /// One entry per artifact. An entry without links only records that the
+    /// release offers its build. It matters only while this is the next
+    /// record, so remembered state and approval IDs omit it and keep the form
+    /// packslip 1.5 through 1.10 wrote.
+    #[serde(serialize_with = "linked_only")]
     pub provenance: Vec<Provenance>,
+}
+fn linked_only<S: serde::Serializer>(
+    entries: &[Provenance],
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.collect_seq(entries.iter().filter(|entry| entry.links > 0))
 }
 /// Release and release-list continuity have independent remembered records.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,9 +106,10 @@ pub enum Role {
     List,
 }
 
-/// Preserve each artifact's linked-provenance count within its stable build
-/// scope. Formats carrying the same build remain interchangeable. URLs change with build
-/// digests and versions; deduplicating scopes would hide partial reductions.
+/// One artifact's build scope and its number of distinct provenance links.
+/// URLs change with build digests and versions, so releases compare counts.
+/// Each artifact keeps its own entry: deduplicating scopes would hide partial
+/// reductions.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Provenance {
     pub scope: String,
@@ -108,7 +120,6 @@ fn scopes(statement: &crate::Statement) -> Vec<Provenance> {
         .predicate
         .artifacts
         .iter()
-        .filter(|a| !a.provenance.is_empty())
         .map(|a| Provenance {
             scope: format!(
                 "{:?}",
@@ -133,11 +144,28 @@ fn scopes(statement: &crate::Statement) -> Vec<Provenance> {
     scopes.sort();
     scopes
 }
+/// The build a scope names: its `os`, `arch`, `libc`, and `variant`. Scopes
+/// still end with the command names that packslip 1.5 through 1.10 compared,
+/// so those versions read remembered state as before. Comparing without them
+/// keeps a renamed command from hiding a build that lost provenance.
+fn build(scope: &str) -> &str {
+    scope.split_once(", {").map_or(scope, |(build, _)| build)
+}
+/// Compare only builds both releases offer, so retiring a build drops
+/// nothing while the new release still offers a build that carried links.
+/// One that offers none of them, for example because it relabels every
+/// build, has nothing to compare and drops them all. For a build in both,
+/// pair its artifacts' link counts largest first until the shorter list
+/// ends; no count may fall. Retiring a format thus drops nothing unless the
+/// formats left carry fewer links.
 fn retains_provenance(previous: &[Provenance], next: &[Provenance]) -> bool {
     fn group(entries: &[Provenance]) -> BTreeMap<&str, Vec<usize>> {
         let mut groups: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
         for entry in entries {
-            groups.entry(&entry.scope).or_default().push(entry.links);
+            groups
+                .entry(build(&entry.scope))
+                .or_default()
+                .push(entry.links);
         }
         for links in groups.values_mut() {
             links.sort_by(|a, b| b.cmp(a));
@@ -146,15 +174,23 @@ fn retains_provenance(previous: &[Provenance], next: &[Provenance]) -> bool {
     }
     let before = group(previous);
     let now = group(next);
-    before.iter().all(|(scope, counts)| {
-        now.get(scope).is_some_and(|next| {
-            next.len() >= counts.len()
-                && counts
+    // Remembered state holds only linked entries, so builds without links
+    // never count as shared.
+    let mut linked = before
+        .iter()
+        .filter(|(_, counts)| counts.first().is_some_and(|&links| links > 0))
+        .peekable();
+    let shares_a_build =
+        linked.peek().is_none() || linked.any(|(build, _)| now.contains_key(build));
+    shares_a_build
+        && before.iter().all(|(build, counts)| {
+            now.get(build).is_none_or(|next| {
+                counts
                     .iter()
                     .zip(next)
                     .all(|(before, after)| after >= before)
+            })
         })
-    })
 }
 fn changes(previous: &Record, next: &Record) -> Vec<String> {
     let mut changes = Vec::new();
@@ -784,37 +820,154 @@ mod tests {
         .unwrap();
         assert_eq!(policy.identity.as_deref(), Some("person@example.test"));
     }
-    #[test]
-    fn provenance_tracks_artifacts_and_link_counts_without_deduplicating_scopes() {
-        let mut statement: crate::Statement = serde_json::from_slice(
+    fn hk() -> crate::Statement {
+        serde_json::from_slice(
             &crate::sigstore::peek_statement(include_str!(
                 "../tests/fixtures/hk-v2.3.0.sigstore.json"
             ))
             .unwrap(),
         )
-        .unwrap();
-        statement.predicate.artifacts.truncate(1);
-        statement.predicate.artifacts[0].provenance = vec![
-            "https://one.test/build1".into(),
-            "https://two.test/build1".into(),
-        ];
-        statement
-            .predicate
-            .artifacts
-            .push(statement.predicate.artifacts[0].clone());
-        let before = scopes(&statement);
-        statement.predicate.artifacts[1].provenance.clear();
-        assert!(!retains_provenance(&before, &scopes(&statement)));
-        statement.predicate.artifacts[1].provenance = vec!["https://one.test/build2".into()];
-        assert!(!retains_provenance(&before, &scopes(&statement)));
-        statement.predicate.artifacts[1]
-            .provenance
-            .push("https://two.test/build2".into());
-        assert!(retains_provenance(&before, &scopes(&statement)));
-        statement.predicate.artifacts[1].format = Some("zip".into());
-        assert!(retains_provenance(&before, &scopes(&statement)));
-        statement.predicate.artifacts[1].bin = vec![crate::Bin::new("replacement")];
-        assert!(!retains_provenance(&before, &scopes(&statement)));
+        .unwrap()
+    }
+    /// hk's linux/x86_64/gnu build in each listed format with that many
+    /// provenance links, and its darwin/aarch64 build when `darwin` is set.
+    fn provenance_release(
+        version: u32,
+        linux: &[(&str, usize)],
+        darwin: Option<usize>,
+    ) -> Vec<Provenance> {
+        let mut statement = hk();
+        let template = std::mem::take(&mut statement.predicate.artifacts);
+        let builds = linux
+            .iter()
+            .map(|&(format, links)| (&template[3], format, links))
+            .chain(darwin.map(|links| (&template[0], "tar.gz", links)));
+        for (artifact, format, links) in builds {
+            let mut artifact = artifact.clone();
+            artifact.format = Some(format.into());
+            artifact.provenance = (0..links)
+                .map(|n| format!("https://provenance.test/{version}/{format}/{n}"))
+                .collect();
+            statement.predicate.artifacts.push(artifact);
+        }
+        scopes(&statement)
+    }
+    #[test]
+    fn provenance_compares_only_builds_both_releases_offer() {
+        let before = provenance_release(1, &[("tar.gz", 2), ("zip", 2)], Some(1));
+        let retains = |linux: &[(&str, usize)], darwin| {
+            retains_provenance(&before, &provenance_release(2, linux, darwin))
+        };
+        // Links are counted, not compared: each release has its own URLs.
+        assert!(retains(&[("tar.gz", 2), ("zip", 2)], Some(1)));
+        // Retiring a build, or one of two equally linked formats, drops
+        // nothing.
+        assert!(retains(&[("tar.gz", 2), ("zip", 2)], None));
+        assert!(retains(&[("tar.gz", 2)], Some(1)));
+        // Formats stay interchangeable, and an added format may lack links.
+        assert!(retains(&[("tar.xz", 2), ("zip", 2)], Some(1)));
+        assert!(retains(
+            &[("tar.gz", 2), ("zip", 2), ("tar.xz", 0)],
+            Some(1)
+        ));
+        // In a build both releases offer, match its artifacts' link counts
+        // largest first; no count may fall.
+        assert!(!retains(&[("tar.gz", 2), ("zip", 0)], Some(1)));
+        assert!(!retains(&[("tar.gz", 2), ("zip", 1)], Some(1)));
+        assert!(!retains(&[("tar.gz", 3), ("zip", 1)], Some(1)));
+        assert!(!retains(&[("tar.gz", 1)], Some(1)));
+        assert!(!retains(&[("tar.gz", 2), ("zip", 2)], Some(0)));
+        // Keeping only the format that never carried links loses the build's.
+        let partial = provenance_release(1, &[("tar.gz", 2), ("zip", 0)], None);
+        assert!(!retains_provenance(
+            &partial,
+            &provenance_release(2, &[("zip", 0)], None)
+        ));
+        assert!(retains_provenance(
+            &partial,
+            &provenance_release(2, &[("tar.gz", 2)], None)
+        ));
+        // As in v1.10.1, counts are matched without regard to format, so
+        // links may move from one format to another.
+        assert!(retains_provenance(
+            &partial,
+            &provenance_release(2, &[("tar.gz", 0), ("zip", 2)], None)
+        ));
+    }
+    #[test]
+    fn provenance_requires_a_build_that_carried_links() {
+        let before = provenance_release(1, &[("tar.gz", 2), ("zip", 2)], None);
+        // hk's linux/x86_64 build relabeled from libc gnu to unset, in both
+        // formats with that many provenance links.
+        let relabeled = |links: usize| {
+            let mut statement = hk();
+            let linux = statement.predicate.artifacts[3].clone();
+            statement.predicate.artifacts = ["tar.gz", "zip"]
+                .map(|format| {
+                    let mut artifact = linux.clone();
+                    artifact.libc = None;
+                    artifact.format = Some(format.into());
+                    artifact.provenance = (0..links)
+                        .map(|n| format!("https://provenance.test/2/{format}/{n}"))
+                        .collect();
+                    artifact
+                })
+                .into();
+            scopes(&statement)
+        };
+        // A release that relabels every build shares none with the last
+        // release, so nothing is compared: that drops the links, whether or
+        // not the relabeled builds carry links of their own.
+        assert!(!retains_provenance(&before, &relabeled(0)));
+        assert!(!retains_provenance(&before, &relabeled(2)));
+        // Retiring builds or formats drops nothing while one build that
+        // carried links remains.
+        let both = provenance_release(1, &[("tar.gz", 2), ("zip", 2)], Some(1));
+        assert!(retains_provenance(
+            &both,
+            &provenance_release(2, &[], Some(1))
+        ));
+        assert!(retains_provenance(
+            &both,
+            &provenance_release(2, &[("zip", 2)], None)
+        ));
+        // A build that carried no links is not remembered, so sharing only it
+        // does not count.
+        let darwin_unlinked = provenance_release(1, &[("tar.gz", 2)], Some(0));
+        assert!(!retains_provenance(
+            &darwin_unlinked,
+            &provenance_release(2, &[], Some(0))
+        ));
+        // Without earlier links there is nothing to drop.
+        let unlinked = provenance_release(1, &[("tar.gz", 0)], Some(0));
+        assert!(retains_provenance(&unlinked, &relabeled(0)));
+        assert!(retains_provenance(&[], &relabeled(0)));
+        assert!(retains_provenance(&[], &[]));
+    }
+    #[test]
+    fn remembered_provenance_keeps_its_earlier_form() {
+        // packslip 1.5 through 1.10 remembered scopes with command names.
+        let remembered = scopes(&hk());
+        let legacy = r#"(Some("linux"), Some("x86_64"), Some("gnu"), None, {"hk"})"#;
+        assert!(
+            remembered
+                .iter()
+                .any(|entry| entry.scope == legacy && entry.links == 1)
+        );
+        // A renamed command neither retires a build nor hides lost links.
+        let mut renamed = hk();
+        for artifact in &mut renamed.predicate.artifacts {
+            artifact.bin = vec![crate::Bin::new("hk2")];
+        }
+        assert!(retains_provenance(&remembered, &scopes(&renamed)));
+        renamed.predicate.artifacts[3].provenance.clear();
+        assert!(!retains_provenance(&remembered, &scopes(&renamed)));
+        // Entries without links mark offered builds but are not remembered.
+        let mut next = record("release.yml@refs/tags/v1", true);
+        next.provenance = scopes(&renamed);
+        let stored: Record = serde_json::from_value(serde_json::to_value(&next).unwrap()).unwrap();
+        assert_eq!(stored.provenance.len(), next.provenance.len() - 1);
+        assert!(stored.provenance.iter().all(|entry| entry.links == 1));
     }
     #[test]
     fn proposal_is_bound_to_policy_and_previous_record() {
@@ -1034,11 +1187,21 @@ mod tests {
     }
     #[test]
     fn provenance_and_attestation_reductions_are_proposals() {
-        let old = record("release.yml@refs/tags/v1", true);
+        let mut old = record("release.yml@refs/tags/v1", true);
         let mut next = old.clone();
-        next.provenance.clear();
+        next.provenance[0].links = 0;
         next.attested_by = Attestor::Repackager;
         assert_eq!(changes(&old, &next).len(), 2);
+        // A release that offers no build that carried links drops them.
+        next.provenance.clear();
+        assert_eq!(changes(&old, &next).len(), 2);
+        // Retiring one build while another keeps its links drops nothing.
+        old.provenance.push(Provenance {
+            scope: "darwin/aarch64/none/default".into(),
+            links: 1,
+        });
+        next.provenance = vec![old.provenance[1].clone()];
+        assert_eq!(changes(&old, &next).len(), 1);
         assert!(
             !changes(
                 &record("release.yml@refs/tags/v1", false),

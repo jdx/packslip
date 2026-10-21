@@ -1820,7 +1820,9 @@ their linked sections use this remembered state:
      `sigstore-oidc` to `sigstore-key`;
    - whose signer changed;
    - whose `attested_by` went from vendor to repackager;
-   - that dropped per-artifact provenance the last release carried.
+   - that dropped provenance links from a build both releases offer. If
+     the last release carried links, a release that offers none of the
+     builds that carried them has dropped them too.
 
    Compare keyless signers by workflow path, without the ref: a new tag
    from the same workflow keeps the same signer. Across a repository
@@ -1838,6 +1840,19 @@ their linked sections use this remembered state:
    the remembered value is `true`, changing it to `false` weakens the pin
    and requires a person's approval under
    [Workflow pinning](#workflow-pinning).
+
+   Compare provenance build by build. A build is the set of artifacts that
+   share `os`, `arch`, `libc`, and `variant`, whatever their `format`, as
+   [Platform, format, and variant](#platform-format-and-variant) describes.
+   Skip a build the new release no longer offers. For each build in both
+   releases, count the distinct `provenance` URLs of each of its artifacts;
+   URLs change between releases, so compare counts. Sort each release's
+   counts for the build from largest to smallest and pair them in order
+   until the shorter list ends. The new release dropped provenance if any
+   of its counts is lower than the count it is paired with. For example,
+   if the last release gave a build's `tar.gz` and `zip` artifacts two URLs
+   each, a release that offers only the `tar.gz`, with two URLs, keeps
+   provenance, and one whose `zip` has one URL drops it.
 4. **Apply the minimum release age.** Measure any configured age from the
    log's integration time. Use `published_at` only for an unlogged bundle
    the consumer chose to accept.
