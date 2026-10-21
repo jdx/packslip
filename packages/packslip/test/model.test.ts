@@ -150,6 +150,14 @@ describe('checkStatement accepts', () => {
       }),
     ],
     ['an empty libs list', edited((s) => (s.predicate.artifacts[0].requires = { libs: [] }))],
+    // A valid minimum that cannot be compared leaves the check unknown.
+    ['a minimum that cannot be compared', edited((s) => (s.predicate.artifacts[0].requires = { bin: [{ name: 'java', min: '17-ea' }] }))],
+    // A vendor must write these in the minimum grammar, but a consumer does
+    // not refuse a document whose glibc_min or os_min breaks it.
+    [
+      'a glibc_min and an os_min outside the minimum grammar',
+      edited((s) => (s.predicate.artifacts[0].requires = { os_min: 'v12', glibc_min: 'glibc-2.31' })),
+    ],
     [
       'a Windows bin name that canonicalizes',
       edited((s) => (s.predicate.artifacts[0].bin = ['bin/tool.exe', { path: 'tool-x64.exe', name: 'tool.exe' }])),
@@ -419,6 +427,7 @@ describe('checkStatement rejects', () => {
       edited((s) => (s.predicate.artifacts[0].requires = { bin: [{ name: 'java', min: 'v17' }] })),
       /with minimum "v17"/,
     ],
+    ['an empty minimum', edited((s) => (s.predicate.artifacts[0].requires = { bin: [{ name: 'java', min: '' }] })), /with minimum ""/],
     [
       'a command twice',
       edited((s) => (s.predicate.artifacts[0].requires = { bin: [{ name: 'java' }, { name: 'java', min: '17' }] })),

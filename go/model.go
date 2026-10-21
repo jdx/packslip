@@ -116,6 +116,28 @@ type RequiredBin struct {
 	Name string `json:"name"`
 	Min  string `json:"min,omitempty"`
 }
+
+// UnmarshalJSON refuses an explicit empty min. An empty Min means the entry
+// has none, so Validate cannot tell "min": "" from an absent min, but the
+// specification makes a document with an empty min invalid.
+func (b *RequiredBin) UnmarshalJSON(v []byte) error {
+	var x struct {
+		Name string  `json:"name"`
+		Min  *string `json:"min"`
+	}
+	if err := json.Unmarshal(v, &x); err != nil {
+		return err
+	}
+	if x.Min != nil && *x.Min == "" {
+		return fmt.Errorf("packslip: required bin %q has an empty min", x.Name)
+	}
+	*b = RequiredBin{Name: x.Name}
+	if x.Min != nil {
+		b.Min = *x.Min
+	}
+	return nil
+}
+
 type Resource struct {
 	Kind       string                     `json:"kind"`
 	Artifact   string                     `json:"artifact,omitempty"`

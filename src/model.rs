@@ -855,9 +855,13 @@ pub struct RequiredBin {
     /// The name as the executable invokes it, bare: `java`, `python3`,
     /// `git`. No directory and no `.exe`.
     pub name: String,
-    /// The lowest version that works, compared numerically by dot-separated
-    /// components with missing components padded with zero: `17` means
-    /// 17.0.0 and later, including 21. Unrecognized spellings are unchecked.
+    /// The lowest version that works: an ASCII digit followed by ASCII
+    /// letters, digits, `.`, `-`, and `+`, such as `17` or `3.12`. A
+    /// document with any other spelling is invalid. Compared numerically by
+    /// dot-separated components with missing components padded with zero:
+    /// `17` means 17.0.0 and later, including 21. A valid minimum that is
+    /// not dot-separated numbers, such as `17-ea`, cannot be compared, so
+    /// the check is unknown and consumers warn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min: Option<String>,
 }

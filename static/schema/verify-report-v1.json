@@ -42,7 +42,7 @@
       "description": "A command an executable needs on PATH.",
       "properties": {
         "min": {
-          "description": "The lowest version that works, compared numerically by dot-separated\ncomponents with missing components padded with zero: `17` means\n17.0.0 and later, including 21. Unrecognized spellings are unchecked.",
+          "description": "The lowest version that works: an ASCII digit followed by ASCII\nletters, digits, `.`, `-`, and `+`, such as `17` or `3.12`. A\ndocument with any other spelling is invalid. Compared numerically by\ndot-separated components with missing components padded with zero:\n`17` means 17.0.0 and later, including 21. A valid minimum that is\nnot dot-separated numbers, such as `17-ea`, cannot be compared, so\nthe check is unknown and consumers warn.",
           "type": [
             "string",
             "null"

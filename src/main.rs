@@ -853,6 +853,17 @@ fn parse_require(spec: &str) -> Result<RequiredBin> {
     })
 }
 
+/// A requirement minimum as the specification spells one: an ASCII digit,
+/// then ASCII letters, digits, `.`, `-`, and `+`. The library's validation
+/// holds `requires.bin[].min` to the same grammar.
+#[cfg(all(feature = "create", feature = "manifest"))]
+fn valid_minimum(value: &str) -> bool {
+    value.as_bytes().first().is_some_and(u8::is_ascii_digit)
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'+'))
+}
+
 /// `KIND` or `KIND=DETAIL`.
 #[cfg(all(feature = "create", feature = "manifest"))]
 fn parse_evidence(spec: &str) -> Evidence {
@@ -1051,6 +1062,28 @@ impl RunWith<BinInfo> for Create {
         }
         if artifacts.is_empty() {
             bail!("no artifacts: give files on the command line or list them in the manifest");
+        }
+        // Validation leaves a malformed os_min or glibc_min to the consumer
+        // as an unknown check, since packslips published before create
+        // checked them may carry one, but a new document holds both to the
+        // grammar of requires.bin[].min.
+        for artifact in &artifacts {
+            let Some(requires) = &artifact.requires else {
+                continue;
+            };
+            for (field, value) in [
+                ("os_min", &requires.os_min),
+                ("glibc_min", &requires.glibc_min),
+            ] {
+                if let Some(value) = value
+                    && !valid_minimum(value)
+                {
+                    bail!(
+                        "artifact {:?} requires {field} {value:?}; a minimum starts with a digit and holds only letters, digits, ., -, and +, as in 2.31 or 10.0.17763",
+                        file_name_of(artifact.path)
+                    );
+                }
+            }
         }
         for name in provenance.keys() {
             if !artifacts.iter().any(|a| file_name_of(a.path) == name) {
