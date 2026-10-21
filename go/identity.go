@@ -2,7 +2,6 @@ package packslip
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -123,12 +122,9 @@ func IdentityFromToken(token string) (Identity, error) {
 	return Identity{Scheme: "sigstore-oidc", KeyID: keyID, Issuer: claims.Issuer}, nil
 }
 
-// tokenClient bounds the whole token request, including reading the body, and
-// speaks HTTP/1.1 only: GitHub's token endpoint can reject HTTP/2 with
-// HTTP_1_1_REQUIRED, which Go does not retry on its own.
+// tokenClient bounds the whole token request, including reading the body.
+// It keeps Go's default HTTP/2 negotiation: forcing HTTP/1.1 makes GitHub's
+// token endpoint close the connection (EOF) on hosted runners.
 func tokenClient() *http.Client {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.ForceAttemptHTTP2 = false
-	transport.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
-	return &http.Client{Timeout: 30 * time.Second, Transport: transport}
+	return &http.Client{Timeout: 30 * time.Second}
 }
