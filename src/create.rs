@@ -4,15 +4,18 @@
 use std::path::Path;
 
 use crate::model::{
-    Artifact, Attestor, Bin, Digest, Envelope, Evidence, Extensions, Identity, PREDICATE_TYPE,
-    Predicate, RELEASES_PREDICATE_TYPE, ReleaseList, ReleaseListStatement, ReleaseRef, RequiredBin,
-    Requires, Resource, STATEMENT_TYPE, Source, Statement, Subject,
+    Artifact, Attestor, Bin, Digest, Envelope, Evidence, Extensions, Identity, InvalidDocument,
+    PREDICATE_TYPE, Predicate, RELEASES_PREDICATE_TYPE, ReleaseList, ReleaseListStatement,
+    ReleaseRef, RequiredBin, Requires, Resource, STATEMENT_TYPE, Source, Statement, Subject,
 };
 
 /// What `create` needs.
 pub struct Request<'a> {
     pub project: &'a str,
     pub version: &'a str,
+    /// RFC 3339, with any offset; the statement records the same instant in
+    /// UTC. Defaults to now. An instant before year 0 in UTC is refused as
+    /// [`InvalidDocument::Timestamp`], because RFC 3339 cannot write it.
     pub published_at: Option<&'a str>,
     pub source: Option<Source>,
     pub artifacts: Vec<ArtifactInput<'a>>,
@@ -393,6 +396,24 @@ fn windows_exe(value: &str) -> String {
     }
 }
 
+/// The instant `text` names, to be written in UTC with `Z` as publishers
+/// write every timestamp. Any spelling the validator reads is accepted,
+/// such as an offset of `+02:00`. An instant before year 0 is refused
+/// because RFC 3339 cannot spell it in UTC.
+fn utc_timestamp(field: &'static str, text: &str) -> Result<jiff::Timestamp, InvalidDocument> {
+    // 0000-01-01T00:00:00Z. Compare whole instants: before the epoch the
+    // fraction carries the sign, so `as_second` alone would let through an
+    // instant a fraction of a second before year 0.
+    const YEAR_ZERO: jiff::Timestamp = jiff::Timestamp::constant(-62_167_219_200, 0);
+    text.parse::<jiff::Timestamp>()
+        .ok()
+        .filter(|timestamp| *timestamp >= YEAR_ZERO)
+        .ok_or_else(|| InvalidDocument::Timestamp {
+            field,
+            value: text.to_string(),
+        })
+}
+
 /// Build and validate the release statement.
 pub fn create(request: &Request<'_>) -> Result<Created, Error> {
     let file_name = |path: &Path| {
@@ -683,10 +704,11 @@ pub fn create(request: &Request<'_>) -> Result<Created, Error> {
             resource
         })
         .collect();
-    let published_at = request
-        .published_at
-        .map(str::to_string)
-        .unwrap_or_else(|| jiff::Timestamp::now().to_string());
+    let published_at = match request.published_at {
+        Some(text) => utc_timestamp("published_at", text)?,
+        None => jiff::Timestamp::now(),
+    }
+    .to_string();
     let statement = Statement {
         kind: STATEMENT_TYPE.into(),
         subject,
@@ -729,6 +751,9 @@ pub struct ListedRelease<'a> {
 /// What `create_release_list` needs.
 pub struct ListRequest<'a> {
     pub project: &'a str,
+    /// RFC 3339, with any offset; the list records the same instant in UTC.
+    /// Defaults to now. As with [`Request::published_at`], an instant before
+    /// year 0 in UTC is refused, here and in each listed packslip.
     pub generated_at: Option<&'a str>,
     /// How long the list stays current.
     pub valid_for: std::time::Duration,
@@ -749,13 +774,8 @@ pub struct CreatedList {
 /// Build and validate the release list from released bundles. The bundles
 /// are read, not verified: the list's signer vouches for them.
 pub fn create_release_list(request: &ListRequest<'_>) -> Result<CreatedList, Error> {
-    let generated: jiff::Timestamp = match request.generated_at {
-        Some(text) => text.parse().map_err(|_| {
-            Error::Invalid(crate::model::InvalidDocument::Timestamp {
-                field: "generated_at",
-                value: text.to_string(),
-            })
-        })?,
+    let generated = match request.generated_at {
+        Some(text) => utc_timestamp("generated_at", text)?,
         None => jiff::Timestamp::now(),
     };
     let expires = generated
@@ -795,6 +815,13 @@ pub fn create_release_list(request: &ListRequest<'_>) -> Result<CreatedList, Err
                 ),
             });
         }
+        // The packslip's instant, written in UTC even when the packslip
+        // gave it with another offset.
+        let published_at = utc_timestamp("published_at", &statement.predicate.published_at)
+            .map_err(|e| Error::NotAPackslip {
+                path: listed.bundle_path.display().to_string(),
+                why: e.to_string(),
+            })?;
         subject.push(Subject {
             name: listed.url.to_string(),
             digest: Digest {
@@ -805,7 +832,7 @@ pub fn create_release_list(request: &ListRequest<'_>) -> Result<CreatedList, Err
         releases.push(ReleaseRef {
             version: statement.predicate.version,
             tag: statement.predicate.source.and_then(|s| s.tag),
-            published_at: statement.predicate.published_at,
+            published_at: published_at.to_string(),
             packslip: listed.url.to_string(),
             status: listed
                 .yanked
@@ -1917,5 +1944,108 @@ mod tests {
         create_release_list(&request("github.com/JDX/HK")).unwrap();
         let err = create_release_list(&request("github.com/jdx/hk/HK")).unwrap_err();
         assert!(err.to_string().contains("the list is for"), "{err}");
+    }
+
+    #[test]
+    fn timestamps_are_written_in_utc() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("tool-v1.0.0-linux-x64.tar.xz");
+        std::fs::write(&a, b"linux bytes").unwrap();
+        let key = SecretKey::from_seed([1u8; 32]);
+        let request = |published_at: Option<&'static str>| Request {
+            published_at,
+            artifacts: vec![ArtifactInput::new(&a)],
+            ..Request::new("tool.example.com", "1.0.0", key_identity(&key))
+        };
+        // An offset, and a spelling outside RFC 3339 that the validator
+        // reads, become the same instant in UTC.
+        for given in [
+            "2026-09-01T12:00:00Z",
+            "2026-09-01T14:00:00+02:00",
+            "20260901T120000Z",
+        ] {
+            let created = create(&request(Some(given))).unwrap();
+            assert_eq!(
+                created.statement.predicate.published_at, "2026-09-01T12:00:00Z",
+                "{given}"
+            );
+        }
+        let now = create(&request(None)).unwrap();
+        let now = now.statement.predicate.published_at;
+        assert!(now.ends_with('Z'), "{now}");
+        // Year 0 itself is the earliest instant RFC 3339 can spell in UTC.
+        let created = create(&request(Some("0000-01-01T01:00:00+01:00"))).unwrap();
+        assert_eq!(
+            created.statement.predicate.published_at,
+            "0000-01-01T00:00:00Z"
+        );
+        // Text that names no instant, and an instant RFC 3339 cannot spell
+        // in UTC, even by a fraction of a second.
+        for given in [
+            "yesterday",
+            "2026-09-01T12:00:00",
+            "0000-01-01T00:00:00+01:00",
+            "0000-01-01T00:59:59.5+01:00",
+        ] {
+            let err = create(&request(Some(given))).unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    Error::Invalid(InvalidDocument::Timestamp {
+                        field: "published_at",
+                        ..
+                    })
+                ),
+                "{given}: {err}"
+            );
+        }
+
+        // A list writes its own times, and each packslip's, in UTC, even
+        // for a packslip written with an offset.
+        let mut offset = create(&request(None)).unwrap().statement;
+        offset.predicate.published_at = "2026-09-01T14:00:00+02:00".into();
+        let bundle = crate::sigstore::sign(
+            Signer::Key {
+                key: key.clone(),
+                log: false,
+            },
+            &offset.canonical_bytes(),
+        )
+        .unwrap();
+        let bundle_path = dir.path().join("packslip.sigstore.json");
+        std::fs::write(&bundle_path, &bundle).unwrap();
+        let list = |generated_at| {
+            create_release_list(&ListRequest {
+                project: "tool.example.com",
+                generated_at,
+                valid_for: std::time::Duration::from_secs(86_400),
+                sequence: 1,
+                latest: None,
+                releases: vec![ListedRelease {
+                    url: "https://dl.example.com/1.0.0/packslip.sigstore.json",
+                    bundle_path: &bundle_path,
+                    yanked: None,
+                    security: false,
+                    evidence: vec![],
+                }],
+                identity: key_identity(&key),
+            })
+        };
+        let created = list(Some("2026-09-02T09:00:00+09:00")).unwrap();
+        let p = &created.statement.predicate;
+        assert_eq!(p.generated_at, "2026-09-02T00:00:00Z");
+        assert_eq!(p.expires_at, "2026-09-03T00:00:00Z");
+        assert_eq!(p.releases[0].published_at, "2026-09-01T12:00:00Z");
+        let err = list(Some("tomorrow")).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::Invalid(InvalidDocument::Timestamp {
+                    field: "generated_at",
+                    ..
+                })
+            ),
+            "{err}"
+        );
     }
 }

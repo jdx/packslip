@@ -148,3 +148,30 @@ func TestValidateRejectsObjectBinWithoutName(t *testing.T) {
 		t.Fatal("accepted object-form bin without a name")
 	}
 }
+
+func TestCanonicalJSONWritesPublishedAtInUTC(t *testing.T) {
+	cest := time.FixedZone("CEST", 2*60*60)
+	statement := Statement{Type: StatementType, PredicateType: ReleasePredicateType,
+		Subject: []Subject{{Name: "tool", Digest: Digest{SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}},
+		Predicate: Predicate{Project: "github.com/example/tool", Version: "0.1.0", PublishedAt: time.Date(2026, 9, 1, 14, 0, 0, 0, cest),
+			Artifacts: []Artifact{{Name: "tool", Size: 1, Format: "raw", Bin: []Bin{NewBin("tool")}}},
+			Identity:  Identity{Scheme: "sigstore-key", KeyID: "AABB"}}}
+	encoded, err := statement.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Predicate struct {
+			PublishedAt string `json:"published_at"`
+		} `json:"predicate"`
+	}
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := decoded.Predicate.PublishedAt, "2026-09-01T12:00:00Z"; got != want {
+		t.Fatalf("published_at = %s, want %s", got, want)
+	}
+	if statement.Predicate.PublishedAt.Location() != cest {
+		t.Fatal("CanonicalJSON changed the caller's statement")
+	}
+}

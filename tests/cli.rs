@@ -2327,3 +2327,48 @@ fn static_builds_and_unnamed_architectures() {
     assert_eq!(code, 0, "{err}");
     assert_eq!(platform(&show()[0]), [s("linux"), s("aarch64"), None]);
 }
+
+#[test]
+fn create_writes_published_at_in_utc() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let (code, _, err) = packslip(d, &["keygen", "-o", "release.key"]);
+    assert_eq!(code, 0, "{err}");
+    std::fs::write(d.join("tool-v1.0.0.bin"), b"x").unwrap();
+    let create = |published_at: &str| {
+        packslip(
+            d,
+            &[
+                "create",
+                "--project",
+                "tool.example.com",
+                "--version",
+                "1.0.0",
+                "--key",
+                "release.key",
+                "--no-log",
+                "--out",
+                "dist",
+                "--published-at",
+                published_at,
+                "--format",
+                "tool-v1.0.0.bin=raw",
+                "tool-v1.0.0.bin:linux/x86_64",
+            ],
+        )
+    };
+    // An offset is written as the same instant in UTC.
+    let (code, _, err) = create("2026-09-01T14:00:00+02:00");
+    assert_eq!(code, 0, "{err}");
+    let (code, out, err) = packslip(d, &["show", "dist/packslip.sigstore.json"]);
+    assert_eq!(code, 0, "{err}");
+    let doc: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(doc["predicate"]["published_at"], "2026-09-01T12:00:00Z");
+    // Text that names no instant is refused.
+    let (code, _, err) = create("2026-09-01 2pm");
+    assert_ne!(code, 0);
+    assert!(
+        err.contains(r#"published_at must be RFC 3339, got "2026-09-01 2pm""#),
+        "{err}"
+    );
+}

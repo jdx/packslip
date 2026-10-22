@@ -64,6 +64,8 @@ The TOML manifest and more examples: https://packslip.dev/docs/describing-releas
 
 ## Release metadata
 - **`--published-at <PUBLISHED_AT>`** — RFC 3339 publish time; defaults to now
+
+  The packslip records it in UTC: 2026-09-01T14:00:00+02:00 is written as 2026-09-01T12:00:00Z.
 - **`--notes-url <NOTES_URL>`** — URL of the release notes
 - **`--extension <EXTENSION>`** — Release-level extension as NAME=JSON, where NAME is who defines it (a consumer such as mise, or a domain the vendor controls) and JSON is its value. Example: 'example.com={"build_id":"20260901.3"}' (repeatable)
 

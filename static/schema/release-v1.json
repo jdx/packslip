@@ -238,7 +238,7 @@
           "type": "string"
         },
         "published_at": {
-          "description": "RFC 3339 UTC.",
+          "description": "RFC 3339. Publishers write UTC with `Z`; consumers accept any offset.",
           "format": "date-time",
           "type": "string"
         },

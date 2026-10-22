@@ -592,6 +592,9 @@ struct Create {
     #[usage(long, help_heading = "Source")]
     tag: Option<String>,
     /// RFC 3339 publish time; defaults to now
+    ///
+    /// The packslip records it in UTC: 2026-09-01T14:00:00+02:00 is written
+    /// as 2026-09-01T12:00:00Z.
     #[usage(long, help_heading = "Release metadata")]
     published_at: Option<String>,
     /// URL of the release notes

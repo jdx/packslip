@@ -463,10 +463,14 @@ func commandName(v string) string {
 	}
 	return v
 }
+
+// CanonicalJSON validates the statement and encodes it as it is signed.
+// PublishedAt is written in UTC with Z, whatever its location.
 func (s Statement) CanonicalJSON() ([]byte, error) {
 	if err := s.Validate(); err != nil {
 		return nil, err
 	}
+	s.Predicate.PublishedAt = s.Predicate.PublishedAt.UTC()
 	return json.Marshal(s)
 }
 func EqualDigests(data []byte) Digest {
