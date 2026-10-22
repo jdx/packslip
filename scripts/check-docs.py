@@ -131,9 +131,12 @@ def check_links(site):
     required = ["index.html", "release/v1/index.html", "releases/v1/index.html",
                 "docs/index.html", "cli/index.html"]
     required += [f"docs/{name}/index.html" for name in (
-        "release-workflow", "getting-started", "describing-releases", "resources", "host-requirements",
-        "recipes", "publishing", "verifying", "installers", "release-lists", "self-hosting", "mise", "verify-js", "verify-script", "libraries",
-        "actions",
+        "release-workflow", "install", "getting-started", "trust", "comparison",
+        "publishing", "other-ci", "describing-releases", "resources", "host-requirements", "recipes",
+        "release-lists", "self-hosting", "move-to-domain", "go",
+        "bootstrap", "verifying", "verify-script", "mise",
+        "installers", "rust", "verify-js", "libraries", "distributions", "compatibility",
+        "actions", "release-toml", "glossary", "who-is-using-packslip",
     )]
     errors = [f"missing page: {name}" for name in required if not (site / name).is_file()]
     legacy, legacy_errors = check_legacy_anchors(site, pages)

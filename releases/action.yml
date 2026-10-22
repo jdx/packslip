@@ -53,8 +53,9 @@ inputs:
     description: >
       Recommend this exact listed version for unconstrained latest
       requests. Give the version, such as 1.2.3, not the tag that yank and
-      security take. Empty leaves consumers to take the highest eligible
-      version.
+      security take. Empty leaves consumers to take GitHub's latest
+      release for a GitHub project, and the highest eligible version for
+      any other.
     required: false
     default: ""
   yank:

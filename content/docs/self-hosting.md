@@ -1,48 +1,29 @@
 ---
 title: Host releases on your own domain
-weight: 45
+description: Publish a domain project's releases and signed release list on a host you run, from GitHub Actions, with Cloudflare R2 as the example.
 group: publish
-description: Publish signed releases on your own domain from GitHub Actions and maintain the release list consumers use to discover them.
+weight: 44
 ---
 # Host releases on your own domain
 
-Use your own domain as the project name, such as `mytool.example.com`,
-when consumers should discover releases through your host. Publish a
-signed release list at its well-known URL, then point each list entry to
-a release bundle. Artifacts and bundles can be served elsewhere; this
-guide puts them all on the same host.
+For publishers who name a tool after a domain, such as `mytool.example.com`, and sign it on GitHub Actions: at the end, your host serves each release's files and bundle, and a workflow keeps the signed release list current.
+If the tool is already published as `github.com/owner/mytool`, set up hosting here, then follow [Move a GitHub project to your domain](/docs/move-to-domain/) before switching consumers.
 
-The release workflow still signs as your GitHub repository. Consumers
-need an explicit pin for that identity, because the domain name does not
-imply a signer.
-
-The setup has four parts:
-
-1. [Lay out and serve the files](#lay-out-the-host).
-2. [Publish the repository's signing identity](#sign-as-the-repository).
-3. [Upload each release's files and signed bundle](#publish-a-release).
-4. [Publish and refresh the signed list](#build-and-publish-the-list).
-
-If you already publish as `github.com/owner/repo`, follow
-[Move a GitHub project](#move-a-github-project) before switching consumers
-to the domain name.
+Name the project after your domain when consumers should discover its releases through your host. They then find releases only through a signed release list on that host, and refuse the project without one ([Manage release lists](/docs/release-lists/) explains lists). Artifacts and bundles can be served from another host than the list; the examples use one host.
 
 ## Before you start
 
-The workflow examples use a Cloudflare R2 bucket named `releases`, with
-the `mytool/` prefix served at `https://mytool.example.com/`. Any host
-that serves files over HTTPS can use the same layout.
+If you release from another CI system or sign with a key, follow [Publish from other CI](/docs/other-ci/) and [Manage release lists](/docs/release-lists/) instead. To serve a `github.com/owner/mytool` project's files from your host without renaming it, see [Publish outside GitHub releases](/docs/publishing/#publish-outside-github-releases).
 
-For the R2 examples, provide an AWS CLI on the runner, replace `<account>`
-in its endpoint, and configure the `R2_ACCESS_KEY_ID` and
-`R2_SECRET_ACCESS_KEY` repository secrets with access to that bucket.
-Your existing release job builds the final archives and creates the
-GitHub release; these examples add publishing and discovery metadata.
+You need:
+
+- A host that serves files over HTTPS. The examples use a Cloudflare R2 bucket named `releases`; the Worker in [Serve the files](#serve-the-files) serves its `mytool/` prefix at `https://mytool.example.com/`. On another host, keep the layout and swap the `aws s3` commands for its upload tool.
+- For R2, the AWS CLI on the runner and repository secrets `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` with access to the bucket. Replace `<account>` in `https://<account>.r2.cloudflarestorage.com` with your account ID.
+- A release job that builds the final archives and creates the GitHub release.
 
 ## Lay out the host
 
-Use one directory per release, named by its tag, and the well-known path
-for the list:
+Use one directory per release, named by its tag, and serve the list at the well-known path:
 
 ```text
 https://mytool.example.com/v1.2.3/mytool-1.2.3-linux-x64.tar.gz   an artifact
@@ -51,99 +32,84 @@ https://mytool.example.com/v1.2.3/packslip.sigstore.json         the release bun
 https://mytool.example.com/.well-known/packslip.json             the release list
 ```
 
-A project with a path, `example.com/tools/mytool`, serves its list at
-`https://example.com/.well-known/packslip/tools/mytool.json` instead; see
-[Manage release lists](/docs/release-lists/#where-consumers-look-for-the-list).
+Each artifact goes at the URL its statement records, with the bundle beside it. A project with a path, such as `example.com/tools/mytool`, serves its list at `/.well-known/packslip/<path>.json`; see the table in [Decide whether you need a list](/docs/release-lists/#decide-whether-you-need-a-list).
 
 ## Serve the files
 
-A static site host can serve the release directories and the list like
-any other files. Serve the list as `application/json` at
-`/.well-known/packslip.json`, or `/.well-known/packslip/<path>.json` for a
-project with a path. Check that the host includes `.well-known`, because
-some site generators and hosts skip dot-directories.
+A static site host can serve these files like any others, provided that:
 
-The release directories never change once published: a consumer pins the
-digest of every file it downloads, so serve them with a long, immutable
-cache lifetime. The list changes with every release and refresh, so give it
-a short one, five minutes or so.
+- The list is served as `application/json`.
+- `.well-known` is published; some site generators and hosts skip dot-directories.
+- Release directories have a long, immutable cache lifetime: they never change, and consumers pin each file's digest.
+- The list's cache lifetime is about five minutes, since it changes with every release and refresh.
 
-On Cloudflare, one Worker can serve a documentation site as static
-assets, serve the releases from an R2 bucket on the same hostname, and
-count downloads. packslip.dev works this way. Its
-[configuration](https://github.com/jdx/packslip/blob/main/wrangler.jsonc)
-sends the release paths, `/v*` and `/.well-known/packslip.json`, to the
-Worker before the static assets with `run_worker_first`; with a 404 page
-configured, Cloudflare would otherwise answer a browser's request for them
-with that page. The
-[Worker](https://github.com/jdx/packslip/blob/main/cloudflare/worker.js)
-reads `<tool>/<tag>/<file>` from R2, the layout the upload steps in
-[Publish a release](#publish-a-release) write. It matches only tags that
-start with `v` and the bare-host list path, so adjust both patterns for
-other tags or for a project with a path.
+An R2 custom domain serves a bucket from its root, so serve the `mytool/` prefix at `https://mytool.example.com/` with a Worker that reads each path from it:
 
-## Sign as the repository
-
-Publish the OIDC issuer and identity prefix that consumers should pin.
-For GitHub Actions, the issuer is
-`https://token.actions.githubusercontent.com` and a prefix such as
-`https://github.com/owner/repo/` covers that repository's workflows.
-In mise, set both as tool or registry options:
-
-```toml
-[tools]
-"packslip:mytool.example.com" = { version = "latest", issuer = "https://token.actions.githubusercontent.com", identity_prefix = "https://github.com/owner/repo/" }
+```js
+// src/index.js
+export default {
+  async fetch(request, env) {
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      return new Response(null, { status: 405, headers: { allow: "GET, HEAD" } });
+    }
+    const key = "mytool" + new URL(request.url).pathname;
+    const object = request.method === "HEAD"
+      ? await env.RELEASES.head(key)
+      : await env.RELEASES.get(key);
+    if (object === null) {
+      return new Response("not found\n", { status: 404 });
+    }
+    const headers = new Headers();
+    object.writeHttpMetadata(headers);
+    headers.set("etag", object.httpEtag);
+    return new Response(object.body ?? null, { headers });
+  },
+};
 ```
 
-This is the repository workflow identity a `github.com/owner/repo`
-project implies, but an explicit prefix names the repository by its path
-rather than its stable repository ID. See
-[Use packslip with mise](/docs/mise/) for the consumer configuration.
+```jsonc
+// wrangler.jsonc
+{
+  "name": "mytool-releases",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-01",
+  "routes": [{ "pattern": "mytool.example.com", "custom_domain": true }],
+  "r2_buckets": [{ "binding": "RELEASES", "bucket_name": "releases" }]
+}
+```
 
-Because the prefix is a path, it does not follow a rename. Once the
-repository is renamed or moves to another owner, its workflows sign as the
-new name, and no prefix covers both names. Consumers holding the old
-prefix refuse the next list, which is signed under the new name, and with
-it the project. The list job pins the repository's current name, so it
-fails on every bundle signed under the old one.
+- `writeHttpMetadata` serves the content type and cache lifetime each upload step stores with the file.
+- `routes` attaches `mytool.example.com` to the Worker as a custom domain when you run `wrangler deploy`.
+- `r2_buckets` gives the Worker the `releases` bucket as `env.RELEASES`.
 
-Treat the rename as one change. Rename the repository, then describe each
-release you keep again from the renamed repository with the steps in
-[Move a GitHub project](#move-a-github-project); only the new bundle needs
-uploading, since the files are already on the host. Delete the other old
-bundles from the bucket. A new bundle replaces a file the host serves as
-immutable, so purge the old copy from every cache in front of the host: a
-cached old bundle fails the new list's digest. Then run the list workflow,
-and change the published pin (for mise, the registry entry) as soon as
-the new list is out, not before: a consumer holding the new prefix refuses
-the old list.
+The same Worker can count downloads and serve a site from static assets. For a site, list the release paths, such as `/v*` and `/.well-known/packslip.json`, in `run_worker_first`; otherwise, with a 404 page configured, Cloudflare answers a browser's request for them with that page.
 
-Every bundle a project publishes should come from one workflow file. A
-consumer remembers which workflow file signed the releases it accepted,
-and does not accept one signed by another until a person approves it. A
-second workflow that signs bundles, such as a separate backfill workflow,
-therefore looks like a change of signer. The list may be signed by a
-different file in the same repository; consumers check it against the
-pin, not against the bundles' signer.
+## Publish the signer
 
-A vendor that must sign releases from several files can ask consumers to
-hold it to the repository instead: `packslip create --no-pin-workflow`
-records `pin_workflow: false` in the release manifest. The action has no
-input for it, so such a project runs `packslip create` itself, as
-[Keep later releases acceptable](/docs/publishing/#keep-later-releases-acceptable)
-explains. Consumers that already accepted a release refuse the first one
-that declares it until a person approves it. Consumers written before the
-field existed ignore it, so they still refuse a release from another file
-until a person approves it; see
-[Workflow pinning](/release/v1/#workflow-pinning).
+The release workflow signs keylessly as your GitHub repository, but a domain name implies no signer. Publish the signer consumers should pin, for example on the install page:
+
+- OIDC issuer: `https://token.actions.githubusercontent.com`, for GitHub Actions.
+- Identity prefix: `https://github.com/owner/mytool/`, which matches that repository's workflows. It does not check which repository's run signed, so another repository that calls one of them as a reusable workflow, such as the list workflow below, matches too.
+- Signer fingerprint: the `ps1_…` value `packslip pin` prints.
+
+After the first release, download its bundle and fingerprint it:
+
+```sh
+curl -fsSLO https://mytool.example.com/v1.2.3/packslip.sigstore.json
+packslip pin packslip.sigstore.json \
+  --issuer https://token.actions.githubusercontent.com \
+  --identity-prefix https://github.com/owner/mytool/
+```
+
+Each consumer uses them differently; [What each consumer enforces](/docs/trust/#what-each-consumer-enforces) compares them:
+
+- `packslip verify`: `--issuer` with `--pin`, plus `--identity-prefix` to require your workflows.
+- mise: the `issuer` and `identity_prefix` tool options ([Use packslip with mise](/docs/mise/)).
+- `packslip install`: none needed. On first use it trusts the signer your host's list names, and remembers that workflow and your repository's ID. A later list or release signed in another repository, or by another workflow file, needs each user's approval. `--pin` with the fingerprint holds the project to your repository from the first install, on every run that passes it ([First use and signer fingerprints](/docs/trust/#first-use-and-signer-fingerprints)).
 
 ## Publish a release
 
-In the release job, name the project and where its files will be, upload
-the files, then run the action and upload the bundle it wrote. The action
-still attaches the bundle to the GitHub release unless `upload` is
-`false`. Consumers of `mytool.example.com` read the copy the list names;
-the attached copy is for people reading the GitHub release.
+In the release job, name the project and where its files will be, upload the files, run the action, then upload the bundle it wrote:
 
 ```yaml
 permissions:
@@ -182,34 +148,21 @@ steps:
         --content-type application/json --cache-control "public, max-age=31536000, immutable"
 ```
 
-Give the storage credentials only to the upload steps. The job still grants
-`contents: write` to every step, the action included. To keep the action
-away from that as well, split the job as
-[Keep the action away from release write access](/docs/publishing/#keep-the-action-away-from-release-write-access)
-shows.
+- `project`: the domain name.
+- `url-base`: this release's directory on your host. The statement records each artifact's and asset's URL under it.
+- `artifacts`, `bin`, and `resources`: as for any release; see [Publish with GitHub Actions](/docs/publishing/).
 
-A resource declared with `asset:` gets a URL under `url-base` like the
-artifacts do, so upload it with them. Upload the bundle last. The list job
-includes every bundle it finds in the bucket, so whichever run comes next,
-scheduled or not, lists the release once its bundle is there. Everything
-the bundle describes must be in place by then.
+The action uploads nothing to your host, so the upload steps copy the artifacts, resource assets, and bundle there. It still attaches the bundle to the GitHub release. A forge project that sets `url-base` keeps that upload, because consumers find its bundles on its GitHub releases. A domain project's consumers read the copy the list names, so the attached one serves only people reading the release; set `upload: false` to skip it.
+
+Give the storage credentials only to the upload steps. `contents: write` still reaches every step, the action included; to keep it from the action, split the job as [Keep the action away from release write access](/docs/publishing/#keep-the-action-away-from-release-write-access) shows.
+
+Upload the bundle last: the next list run, scheduled or not, lists every bundle in the bucket, so everything a bundle describes must be in place first.
 
 ## Build and publish the list
 
-The `jdx/packslip/releases` action turns a directory of published bundles,
-laid out as `<dir>/<tag>/packslip.sigstore.json`, into a signed list. It
-verifies every bundle under the pin first, refuses one for another project
-or in the wrong directory, and verifies the list it wrote.
+The `jdx/packslip/releases` action turns a directory of published bundles, laid out as `<dir>/<tag>/packslip.sigstore.json`, into a signed list. It verifies every bundle under this repository's identity prefix, `https://github.com/owner/mytool/`, and refuses one for another project or in the wrong tag directory. Then it builds, signs, and verifies the list. It always signs keylessly with the job's identity; to sign with a key, run `packslip releases --key` as [Create the list](/docs/release-lists/#create-the-list) shows.
 
-Put the list job in a workflow of its own, so the release workflow, a
-weekly schedule, a merged withdrawal, and a person can all run it.
-Withdrawals and security fixes live in two files committed to the
-repository, which every run reads from the default branch:
-`.github/mytool/yanked` holds one `TAG=REASON` line per withdrawn release,
-and `.github/mytool/security` holds one tag per line for each release that
-fixes a vulnerability. Blank lines and lines starting with `#` are
-ignored. Both files must exist, even when empty; see
-[Keep withdrawals in the repository](#keep-withdrawals-in-the-repository).
+Put the list job in its own workflow, so the release workflow, a weekly schedule, a merged withdrawal, and a person can all run it. A run the release workflow calls still signs as this file, so every list has the same signer ([Signer continuity and workflow pinning](/docs/trust/#signer-continuity-and-workflow-pinning)).
 
 ```yaml
 # .github/workflows/packslip-releases.yml
@@ -256,8 +209,6 @@ jobs:
           # The action takes entries only, so drop blank lines and comments.
           entries() {
             local file="withdrawals/.github/mytool/$1"
-            # A missing file fails the run instead of publishing a list
-            # that quietly restores every withdrawn release.
             [ -f "$file" ] || { echo "$file is missing" >&2; exit 1; }
             grep -Ev '^[[:space:]]*(#|$)' "$file" || [ $? -eq 1 ]
           }
@@ -297,39 +248,14 @@ jobs:
             --content-type application/json --cache-control "public, max-age=300"
 ```
 
-The list's sequence defaults to the current Unix time, which increases on
-its own with no counter to keep. Its validity defaults to 30 days.
-
-### Action inputs
-
-| Input | Purpose and default |
-| --- | --- |
-| `project` | Required. The project's name, as its bundles spell it. |
-| `dir` | Required. A directory of bundles as `<dir>/<tag>/<bundle>`. |
-| `url-base` | Required. Where the bundles are served, without the tag: `https://<host>`. |
-| `bundle` | The bundle file name in every tag directory; defaults to `packslip.sigstore.json`. |
-| `sequence` | An integer that increases with every list; defaults to the current Unix time. Once consumers have accepted a list with the default, they refuse a smaller hand-picked number as a rollback. |
-| `valid-for` | How long the list stays current, as a number and unit (`30d`, `12h`, `2w`); defaults to `30d`. |
-| `latest` | Recommend this exact listed version, such as `1.2.3`: a version, not a tag as `yank` and `security` take. Empty leaves consumers to take the highest eligible version. |
-| `yank` | Releases to withdraw, one per line, as `TAG=REASON` or `URL=REASON`. Applies to this run's list only; see [Keep withdrawals in the repository](#keep-withdrawals-in-the-repository). |
-| `security` | Releases that fix a vulnerability, one tag or URL per line. Applies to this run's list only; see [Keep withdrawals in the repository](#keep-withdrawals-in-the-repository). |
-| `identity-prefix`, `identity`, `issuer` | The pin the bundles and the list must verify under; default to this repository's workflows through GitHub's issuer. `identity` is one certificate identity, ref included, with a GitHub or GitLab repository name matching in any case; GitHub identities name the ref the workflow ran on, so bundles signed on different tags never share one. Most projects want `identity-prefix`. |
-| `allow-other-repository` | `true` accepts bundles that match the pin but were signed from a repository other than the one a `github.com` or `gitlab.com` project names, such as an owner's shared build repository; defaults to `false`. The action already does this when `project` names a repository other than the one running it, as a registry's list does. |
-| `out` | Where to write the list; defaults to `packslip-releases.sigstore.json`. |
-| `packslip-version`, `packslip-sha256`, `packslip-path`, `token` | As for the [release action](/docs/publishing/#action-inputs). |
-
-Outputs: `list`, the path written, and `count`, how many releases it names.
-The action signs keylessly with the job's identity; a project whose
-consumers pin a key runs [`packslip releases`](/docs/release-lists/#create-the-list)
-with `--key` instead.
+- A missing withdrawal file fails the run; an empty one passes no entries.
+- The fetch step copies only the bundles from the bucket.
+- The action's sequence defaults to the current Unix time and its validity to 30 days; see [Choose a sequence](/docs/release-lists/#choose-a-sequence).
+- [Release list action](/docs/actions/#release-list-action) lists every input and output.
 
 ## Keep the list current
 
-A consumer refuses an expired list, and for a project on its own domain
-that means refusing the project. The workflow above runs every week, when
-a change to the withdrawal files merges, and whenever a person dispatches
-it. Also call it from the release workflow once the bundle is uploaded,
-passing only the two storage secrets the list workflow declares:
+Call the workflow from the release workflow too, once the bundle is uploaded, passing only the two storage secrets it declares:
 
 ```yaml
 jobs:
@@ -345,99 +271,39 @@ jobs:
       id-token: write  # Sign the list.
 ```
 
-A weekly run against a 30-day validity leaves room for a few failed runs.
-The concurrency group allows one run at a time. Run order is not guaranteed,
-and a new pending run cancels the existing pending run.
+A weekly run against a 30-day validity leaves room for a few failed runs. Keep the schedule running: consumers refuse an expired list, and with it the project; see the warning in [Decide whether you need a list](/docs/release-lists/#decide-whether-you-need-a-list).
+
+The concurrency group allows one list run at a time. Run order is not guaranteed, and a new pending run cancels the existing pending run. Every run lists every bundle in the bucket, so a cancelled run loses nothing.
 
 ### Keep withdrawals in the repository
 
-Every run builds the list from scratch, from that run's `yank` and
-`security` inputs alone. A withdrawal given to one run, as a
-`workflow_dispatch` input for instance, is missing from the next scheduled
-or post-release list, and consumers are offered the withdrawn release
-again. That is why the workflow reads both from committed files on every
-run.
+Every run builds the list from scratch, with the withdrawals and security fixes in `.github/mytool/yanked` and `.github/mytool/security` on the default branch. To change them, edit the files as [Keep withdrawals in the repository](/docs/release-lists/#keep-withdrawals-in-the-repository) shows and merge; the `push` trigger publishes the new list. Keep the bundle of every release these files name in the bucket, because each entry must name a release in `dir`.
 
-To withdraw `v1.2.3`, add this line to `.github/mytool/yanked` and merge:
+## Rename the repository
 
-```text
-v1.2.3=Incorrect Linux archive
-```
+After a rename or transfer, the repository's workflows sign as the new name, which the old identity prefix, such as `https://github.com/owner/old-mytool/`, does not cover. Consumers holding the old prefix refuse the next list, and so the project. The list job pins the current name, so it fails on every bundle signed under the old one. A change of letter case alone is not a rename: GitHub names match in any case. Users who already installed the tool with `packslip install` approve two trust changes, one for the list and one for the next release. Each takes the `--accept-trust-change` value install prints for it ([Release lists are pinned separately](/docs/trust/#release-lists-are-pinned-separately)).
 
-The `push` trigger publishes a new list with that release marked `yanked`.
-It stays withdrawn on later runs until you remove its line. To mark a
-security fix, add the release tag to `.github/mytool/security`; put any
-explanation in a `#` comment above it.
+Treat the rename as one change. To move `owner/old-mytool` to `owner/mytool`:
 
-Keep a withdrawn release's bundle in the bucket. If `yank` names a tag
-that `dir` does not hold, the run fails with
-`is not among the --release entries`.
-
-The files must exist, even when empty. A missing file fails the run, so a
-rename or deletion cannot publish a list that silently restores every
-withdrawn release.
-[packslip.dev's own workflow](https://github.com/jdx/packslip/blob/main/.github/workflows/packslip-releases.yml)
-does this, and its
-[procedure](https://github.com/jdx/packslip/blob/main/RELEASING.md#withdraw-a-release-or-mark-a-security-fix)
-is a worked example.
-
-## Move a GitHub project
-
-A release bundle names one project, so bundles published as
-`github.com/owner/repo` cannot go in `mytool.example.com`'s list, and
-the releases action refuses to build an empty list. Before switching
-consumers over, describe at least the current release again under the
-new name. Do it from the workflow file that signs new releases, as
-[Sign as the repository](#sign-as-the-repository) explains, in a
-manually dispatched job with `contents: read` and `id-token: write`:
-
-1. Download the release's files from GitHub into `dist/`, and delete any
-   `packslip*.sigstore.json` among them: it names the old project, and an
-   `artifacts` glob such as `dist/*` would take it for an artifact.
-2. Run `jdx/packslip@v1` with the release job's `artifacts`, `bin`, and
-   `resources`, reading the files from `dist/`, and with:
-   - `project: mytool.example.com`
-   - the release's `tag`, and its `url-base`, such as
-     `https://mytool.example.com/v1.2.3`
-   - `version`, only if the tag is not `v` followed by the version
-   - `commit`, set to the tag's full commit SHA, since the default is the
-     commit the dispatch ran on
-   - `attest: link`
-   - `upload: false`. Without it, the action tries to attach the new
-     bundle to the GitHub release. With `contents: read` that step fails;
-     with write access it would replace the original
-     `packslip.sigstore.json`, since both bundles have that name.
-3. Upload the files and then the new bundle to the release's tag
-   directory, `s3://releases/mytool/<tag>/`, with the commands from
-   [Publish a release](#publish-a-release). In a dispatched job
-   `GITHUB_REF_NAME` is the branch, so pass the tag instead. Then run the
-   list workflow.
-
-The new bundle is logged when you sign it, so a consumer that enforces a
-minimum release age treats the release as new until that age has passed.
-
-The bundle attached to each existing GitHub release keeps naming the old
-project and stays valid for anyone reading it there. New releases attach
-bundles for `mytool.example.com`, so a consumer still asking for
-`github.com/owner/repo` keeps what it installed but cannot install any
-release published after the move: those releases' bundles name
-`mytool.example.com`. Consumers rename the tool they ask for, from
-`packslip:github.com/owner/repo` to `packslip:mytool.example.com` in
-mise, and pin the identity as
-[Sign as the repository](#sign-as-the-repository) shows. To them the new
-name is a new project with no signer history.
+1. Rename the repository.
+2. Describe each release you keep again from the renamed repository, with the job in [Describe a release under the new name](/docs/move-to-domain/#describe-a-release-under-the-new-name), changed in three places:
+   - Download the files from the bucket, not the GitHub release, with `aws s3 cp "s3://releases/mytool/${TAG}/" dist/ --recursive` and the storage credentials in the step's environment.
+   - Verify the original bundle with `--issuer https://token.actions.githubusercontent.com --identity-prefix https://github.com/owner/old-mytool/`: its domain name implies no policy, and it was signed under the old name.
+   - Upload only the new bundle; drop the `aws s3 cp dist/` command, since the files are already on the host.
+3. Delete from the bucket the bundles of releases you did not describe again. Remove any line naming one of them from `.github/mytool/yanked` and `.github/mytool/security`, or the list run fails.
+4. Purge the old bundles from every cache in front of the host. Each new bundle replaces a file served as immutable, and a cached old bundle fails the new list's digest.
+5. Run the list workflow.
+6. Once the new list is out, and not before, change the identity prefix you publish and any registry entry that copies it, such as mise's. A consumer holding the new prefix refuses the old list. The signer fingerprint does not change, so consumers who verify with `--issuer` and `--pin` keep working.
 
 ## Troubleshoot
 
 | Symptom | What to check |
 | --- | --- |
-| `no identity to verify against` | The project is not on a forge, so the pin is not implied: pass `--identity-prefix` and `--issuer`, or `--pubkey`, to `packslip verify`. The actions do. |
-| `the action does not build an empty list` | Nothing under `<dir>/<tag>/`; check the sync, or backfill a release. |
-| `it is for github.com/owner/repo, the list is for mytool.example.com` | A bundle from before the move is in the directory; describe that release again under the new name, or remove it. |
-| `is release v1.2.3 but sits under v1.2.4/` | The directory is named by the tag the bundle records; move it. |
-| `must be signed from its repository` | The project is on `github.com` or `gitlab.com`, and a bundle matches the pin but was signed from another repository. If you meant to list it, set `allow-other-repository: true`; otherwise leave it out of `dir`. |
-| `is not among the --release entries` | A `yank` or `security` entry names a tag or URL that is not in `dir`. |
-| A withdrawn release is eligible again after a scheduled or post-release run | The withdrawal was given to a single run. [Commit it](#keep-withdrawals-in-the-repository) so every run passes it. |
-| `signed by "https://github.com/old/repo/...", expected an identity starting with "https://github.com/new/repo/"` | The repository was renamed or transferred after that release was signed, and the action pins the current name. Leave that bundle out of `dir`: delete it from the bucket, or exclude it from the sync. To keep the release listed instead, describe it again from the renamed repository and purge the old copy from every cache, as [Sign as the repository](#sign-as-the-repository) explains. |
-| A consumer says the list expired | The scheduled run has not published one lately. GitHub disables a public repository's schedules after 60 days without activity, so check that the workflow is enabled, then dispatch it once by hand. |
-| A consumer refuses a backfilled release as a different signer | The backfill ran from another workflow file; run it from the one that signs releases, and have the consumer forget the pin it took. |
+| `no identity to verify against` | The project is not on a forge, so no signer policy is implied. Run `packslip verify` with `--issuer` and either `--identity-prefix` or `--pin` ([Publish the signer](#publish-the-signer) lists the values), or with `--pubkey`. The actions pass their own trust flags. |
+| `no packslip.sigstore.json under lists/<tag>/; the action does not build an empty list` | Nothing is under `<dir>/<tag>/`. Check the sync, or backfill a release with [Describe a release under the new name](/docs/move-to-domain/#describe-a-release-under-the-new-name). |
+| `lists/v1.2.4/packslip.sigstore.json is release v1.2.3 but sits under v1.2.4/` | Move the bundle to the directory named by the tag it records. |
+| `https://mytool.example.com/v1.2.3/packslip.sigstore.json is not among the --release entries` | A `yank` or `security` entry names a tag or URL that is not in `dir`. Restore that release's bundle, or remove the entry. |
+| A withdrawn release is eligible again after a scheduled or post-release run | The withdrawal was given to a single run. Commit it, as [Keep withdrawals in the repository](/docs/release-lists/#keep-withdrawals-in-the-repository) shows, so every run passes it. |
+| `signed by "https://github.com/owner/old-mytool/...", expected an identity starting with "https://github.com/owner/mytool/"` | The repository was renamed or transferred after that release was signed, and the action pins the current name. Leave the bundle out of `dir`: delete it from the bucket or exclude it from the sync. To keep the release listed, follow [Rename the repository](#rename-the-repository). |
+| `host project has no signed release list` | Nothing is served at `/.well-known/packslip.json`. Check that the host publishes `.well-known` and that the list workflow has run. |
+| `release list is stale, missing, or rolled back`, or another consumer says the list expired | The scheduled run has not published one lately; GitHub disables a public repository's schedules after 60 days without activity. Check that the workflow is enabled, then dispatch it once by hand. |

@@ -1,29 +1,28 @@
 ---
-title: Artifact configuration
-weight: 30
+title: Describe your artifacts
+description: Record each artifact's platform, variant, executables, and download URL with packslip create flags or release.toml.
 group: publish
-description: Configure artifact platforms, variants, executable paths, and per-file metadata.
+weight: 34
 ---
-# Artifact configuration
+# Describe your artifacts
 
-A packslip describes the release files your build already produces. Use
-`packslip create` to record their platforms, executable paths, download
-URLs, and other metadata. It infers common file names and archive layouts;
-you supply the details it cannot infer.
+Follow this guide when your build already produces release files. By
+the end, your release bundle records each file's platform, executables,
+and download URL, so consumers pick the right file for each host. To add
+packslip to a GitHub release first, see
+[Publish with GitHub Actions](/docs/publishing/).
 
-Start with flags for a uniform set of archives, or keep per-artifact
-configuration in `release.toml`. For complete example layouts and
-manifests, see [Release recipes](/docs/recipes/).
+`packslip create` builds nothing. It hashes your files and infers what
+it can from common file names and archive layouts; you supply the rest.
+List installable binaries and archives as artifacts, and companion files
+such as completions and man pages as resources; see
+[Ship resources](/docs/resources/). Every key and file-name rule is in
+the [release.toml reference](/docs/release-toml/).
 
-## Choose flags or a TOML manifest
+## Choose flags or release.toml
 
-Flags and `release.toml` produce the same signed release statement:
-`release.toml` configures `packslip create` and is not a second
-interchange format. This page also calls it the TOML manifest, and calls
-the signed output the bundle.
-
-Flags are enough when every artifact contains the same executables. For
-example, in a CI job with a supported OIDC identity:
+Flags are enough when every artifact contains the same executables. In
+a CI job with a supported OIDC identity:
 
 ```sh
 packslip create \
@@ -34,192 +33,181 @@ packslip create \
   dist/mytool-1.2.3-darwin-arm64.tar.gz
 ```
 
-This finds `mytool` in both archives and writes
-`packslip/packslip.sigstore.json`. For local key signing, add
-`--key release.key`; to try it without recording a signature in the public
-log, also add `--no-log`, as in [Getting started](/docs/getting-started/).
+- `--project` and `--version` name the release.
+- `--url-base` gives each file the download URL `PREFIX/FILENAME`.
+- `--bin mytool` finds `mytool` inside both archives.
+- `--out` names the output directory, so the bundle is
+  `packslip/packslip.sigstore.json`.
 
-Artifact suffixes (`PATH:os/arch/libc@variant`) and per-file flags
-(`--format FILENAME=FORMAT`, `--url FILENAME=URL`) cover explicit platforms,
-variants, formats, and URLs. Use `release.toml` when:
+To sign with a key instead, see [Publish from other CI](/docs/other-ci/).
 
-- artifacts hold different executables, or need an explicit executable
-  path that differs between them;
-- artifacts need `os_min` or `glibc_min`, or requirements that differ per
-  artifact;
+An artifact argument suffix sets one file's platform and variant; see
+[Override the inferred platform](#override-the-inferred-platform).
+`--format` and `--url` set one file's format and download URL. Use
+release.toml, passed with `--manifest`, when:
+
+- artifacts hold different executables, or the same one at different
+  paths you must spell out (such as `bin/mytool-x86_64` and
+  `bin/mytool-aarch64`);
+- artifacts need `os_min` or `glibc_min`, or
+  [host requirements](/docs/host-requirements/) that differ per artifact;
 - an artifact carries its own extensions;
 - a resource belongs to one exact artifact.
 
-`release.toml` also keeps the configuration in the repository.
+release.toml also keeps the release configuration in your repository.
+[Use release.toml](#use-a-toml-manifest) shows a complete file.
 
 ## Select platforms and variants
 
-`packslip create` infers OS, architecture, and format from each
-artifact's file name, and libc from the name or the executables inside.
-Run `packslip show` on the bundle to check what it inferred before
-publishing, and set explicit values for anything it got wrong.
+`packslip create` infers OS, architecture, and format from each file
+name, and libc from the name or the executables inside, never from your
+build configuration.
+[How packslip create reads file names](/docs/release-toml/#how-packslip-create-reads-file-names)
+lists every spelling it recognizes. Before you publish, check what it
+inferred:
 
-### How `packslip create` reads file names
+```sh
+packslip show packslip/packslip.sigstore.json
+```
 
-Inference reads file names and executables, not your build
-configuration. The OS comes from a word in the name or from its
-extension:
+`packslip create` does not warn about these results:
 
-| In the file name | Recorded as |
-| --- | --- |
-| `linux`, or a `.deb`, `.rpm`, or `.AppImage` file | `linux` |
-| `darwin`, `macos`, `apple`, or a `.dmg` or `.pkg` file | `darwin` |
-| `windows`, `win32`, `win64`, or a `.exe`, `.msi`, or `.msix` file | `windows` |
-| `freebsd`, `netbsd`, `openbsd`, `illumos`, `android`, `ios` | The same word |
-
-A name with no OS records no `os`. Consumers then consider the artifact
-compatible with every OS: `mytool-x86_64.tar.gz` is offered to any x86_64
-host. `packslip create` does not warn about this, so check the inferred
-platform before publishing a native build.
-
-The format comes from the extension, such as `.tar.gz`, `.zip`, or
-`.deb`; [Name the executables](#name-the-executables) explains how a
-`.exe` is read. A file with no extension is a `raw` executable when its
-OS is known, from the name or set explicitly, or when the artifact is
-portable. A dotted version does not count as an extension, so
-`mytool-1.2.3-linux-x64` has none. `packslip create` refuses any other
-file whose name gives no format until you set one with `format` or
-`--format FILENAME=FORMAT`.
-
-Architectures are read in the spellings of Rust targets, goreleaser, and
-common release names:
-
-| In the file name | Recorded as |
-| --- | --- |
-| `x86_64`, `x86-64`, `x64`, `amd64` | `x86_64` |
-| `aarch64`, `arm64` | `aarch64` |
-| `armv7`, `armhf` | `armv7` |
-| `armv6`, or a plain `arm` | `armv6` |
-| `i686`, `i386`, `x86`, `386`, `ia32` | `i686` |
-| `riscv64` | `riscv64` |
-| `ppc64le`, `ppc64el`, `powerpc64le` | `powerpc64le` |
-| `s390x` | `s390x` |
-| `loongarch64`, `loong64` | `loongarch64` |
-| `mips` | `mips` |
-| `mipsel`, `mipsle` | `mipsel` |
-| `mips64` | `mips64` |
-| `mips64el`, `mips64le` | `mips64el` |
-| `ppc64`, `powerpc64` | `powerpc64` |
-
-A plain `arm` is ARMv6, the default of both goreleaser and Rust's `arm-`
-targets. A name whose only hint is `win64` is recorded as `x86_64`. The
-MIPS and `powerpc64` values follow Rust's target spellings and are
-outside the [vocabularies](/release/v1/#vocabularies), so they match no
-host.
-
-`packslip create` refuses an artifact for any OS other than macOS and
-Windows when its name gives no architecture, since it would fit every
-host of that OS. Name one, or give `any` (`PATH:linux/any` or
-`arch = "any"`) if the build really runs on all of them. A `.noarch.rpm`
-or `_all.deb` package is exempt. A macOS or Windows artifact whose name
-gives no architecture is recorded without `arch`, so every Mac or Windows
-host can select it. By convention such a build is universal or x86_64,
-and both systems run x86_64 builds on ARM.
-
-For a Linux artifact whose name does not say `musl` or `gnu`,
-`packslip create` reads libc from the listed executables. A statically
-linked build, such as a Go binary built with `CGO_ENABLED=0`, gets no
-`libc` and fits both glibc and musl hosts. A build that uses musl's loader
-gets `musl`.
-
-If `create` cannot read an ELF binary for every listed executable, libc
-defaults to `gnu`, which does not fit a musl host. This happens when no
-executables are listed, an executable is a script, the format cannot be
-opened, or `--no-libs` is set. For a build that loads no C library, such
-as an archive of shell scripts, set `libc = "any"` or use
-`PATH:linux/x86_64/any` explicitly.
+- **No `os` on an OS-specific build.** Consumers offer the file to every OS:
+  `mytool-x86_64.tar.gz` goes to any x86_64 host. Name the OS in the file
+  name, or set it.
+- **No `arch` on a macOS or Windows build.** Every Mac or Windows host can
+  select it. By convention such a build is universal or x86_64, which both
+  systems run on ARM. Set the architecture of any other build.
+- **`"libc": "gnu"` on a static or musl build.** `create` assumed glibc
+  because it could not read every listed executable as an ELF binary:
+  none listed, any of them a script, a format it cannot open, or
+  `--no-libs`. A musl host does not select the file. List the
+  executables, or set `libc = "musl"`. Set `libc = "any"` for a build
+  that loads no C library, such as a static binary or shell scripts.
+- **An `arch` such as `mips` or `powerpc64`.** This Rust target spelling
+  is outside the [vocabularies](/release/v1/#vocabularies): only a
+  consumer that knows it selects the file. Correct it if the build is
+  for a documented architecture.
 
 ### Override the inferred platform
 
-Use these argument forms, or the matching `[[artifact]]` fields in
-`release.toml`, to set what inference gets wrong:
+Correct inference with an artifact argument suffix, or the matching
+`[[artifact]]` keys in release.toml:
 
-| Artifact argument | In `[[artifact]]` | Meaning |
-| --- | --- | --- |
-| `dist/mytool-linux-x64.tar.gz` | `path` only | Infer the platform from the file name. |
-| `dist/mytool.tar.gz:linux/x86_64/gnu` | `os = "linux"`, `arch = "x86_64"`, `libc = "gnu"` | Set OS, architecture, and libc explicitly. |
-| `dist/mytool.tar.gz:linux/x86_64/any` | `os = "linux"`, `arch = "x86_64"`, `libc = "any"` | A Linux x86_64 build that loads no C library from the host. |
-| `dist/mytool.tar.gz:linux/any` | `os = "linux"`, `arch = "any"` | A Linux build for every architecture. Its libc is still inferred, so use `linux/any/any` when it needs none. |
-| `dist/mytool.tar.gz:any` | `portable = true` | Clear platform fields for a portable artifact. |
-| `dist/mytool-fips-linux-x64.tar.gz@fips` | `variant = "fips"` | Infer the platform and mark the build as the `fips` variant. |
-| `dist/mytool.tar.gz:linux/x86_64/gnu@fips` | `os`, `arch`, `libc`, and `variant` | Explicit platform and variant together. |
+- `PATH:linux/x86_64/gnu` sets `os`, `arch`, and `libc`.
+- `PATH:linux/x86_64/any` (`libc = "any"`) is a build that loads no C
+  library from the host.
+- `PATH:linux/any` (`arch = "any"`) is a Linux build for every
+  architecture. Its libc is still inferred, so use `linux/any/any` when
+  it needs none.
+- `PATH:any` (`portable = true`) is a portable artifact: no OS,
+  architecture, or libc.
+- `PATH@fips` (`variant = "fips"`) marks the `fips` variant, alone or
+  after a platform suffix (`PATH:linux/x86_64/gnu@fips`).
 
-Explicit values are recorded exactly as written; only file names are
-translated. Write `darwin` for macOS, `x86_64` for x64 or amd64, and
-`aarch64` for arm64. `packslip create` accepts any lowercase word, so
-`:linux/amd64/gnu` succeeds but produces an artifact that matches no
-host. See the complete [vocabularies](/release/v1/#vocabularies).
+Explicit values are recorded exactly as written, so use the
+[vocabulary](/release/v1/#vocabularies) spellings, such as `darwin`,
+`x86_64`, and `aarch64`. A suffix that is not well formed stays part of
+the path. [`[[artifact]]` tables](/docs/release-toml/#artifact-tables)
+and [Artifact argument suffixes](/docs/release-toml/#artifact-argument-suffixes)
+give the rules for `any`, absent fields, and suffix forms.
 
-An absent platform field means the build does not depend on it. A
-universal macOS binary has `os = "darwin"` and no `arch`: it runs on every
-Mac, not on every OS. `arch = "any"` or `libc = "any"` (`/any` in the
-argument) leaves that one field absent. `os` has no `any`: `os = "any"`
-is recorded as written and matches no host. `portable = true`, or
-`PATH:any`, leaves out all three.
+The GitHub Action's `artifacts` input takes only paths and globs. Set
+platforms in the release.toml you pass as `manifest`. The `formats`
+input sets a format by file name. The `variants` input sets a variant
+the same way, except for a file release.toml lists, which takes
+`variant` from its entry. See
+[How inputs reach packslip create](/docs/actions/#how-inputs-reach-packslip-create).
 
 ### Separate builds that share a platform
 
-`os`, `arch`, and `libc` describe where a build runs. `variant` distinguishes
-builds a user chooses between, such as `fips` or `debug`. A minimum OS or
-glibc version belongs in `requires`, which consumers check after choosing
-an artifact, so it cannot tell apart two artifacts that share a platform.
+`os`, `arch`, and `libc` describe where a build runs. `variant` marks
+builds a user chooses between, such as `fips` or `debug`; see
+[Platform, format, and variant](/release/v1/#platform-format-and-variant).
+A minimum OS or glibc version cannot separate two builds: it belongs in
+`requires`, which consumers check only after choosing an artifact.
 
-Two artifacts may share a platform if their formats differ and they carry
-the same build. Distinct builds for the same platform need a `variant`.
-Consumers consider only artifacts without a variant unless one is requested.
-If two artifacts have the same OS, architecture, libc, variant, and
-format, `packslip create` refuses them.
+- Leave the main build of each platform without a variant. Consumers
+  consider only artifacts without one unless the user requests a variant.
+- Give every other distinct build of that platform its own variant,
+  whatever its format.
+- Let two artifacts share a platform and variant only when their formats
+  differ and they carry the same build, because consumers choose among
+  them by format preference. `create` refuses two with the same format.
 
 ## Name the executables
 
-For `--bin mytool`, `packslip create` searches each archive it can open
-(`tar`, `tar.gz`, `tgz`, `tar.xz`, `tar.zst`, `tar.bz2`, and `zip`) and
-records the actual path, such as `mytool-1.2.3/bin/mytool`. A plain name
-is matched by file name, and the shallowest match is recorded. Several
-matches at that depth fail with a list of candidates, so give the path.
-In a Windows artifact, `mytool` also finds `mytool.exe`.
+List an archive before you write a path into it:
 
-A value that contains `/` is a path from the archive root, including any
-top-level directory, and must exist exactly as written. For a format
-`packslip create` cannot open, such as `7z` or an installer, the entry is
-recorded as written, except that in a Windows artifact a path with no
-extension gets `.exe`.
-
-Top-level `bin` and `--bin` apply to every artifact that does not list
-its own, so `packslip create` fails when one of those archives lacks the
-executable. Give that artifact its own `bin` in `release.toml`, or
-`bin = []` if it has none.
-
-Use `--bin mytool=bin/mytool-x86_64` when the command name differs from the
-file's name. Consumers expose `bin/mytool-x86_64` as the command `mytool`.
-In TOML, write the equivalent as:
-
-```toml
-bin = [{ name = "mytool", path = "bin/mytool-x86_64" }]
+```sh
+tar -tzf dist/mytool-1.2.3-linux-x64.tar.gz
 ```
 
-A bare executable is an artifact that is the program itself: a `raw`
-file, or one compressed executable (`.gz`, `.xz`, `.zst`, `.bz2`). For a
-bare executable, `--bin mytool` gives the name the file gets on PATH. In
-a Windows artifact, command names omit `.exe`; the file path keeps it.
+```text
+mytool-1.2.3/
+mytool-1.2.3/bin/
+mytool-1.2.3/bin/mytool
+```
 
-`packslip create` records a `.exe` as the program itself (`raw`) unless
-its name contains `setup` or `install`, which makes it an `exe`
-installer. When the name misleads, set the format yourself:
-`format = "exe"` or `--format FILENAME=exe` for an installer whose name
-says neither, and `format = "raw"` or `--format FILENAME=raw` for a
-program whose name contains `install`, such as
+Repeat `--bin` for each executable. Each value takes one of three forms;
+release.toml writes the first two as strings and the third as a table:
+
+- `mytool` records the shallowest file of that name in each archive, such
+  as `mytool-1.2.3/bin/mytool`.
+- `mytool-1.2.3/bin/mytool`, a value containing `/`, records that path
+  from the archive root, including any top-level directory. It must exist
+  exactly as written.
+- `mytool=bin/mytool-x86_64` records that path, exposed as the command
+  `mytool` (`{ name = "mytool", path = "bin/mytool-x86_64" }` in
+  release.toml).
+
+`packslip create` searches each archive it can open: `tar`, `tar.gz`,
+`tgz`, `tar.xz`, `tar.zst`, `tar.bz2`, and `zip`. In a Windows artifact,
+`mytool` also finds `mytool.exe`. For a format it cannot open, such as
+`7z` or an installer, the entry is recorded as written, and a Windows
+path with no extension gets `.exe`.
+
+Top-level `bin` and `--bin` apply to every artifact that lists no `bin` of
+its own, and `create` fails when one lacks the executable. Give that
+artifact its own `bin` in release.toml, or `bin = []` for none.
+
+A bare executable is an artifact that is the program itself: a `raw` file,
+or one compressed executable (`.gz`, `.xz`, `.zst`, `.bz2`). For one,
+`--bin mytool` sets its command name on PATH. Windows command names
+omit `.exe`; the file path keeps it.
+
+A `.exe` whose name contains `setup` or `install` is read as an `exe`
+installer, and any other as the program itself (`raw`); see
+[Format](/docs/release-toml/#format). When the name misleads, set
+`format` (or `--format FILENAME=FORMAT`) to `exe` for an installer, or to
+`raw` for a program whose name happens to contain `install`, such as
 `cargo-binstall-x86_64.exe`.
 
-## Use a TOML manifest
+## Set download URLs and provenance
 
-Keep configuration in `release.toml` when artifacts need different
-metadata. This example describes a Linux archive and a Windows executable:
+`--url-base PREFIX` covers every artifact and resource asset. Two flags
+set one file at a time; repeat them per file:
+
+- `--url FILENAME=URL` sets one file's download URL instead, as a `url`
+  key in release.toml does.
+- `--provenance FILENAME=URL` links a build provenance statement to one
+  artifact. Bare URLs apply to the artifact arguments in order.
+
+`--url`, `--format`, `--provenance`, and a `[[resource]]` `artifact` key
+name a file without its directory, as in
+`--url mytool-1.2.3-linux-x64.tar.gz=URL`.
+
+**Warning:** `packslip create` does not refuse a `--provenance` name with
+a directory: it reads the whole value as a bare URL and attaches it to an
+artifact argument by position.
+
+The GitHub Action links provenance itself; see its `attest` input in the
+[GitHub Actions reference](/docs/actions/).
+
+## Use release.toml {#use-a-toml-manifest}
+
+This release.toml describes a Linux archive with a minimum glibc, a
+Windows executable, and a man page that only the Linux archive ships:
 
 ```toml
 project = "github.com/owner/mytool"
@@ -245,170 +233,65 @@ artifact = "mytool-1.2.3-linux-x64.tar.gz"
 archive = "mytool-1.2.3/share/man/man1/mytool.1"
 ```
 
-In a CI job with a supported OIDC identity:
+In a CI job with a supported OIDC identity, create the bundle from it:
 
 ```sh
 packslip create --manifest release.toml --out packslip
 ```
 
-For local key signing, add `--key release.key`. For an offline trial, also
-add `--no-log`; the [quickstart](/docs/getting-started/) shows how to
-generate a temporary key and verify an unlogged bundle.
+The Windows artifact lists no `bin`, so it takes the top-level
+`bin = ["mytool"]`: the `.exe` is the program itself, installed as the
+command `mytool`. [Release recipes](/docs/recipes/) has complete files for
+Rust, Go, monorepo, and desktop layouts.
 
-In the GitHub Action, set `manifest: release.toml` and set `artifacts` to
-the files its `[[artifact]]` entries name. The action fails when
-`artifacts` and `download` match no file, and it attests and links
-provenance only for the files they match. `download` saves files in a
-temporary directory that no `[[artifact]]` `path` can name, so use it only
-for files `release.toml` does not list. The action's project, version,
-download URL prefix, release-notes URL, and source settings, including
-their defaults, replace those in `release.toml`; see
-[Action inputs](/docs/publishing/#action-inputs).
-
-### Keys in `release.toml`
-
-Each table lists the keys `release.toml` accepts at that level and the
-flag, if any, that sets the same value.
-
-At the top level:
-
-| Key | Flag | Meaning |
-| --- | --- | --- |
-| `project` | `--project` | The project name. Required here or as the flag. |
-| `version` | `--version` | The semver version. Required here or as the flag. |
-| `url_base` | `--url-base` | Download URL prefix for artifacts and assets that set no `url`. |
-| `notes_url` | `--notes-url` | URL of the release notes. |
-| `published_at` | `--published-at` | RFC 3339 publish time; defaults to now. |
-| `bin` | `--bin`, which adds to this list | Executables inside every artifact that does not list its own: a path, a plain name, or `{ name = "…", path = "…" }`. |
-| `requires` | `--require`, which adds commands only | Host requirements for every artifact that does not state its own: `os_min`, `glibc_min`, `libs`, and `bin`. See [Host requirements](/docs/host-requirements/). |
-| `extensions` | `--extension` | Release-level extensions; see [Add custom metadata](#add-custom-metadata). |
-
-In the `[source]` table:
-
-| Key | Flag | Meaning |
-| --- | --- | --- |
-| `repo` | `--source-repo` | Source repository URL. Required when the table is present. |
-| `commit` | `--commit` | Source commit. A `repo` resource requires it. |
-| `tag` | `--tag` | Release tag. |
-
-In each `[[artifact]]` table:
-
-| Key | Flag | Meaning |
-| --- | --- | --- |
-| `path` | The artifact argument | The local file, relative to the working directory. Required. |
-| `os`, `arch`, `libc`, `portable`, `variant` | `PATH:os/arch/libc`, `PATH:any`, `PATH@variant` | Platform and variant; see [Override the inferred platform](#override-the-inferred-platform). |
-| `format` | `--format FILENAME=FORMAT` | The format, when the file name does not give the right one. |
-| `url` | `--url FILENAME=URL` | Download URL, when it is not `url_base/FILENAME`. |
-| `bin`, `requires` | None | This artifact's executables and host requirements, replacing the top-level values. `bin = []` declares none. |
-| `provenance` | `--provenance FILENAME=URL` | URLs of build provenance statements for this artifact. |
-| `extensions` | None | Artifact-level extensions. |
-
-Each `[[resource]]` table needs a `kind` and exactly one source:
-`archive`, `asset`, `repo`, or `exec`. It can also take a scope
-(`artifact`, `os`, `arch`, `libc`), qualifiers (`shell`, `shells`, `bin`,
-`format`, `name`), `url` for an asset, `env` for an `exec` command, and
-`extensions`. On the command line, `--resource` sets every key except
-`artifact`, `url`, and `extensions`, and `--url FILENAME=URL` sets an
-asset's URL. See [Resources](/docs/resources/).
-
-`packslip create` refuses a `release.toml` that lists an artifact `path`
-twice or has an unknown key at the top level or in `[source]`,
-`[[artifact]]`, or `[[resource]]`. Inside `requires` or a `bin` table it
-ignores keys it does not know, so a misspelled key such as `glibc_mn` is
-silently dropped; spell those keys as shown here.
-
-See [`packslip create`](/cli/create/) for every flag. The same keys are
-defined in [src/manifest.rs](https://github.com/jdx/packslip/blob/main/src/manifest.rs).
-
-### Paths in the input and output
-
-| Field | Interpreted relative to | Example |
-| --- | --- | --- |
-| Artifact `path` | The directory where `packslip create` runs, not the directory that holds `release.toml`. | `dist/mytool-linux-x64.tar.gz` |
-| Resource `asset` (TOML or `asset:` in `--resource`) | The same directory. | `dist/mytool.cdx.json` |
-| Executable path or resource `archive` | The archive's root as stored, so include any top-level directory (`tar -tzf` shows these paths). | `mytool-1.2.3/bin/mytool` |
-| Resource `repo` | The source repository at `source.commit`. | `skills/mytool` |
-| Resource `artifact` | An exact artifact file name in the statement, with no local directory. | `mytool-linux-x64.tar.gz` |
-
-In the output, an asset's local path becomes its file name in `subject`.
-Its download URL is `url_base/FILENAME` unless the entry sets `url` or you
-pass `--url FILENAME=URL`. `packslip create` checks executable paths
-against each archive it can open, but it records resource `archive` paths
-without opening the archive, and `packslip verify` does not check them
-either. Copy them from the archive listing, and do not put `dist/` in an
-`archive` path unless that directory is inside the archive.
-
-### How `release.toml` and flags combine
-
-When you pass both, `packslip create` combines them as follows:
-
-- Top-level `bin` and `requires` are defaults for every artifact,
-  including artifacts given on the command line. An artifact's own `bin`
-  or `requires` replaces the default as a whole; it is not merged field by
-  field. `bin = []` declares that an artifact has no executables.
-- `--bin` adds to the top-level `bin` rather than replacing it, so name
-  each executable in one place only.
-- `--require` adds its commands to every artifact that has executables, on
-  top of any `requires` in `release.toml`.
-- Command-line artifacts are added to the ones `release.toml` lists. When
-  one has the same file name as an `[[artifact]]` entry, the entry is used
-  and the argument is ignored, including any `:platform` or `@variant`
-  suffix.
-- `--project`, `--version`, `--url-base`, `--notes-url`, `--published-at`,
-  `--source-repo`, `--commit`, and `--tag` replace the values in
-  `release.toml`. `--extension NAME=JSON` replaces the whole value for
-  `NAME` and keeps the other names.
-- `--url FILENAME=URL` and `--format FILENAME=FORMAT` apply only where the
-  entry sets no `url` or `format`, and `--provenance` URLs are added to the
-  entry's own `provenance` list.
+Local paths are relative to where you run `packslip create`; see
+[How paths are resolved](/docs/release-toml/#how-paths-are-resolved).
+Artifacts on the command line join the ones the file lists, and flags
+combine with it as
+[How release.toml and flags combine](/docs/release-toml/#how-releasetoml-and-flags-combine)
+lists. In the GitHub Action, pass the file as the `manifest` input and
+list the same files in `artifacts`; see
+[Use release.toml with the action](/docs/publishing/#use-releasetoml-with-the-action).
 
 ## Add custom metadata
 
 Put data the specification has no field for under `extensions`, keyed by
 who defines it: a consumer by its name (`mise`), or you by a domain you
-control.
-
-```sh
-packslip create ... \
-  --extension 'example.com={"build_id":"20260901.3"}'
-```
-
-`--extension` sets release-level extensions only. In `release.toml`, the
-same data goes in an `[extensions."example.com"]` table:
+control. In release.toml, add a table:
 
 ```toml
 [extensions."example.com"]
 build_id = "20260901.3"
 ```
 
+With flags, pass `--extension 'example.com={"build_id":"20260901.3"}'`,
+which sets release-level extensions only.
 An `[[artifact]]` or `[[resource]]` entry carries its own in an
 `[artifact.extensions."example.com"]` or
 `[resource.extensions."example.com"]` table placed after that entry.
 
-An `--extension NAME=JSON` replaces the whole value `release.toml` gives
-for `NAME`. Consumers read the keys they define and ignore the rest, and
-nothing under `extensions` can collide with a field a later revision of
-the specification adds. See [Extensions](/release/v1/#extensions).
+Consumers ignore keys they do not define, and no extension can collide
+with a field a later revision of the specification adds; see
+[Extensions](/release/v1/#extensions).
 
 ## Describe another vendor's release
 
-If you sign for artifacts another vendor publishes, pass
-`--attested-by repackager` and one `--evidence KIND[=DETAIL]` per check,
-such as `--evidence vendor-signature`. These flags have no `release.toml`
-equivalent. The document proves that you signed these digests and says
-what you checked; it proves nothing on the vendor's behalf. It is a
-claim by your signer, which consumers must explicitly trust. Consumers
-rank it below a vendor packslip and do not replace a vendor's document
-with it without a person's approval. See
-[Repackager attestation](/release/v1/#repackager-attestation) for the
-documented evidence kinds.
+A repackager signs for files another vendor publishes: add
+`--attested-by repackager` and one `--evidence KIND[=DETAIL]` per check.
+Neither flag has a release.toml key;
+[Repackage another vendor's release](/docs/installers/#repackage-another-vendors-release)
+shows the full command.
 
-## Next steps
+## Troubleshoot create errors
 
-- [Resources](/docs/resources/): completions, man pages, CLI
-  specifications, skills, SBOMs, and desktop files, and how to
-  [scope a resource to the right artifact](/docs/resources/#scope-resources-to-the-right-artifact).
-- [Host requirements](/docs/host-requirements/): shared-library scanning,
-  required commands, and minimum OS and glibc versions.
-- [Release recipes](/docs/recipes/): complete `release.toml` files for
-  Rust, Go, monorepo, and desktop layouts.
+Messages use example file names.
+
+| Error | Fix |
+| --- | --- |
+| `artifact "mytool-linux.tar.gz" is for linux, but nothing in the name says which architecture` | Put the architecture in the name, or set it (`PATH:linux/x86_64`, `arch = "x86_64"`). Use `any` only for a build that runs on every architecture. `.noarch.rpm` and `_all.deb` files are exempt. |
+| `artifact "mytool-data": nothing in the name says what kind of file it is` | Set `format` or `--format FILENAME=FORMAT`, or leave out a file that is not installable, such as a library, header, or checksum. |
+| `artifacts "mytool-linux-x64.tar.gz" and "mytool-fips-linux-x64.tar.gz" both describe linux/x86_64/gnu/tar.gz; give one a variant` | Give one build a variant; see [Separate builds that share a platform](#separate-builds-that-share-a-platform). For a file release.toml lists, set `variant` in its entry; a suffix or the action's `variants` input does not apply. |
+| `dist/mytool-linux-x64.tar.gz: several files named "mytool" inside the archive` | Give the path from the archive root; the error lists the candidates. |
+| `dist/mytool-linux-x64.tar.gz: no file named "mytool" inside the archive` | Check the path against `tar -tzf`. An artifact without that executable needs its own `bin` in release.toml, or `bin = []`. |
+| `dist/mytool.tar.gz:linux: No such file or directory` | A suffix needs an OS and an architecture: write `:linux/any` or `:linux/x86_64`. |
+| `--url names "dist/mytool.tar.gz", which is not among the artifacts or assets` | Write the file name without its directory; `--format` fails the same way. |
