@@ -820,7 +820,7 @@ Paths beginning with `artifacts[]` or `resources[]` below are relative to
 | `artifacts[].os` | string | optional | `linux`, `darwin`, `windows`, ... Absent: any OS. |
 | `artifacts[].arch` | string | optional | `x86_64`, `aarch64`, ... Absent: any architecture. |
 | `artifacts[].libc` | string | optional | `gnu` or `musl`; Linux only. Absent: no dependence on one. |
-| `artifacts[].variant` | string | optional | Distinguishes builds sharing os, arch, and libc: `fips`, `baseline`, `debug`, `installer`, `source`. |
+| `artifacts[].variant` | string | optional | Distinguishes builds sharing os, arch, and libc: `fips`, `baseline`, `debug`, `installer`, `source`, `softfloat`, `5-hardfloat`, or a CPU level such as `v3` ([Vocabularies](#vocabularies)). |
 | `artifacts[].size` | integer | required | File size in bytes. Verified alongside the digest. |
 | `artifacts[].url` | string | optional | Download URL. |
 | `artifacts[].format` | string | required | Archive, compression, or installer type, or `raw` for a bare executable. |
