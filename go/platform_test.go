@@ -29,6 +29,53 @@ func TestArchFromGo(t *testing.T) {
 	}
 }
 
+func TestVariantFromGo(t *testing.T) {
+	for _, tc := range []struct{ goarch, level, want string }{
+		{"amd64", "", ""},
+		{"amd64", "v1", ""},
+		{"amd64", "v3", "v3"},
+		{"386", "sse2", ""},
+		{"386", "softfloat", "softfloat"},
+		{"arm64", "v8.0", ""},
+		{"arm64", "v8.2", "v8.2"},
+		{"arm64", "v8.2,lse", "v8.2-lse"},
+		{"arm", "", ""},
+		{"arm", "7", ""},
+		{"arm", "7,hardfloat", ""},
+		{"arm", "7,softfloat", "softfloat"},
+		{"arm", "6,softfloat", "softfloat"},
+		{"arm", "5,softfloat", ""},
+		{"mips", "hardfloat", ""},
+		{"mipsle", "softfloat", "softfloat"},
+		{"ppc64le", "power9", "power9"},
+		{"ppc64", "power8", ""},
+		{"riscv64", "rva23u64", "rva23u64"},
+		{"s390x", "anything", ""},
+		{"all", "", ""},
+	} {
+		if got := VariantFromGo(tc.goarch, tc.level); got != tc.want {
+			t.Errorf("VariantFromGo(%q, %q) = %q, want %q", tc.goarch, tc.level, got, tc.want)
+		}
+	}
+}
+
+func TestVariantFromRustABI(t *testing.T) {
+	for _, tc := range []struct{ abi, want string }{
+		{"gnu", ""},
+		{"musl", ""},
+		{"gnueabihf", ""},
+		{"musleabihf", ""},
+		{"gnueabi", "softfloat"},
+		{"gnueabi.2.17", "softfloat"},
+		{"musleabi", "softfloat"},
+		{"", ""},
+	} {
+		if got := VariantFromRustABI(tc.abi); got != tc.want {
+			t.Errorf("VariantFromRustABI(%q) = %q, want %q", tc.abi, got, tc.want)
+		}
+	}
+}
+
 func TestNewBareBin(t *testing.T) {
 	for _, tc := range []struct {
 		name, format, command string

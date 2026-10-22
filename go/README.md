@@ -42,9 +42,13 @@ request; `SignKeyless` and `ProductionKeylessOptions` never do. The token is
 not verified by `IdentityFromToken`: a mismatch fails in `SignKeyless` before
 anything is logged.
 
-Two helpers map a build matrix to the documented vocabularies:
+Four helpers map a build matrix to the documented vocabularies:
 `ArchFromGo(goarch, goarm)` translates a `GOARCH` (`amd64` to `x86_64`,
-`arm` with `GOARM=7` to `armv7`; a universal macOS binary gets no arch), and
+`arm` with `GOARM=7` to `armv7`; a universal macOS binary gets no arch),
+`VariantFromGo(goarch, level)` returns the `variant` of a build above Go's
+default CPU level (`goamd64: v3` is `v3`; soft-float ARM is `softfloat`; a
+default-level build has none), `VariantFromRustABI(abi)` does the same for a
+Rust target's ABI (`gnueabi` is `softfloat`, `gnueabihf` has none), and
 `NewBareBin(artifactName, format, command)` names the executable inside a
 `raw`, `gz`, `xz`, `zst`, or `bz2` artifact.
 

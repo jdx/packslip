@@ -94,8 +94,9 @@ trusted root; a parsed statement is not cryptographically verified merely
 because it is valid JSON. The module intentionally does not map GoReleaser
 configuration, upload artifacts, discover archives, or provide a release CLI.
 It does translate common build vocabulary: `ArchFromGo` turns a `GOARCH` and
-`GOARM` into packslip's `arch`, and `NewBareBin` names the executable of a
-bare artifact (`raw`, `gz`, `xz`, `zst`, `bz2`).
+`GOARM` into packslip's `arch`, `VariantFromGo` and `VariantFromRustABI` turn
+a CPU level or float ABI into a `variant`, and `NewBareBin` names the
+executable of a bare artifact (`raw`, `gz`, `xz`, `zst`, `bz2`).
 For its complete publisher API, see the
 [module README](https://github.com/jdx/packslip/tree/main/go).
 
