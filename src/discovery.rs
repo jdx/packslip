@@ -976,6 +976,12 @@ pub fn candidates_with_latest(
         choices.retain(|version, release| unmapped(version, release));
         for (version, others) in &mut alternates {
             others.retain(|release| unmapped(version, release));
+            // A mapped tag that dropped the version's own candidate leaves
+            // its first remaining alternate as the candidate, so a sibling
+            // release with its own bundles stays reachable.
+            if !others.is_empty() && !choices.contains_key(version) {
+                choices.insert(version.clone(), others.remove(0));
+            }
         }
         if list.predicate.latest.is_some() {
             for choice in choices.values_mut() {
@@ -2000,6 +2006,27 @@ mod tests {
             candidates_with_latest(P, &live, None, None, Some("other_v9.0.0")).unwrap();
         assert!(candidates.skipped.is_empty());
         assert_eq!(tags(&candidates), ["v2.0.0", "v1.0.0"]);
+    }
+
+    #[test]
+    fn an_alternate_stays_reachable_when_a_mapped_tag_drops_its_version() {
+        // Two tags derive 1.2.3; the signed list maps the first to a build.
+        // The second tag's release, with its own bundles, is still tried.
+        let live = vec![
+            release("1.2.3", "v1.2.3", &["https://example.test/v"], false),
+            release("1.2.3", "tool-1.2.3", &["https://example.test/tool"], false),
+            release("1.2.2", "v1.2.2", &["https://example.test/1.2.2"], false),
+        ];
+        let mut list = signed_list();
+        list.predicate.releases[0].version = "1.2.3+build.5".into();
+        list.predicate.releases[0].tag = Some("v1.2.3".into());
+        list.predicate.releases[0].packslip = "https://example.test/listed".into();
+        list.predicate.releases[0].status = None;
+        let candidates = candidates_with_latest(P, &live, Some(&list), None, None).unwrap();
+        assert_eq!(tags(&candidates), ["v1.2.3", "tool-1.2.3", "v1.2.2"]);
+        let candidates =
+            candidates_with_latest(P, &live, Some(&list), Some("1.2.3"), None).unwrap();
+        assert_eq!(tags(&candidates), ["v1.2.3", "tool-1.2.3"]);
     }
 
     #[test]
