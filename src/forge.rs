@@ -243,6 +243,20 @@ impl ForgePin {
     }
 }
 
+/// A pin of the repository a certificate's Source Repository extensions
+/// record, under its name on the forge (`github.com/owner/repo`), when they
+/// record the repository's ID on `github.com` or `gitlab.com`. None for any
+/// other certificate, such as one issued before Fulcio recorded the ID, or
+/// one from a self-hosted forge, whose names [`ForgePin::continues`] cannot
+/// compare. Verifies nothing: take `source` from an authenticated bundle.
+#[cfg(any(feature = "install-policy", test))]
+pub(crate) fn source_pin(source: &SourceRepository) -> Option<ForgePin> {
+    let id = source.id.as_deref().filter(|id| !id.is_empty())?;
+    let name = source.uri.strip_prefix("https://")?;
+    let parsed = ForgeName::parse(name)?;
+    (parsed.subpath.is_none() && parsed.uri() == source.uri).then(|| ForgePin::of(name, id))
+}
+
 /// Where a consumer's pin came from, so that a refusal can say which one
 /// the release disagreed with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -1947,6 +1961,29 @@ mod tests {
         assert!(!same_project("example.com/Tool", "example.com/tool"));
         assert!(same_project("example.com/tool", "example.com/tool"));
         assert!(!same_project("github.com/jdx/mise", "gitlab.com/jdx/mise"));
+    }
+
+    #[test]
+    fn a_source_repository_with_an_id_on_a_forge_gives_a_pin() {
+        assert_eq!(source_pin(&hk()), Some(pin()));
+        assert_eq!(
+            source_pin(&SourceRepository::new("https://gitlab.com/group/sub/tool").with_id("7")),
+            Some(ForgePin::of("gitlab.com/group/sub/tool", "7"))
+        );
+        for source in [
+            // No ID to remember: an older certificate.
+            SourceRepository::new("https://github.com/jdx/hk"),
+            SourceRepository::new("https://github.com/jdx/hk").with_id(""),
+            // A self-hosted forge, whose names a pin cannot compare.
+            SourceRepository::new("https://git.example.com/jdx/hk").with_id("1"),
+            // Not a repository's URL.
+            SourceRepository::new("https://github.com/jdx").with_id("1"),
+            SourceRepository::new("https://github.com/jdx/hk/tool").with_id("1"),
+            SourceRepository::new("https://github.com/jdx/hk/").with_id("1"),
+            SourceRepository::new("http://github.com/jdx/hk").with_id("1"),
+        ] {
+            assert_eq!(source_pin(&source), None, "{source:?}");
+        }
     }
 
     #[test]
