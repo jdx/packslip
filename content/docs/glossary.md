@@ -71,7 +71,7 @@ the page that explains it.
   list**.
 - **[release.toml](/docs/release-toml/)**: the optional input to
   `packslip create --manifest`, neither signed nor published.
-  `packslip create --help` calls it a **TOML manifest**.
+  Older CLI help calls it a **TOML manifest**.
 - **[Resource](/docs/resources/)**: an item shipped for a purpose other than
   running the software, such as a completion script, man page, skill, or
   SBOM.

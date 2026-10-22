@@ -13,6 +13,6 @@ Package: packslip
 Architecture: amd64 arm64
 Depends: ${shlibs:Depends}, ${misc:Depends}, ca-certificates
 Description: Install authenticated upstream releases
- Packslip verifies signed release metadata and installs a complete upstream
- release tree, exporting only its declared commands. It preserves trust and
- ownership state without running downloaded code or editing shell setup.
+ Verifies signed release metadata and installs a complete upstream release
+ tree, exporting only its declared commands. It preserves trust and ownership
+ state without running downloaded code or editing shell setup.

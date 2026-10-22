@@ -35,10 +35,16 @@ run = [
   # Both predicate types must resolve: the list predicate is /releases/v1.
   # Its contents list the H4 field tables too.
   "{ printf -- '---\ntitle: packslip release/v1 specification\nurl: /release/v1/\naliases:\n  - /releases/v1/\ntoc_end_level: 4\n---\n'; cat docs/spec/packslip.md; } > content/spec.md",
+  # The CLI reference: a page per command from
+  # docs/templates/cli-command.md.tera, whose front matter titles, describes,
+  # and orders each page.
   "rm -rf content/cli && mkdir -p content/cli",
-  "usage generate markdown --multi --file packslip.usage.kdl --out-dir content/cli --url-prefix /cli --html-encode",
-  "mv content/cli/index.md content/cli/_index.md",
-  "{ cat docs/cli.md; printf '\\n'; sed -e 's/^## /### /' -e 's/^# /## /' content/cli/_index.md; } > content/cli/overview.tmp && mv content/cli/overview.tmp content/cli/_index.md",
+  "usage generate markdown --multi --file packslip.usage.kdl --out-dir content/cli --url-prefix /cli --link-extension / --html-encode --template command=docs/templates/cli-command.md.tera",
+  # usage writes its banner first, but Hugo reads front matter only there.
+  '''perl -0pi -e 's/\A(<!--[^\n]*-->\n)(---\n.*?\n---\n)/$2$1/s' content/cli/*.md''',
+  # The overview is docs/cli.md, which lists the commands by role, in place
+  # of usage's generated index.
+  "{ cat docs/cli.md; printf '\\n<!-- @generated from docs/cli.md by mise run render -->\\n'; } > content/cli/_index.md && rm content/cli/index.md",
   # The actions reference: docs/actions.md with tables from both action.yml files.
   "python3 scripts/render-actions.py",
 ]
