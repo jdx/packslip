@@ -27,7 +27,7 @@ behind these steps, see [Use the Rust crate](/docs/rust/).
    | Forge project on gitlab.com | The specification defines none. | A trusted publisher's list or your own configuration; otherwise refuse the project. |
 
    If a GitHub repository carries a
-   [supplementary signed list](/release/v1/#supplementary-signed-lists),
+   [supplementary release list](/release/v1/#supplementary-release-lists),
    verify it too. For each version it lists, the entry decides the tag, the
    status, and the bundle digest to accept; never choose a version it yanks.
 

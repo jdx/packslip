@@ -23,6 +23,12 @@ reusable-workflows = "workflow-pinning"
 scope-and-identity = "resource-scope"
 signer-fingerprint = "signer-fingerprints"
 the-file = "bundle-format"
+# Renamed or merged by the specification prose rewrite.
+resource-coverage = "source-types"
+schema-and-validation = "json-schemas"
+supplementary-signed-lists = "supplementary-release-lists"
+the-signed-list = "the-release-list"
+tooling = "reference-implementation"
 
 # The documentation rewrite renamed, merged, and moved the sections below.
 # Same-page entries keep a section's old id; cross-page entries follow the
