@@ -385,12 +385,11 @@ is a worked example.
 
 A release bundle names one project, so bundles published as
 `github.com/owner/repo` cannot go in `mytool.example.com`'s list, and
-`packslip releases` and the releases action refuse to build an empty
-list. Before switching consumers over, describe at least the current
-release again under the new name. Do it from the workflow file that signs
-new releases, as [Sign as the repository](#sign-as-the-repository)
-explains, in a manually dispatched job with `contents: read` and
-`id-token: write`:
+the releases action refuses to build an empty list. Before switching
+consumers over, describe at least the current release again under the
+new name. Do it from the workflow file that signs new releases, as
+[Sign as the repository](#sign-as-the-repository) explains, in a
+manually dispatched job with `contents: read` and `id-token: write`:
 
 1. Download the release's files from GitHub into `dist/`, and delete any
    `packslip*.sigstore.json` among them: it names the old project, and an
@@ -433,7 +432,7 @@ name is a new project with no signer history.
 | Symptom | What to check |
 | --- | --- |
 | `no identity to verify against` | The project is not on a forge, so the pin is not implied: pass `--identity-prefix` and `--issuer`, or `--pubkey`, to `packslip verify`. The actions do. |
-| `a release list cannot be empty` | Nothing under `<dir>/<tag>/`; check the sync, or backfill a release. |
+| `the action does not build an empty list` | Nothing under `<dir>/<tag>/`; check the sync, or backfill a release. |
 | `it is for github.com/owner/repo, the list is for mytool.example.com` | A bundle from before the move is in the directory; describe that release again under the new name, or remove it. |
 | `is release v1.2.3 but sits under v1.2.4/` | The directory is named by the tag the bundle records; move it. |
 | `must be signed from its repository` | The project is on `github.com` or `gitlab.com`, and a bundle matches the pin but was signed from another repository. If you meant to list it, set `allow-other-repository: true`; otherwise leave it out of `dir`. |

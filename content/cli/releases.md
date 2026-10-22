@@ -5,7 +5,7 @@
 
 Create and sign a project's release list
 
-Read local copies of released bundles and write a signed release list: each bundle's URL, digest, version, tag, and publish time, plus the list's sequence and expiry. The bundles are read, not verified, so give copies you trust. Repeat --release for every entry to keep; the command does not append to an earlier list or upload anything.
+Read local copies of released bundles and write a signed release list: each bundle's URL, digest, version, tag, and publish time, plus the list's sequence and expiry. The bundles are read, not verified, so give copies you trust. Repeat --release for every entry to keep; the command does not append to an earlier list or upload anything. With no --release, the list has no releases, which retires every entry an earlier list carried.
 
 Publish the list at https://HOST/.well-known/packslip/PATH.json for a project named HOST/PATH, or at https://HOST/.well-known/packslip.json for a project named after a bare host. github.com does not serve that path, so a github.com project commits the list to its default branch instead, as its supplementary list: .well-known/packslip.json, or .well-known/packslip/TOOL.json for a monorepo tool. See https://packslip.dev/docs/release-lists/.
 
@@ -17,7 +17,7 @@ Publish the list at https://HOST/.well-known/packslip/PATH.json for a project na
 
   **Default:** `30d`
 - **`--generated-at <GENERATED_AT>`** — RFC 3339 generation time; defaults to now
-- **`--release <RELEASE>`** — A released packslip as URL=PATH: where consumers fetch it, and the local copy to read (repeatable)
+- **`--release <RELEASE>`** — A released packslip as URL=PATH: where consumers fetch it, and the local copy to read (repeatable; omit it for a list with no releases)
 - **`--yank <YANK>`** — Withdraw a listed release, as URL=REASON, with URL exactly as given to --release (repeatable)
 - **`--security <SECURITY>`** — Mark a listed release as a security fix, by its --release URL (repeatable)
 - **`--evidence <EVIDENCE>`** — What a publisher other than the vendor checked about a listed release, as URL=KIND or URL=KIND=DETAIL (repeatable)
@@ -39,9 +39,9 @@ Publish the list at https://HOST/.well-known/packslip/PATH.json for a project na
 ```
 packslip releases \
         --project mytool.example.com \
-        --sequence 1 --valid-for 30d \
+        --sequence "$(date +%s)" --valid-for 30d \
         --latest 1.2.3 \
-        --release https://mytool.example.com/v1.2.3/packslip.sigstore.json=releases/1.2.3/packslip.sigstore.json \
+        --release https://mytool.example.com/v1.2.3/packslip.sigstore.json=releases/v1.2.3/packslip.sigstore.json \
         --key release.key \
         --out site/.well-known/packslip.json
 ```

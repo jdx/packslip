@@ -1937,6 +1937,29 @@ mod tests {
     }
 
     #[test]
+    fn host_list_with_no_releases_offers_nothing_to_install() {
+        let f = Fixture::new();
+        // A list with no releases carries only the placeholder subject.
+        let now = jiff::Timestamp::now();
+        let list = json!({"_type":crate::model::STATEMENT_TYPE,"predicateType":crate::model::RELEASES_PREDICATE_TYPE,
+            "subject":[{"name":"_","digest":{"sha256":hex::encode(Sha256::digest(b""))}}],
+            "predicate":{"project":"example.test","identity":f.statement["predicate"]["identity"],
+                "generated_at":now.to_string(),"expires_at":(now+std::time::Duration::from_secs(86400)).to_string(),
+                "sequence":8,"releases":[]}});
+        f.cache(
+            "https://example.test/.well-known/packslip.json",
+            true,
+            f.signed(&list).as_bytes(),
+        );
+        for version in [None, Some("1.0.0")] {
+            let mut request = f.request(true);
+            request.version = version.map(Into::into);
+            let err = f.run(request).unwrap_err().to_string();
+            assert!(err.contains("no eligible release found"), "{err}");
+        }
+    }
+
+    #[test]
     fn force_cannot_bypass_release_signature_digest_or_version_binding() {
         let mut f = Fixture::new();
         let report = f.run(f.request(true)).unwrap();

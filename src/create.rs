@@ -817,6 +817,19 @@ pub fn create_release_list(request: &ListRequest<'_>) -> Result<CreatedList, Err
             extensions: Extensions::new(),
         });
     }
+    // sigstore binds a signed statement to one of its subject digests, so
+    // a list with no releases still needs a subject: one named `_`, the
+    // in-toto name for none, with the digest of empty input.
+    if subject.is_empty() {
+        use sha2::Digest as _;
+        subject.push(Subject {
+            name: "_".into(),
+            digest: Digest {
+                sha256: hex::encode(sha2::Sha256::digest(b"")),
+                sha512: None,
+            },
+        });
+    }
     let statement = Envelope {
         kind: STATEMENT_TYPE.into(),
         subject,
@@ -1803,6 +1816,37 @@ mod tests {
                 .list
                 .is_current("2026-09-15T00:00:00Z".parse().unwrap())
         );
+        // A list with no releases still carries a subject for sigstore to
+        // bind the signature to, and verifies.
+        let empty = create_release_list(&ListRequest {
+            project: "tool.example.com",
+            generated_at: Some("2026-09-01T01:00:00Z"),
+            valid_for: std::time::Duration::from_secs(86_400),
+            sequence: 4,
+            latest: None,
+            releases: vec![],
+            identity: key_identity(&key),
+        })
+        .unwrap();
+        assert!(empty.statement.predicate.releases.is_empty());
+        assert_eq!(empty.statement.subject.len(), 1);
+        assert_eq!(empty.statement.subject[0].name, "_");
+        assert_eq!(
+            empty.statement.subject[0].digest.sha256,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        let empty_bundle = crate::sigstore::sign(
+            Signer::Key {
+                key: key.clone(),
+                log: false,
+            },
+            &empty.document,
+        )
+        .unwrap();
+        let verified_empty =
+            crate::verify::verify_release_list(&empty_bundle, &Trust::Key(&public), options)
+                .unwrap();
+        assert!(verified_empty.list.predicate.releases.is_empty());
         // Two bundles carrying the same version are a duplicate release.
         let err = create_release_list(&ListRequest {
             project: "tool.example.com",

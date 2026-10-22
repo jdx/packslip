@@ -1258,7 +1258,9 @@ fn valid_platform(platform: &str) -> bool {
 /// each bundle's URL, digest, version, tag, and publish time, plus the
 /// list's sequence and expiry. The bundles are read, not verified, so give
 /// copies you trust. Repeat --release for every entry to keep; the command
-/// does not append to an earlier list or upload anything.
+/// does not append to an earlier list or upload anything. With no
+/// --release, the list has no releases, which retires every entry an
+/// earlier list carried.
 ///
 /// Publish the list at https://HOST/.well-known/packslip/PATH.json for a
 /// project named HOST/PATH, or at https://HOST/.well-known/packslip.json for
@@ -1269,7 +1271,7 @@ fn valid_platform(platform: &str) -> bool {
 /// https://packslip.dev/docs/release-lists/.
 #[derive(Debug, usage_rs::Args)]
 #[usage(example(
-    "packslip releases \\\n        --project mytool.example.com \\\n        --sequence 1 --valid-for 30d \\\n        --latest 1.2.3 \\\n        --release https://mytool.example.com/v1.2.3/packslip.sigstore.json=releases/1.2.3/packslip.sigstore.json \\\n        --key release.key \\\n        --out site/.well-known/packslip.json",
+    "packslip releases \\\n        --project mytool.example.com \\\n        --sequence \"$(date +%s)\" --valid-for 30d \\\n        --latest 1.2.3 \\\n        --release https://mytool.example.com/v1.2.3/packslip.sigstore.json=releases/v1.2.3/packslip.sigstore.json \\\n        --key release.key \\\n        --out site/.well-known/packslip.json",
     header = "List one key-signed release of a self-hosted project"
 ))]
 #[cfg(all(feature = "create", feature = "manifest"))]
@@ -1295,8 +1297,8 @@ struct Releases {
     #[usage(long)]
     generated_at: Option<String>,
     /// A released packslip as URL=PATH: where consumers fetch it, and the
-    /// local copy to read (repeatable)
-    #[usage(long, required = true)]
+    /// local copy to read (repeatable; omit it for a list with no releases)
+    #[usage(long)]
     release: Vec<String>,
     /// Withdraw a listed release, as URL=REASON, with URL exactly as given
     /// to --release (repeatable)

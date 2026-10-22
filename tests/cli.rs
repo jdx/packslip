@@ -830,6 +830,38 @@ fn keygen_create_verify_show_and_list() {
         ),
         "{out}"
     );
+    // With no --release, a list with no releases, which still verifies.
+    let (code, out, err) = packslip(
+        d,
+        &[
+            "releases",
+            "--project",
+            "tool.example.com",
+            "--sequence",
+            "5",
+            "--generated-at",
+            "2026-09-02T00:00:00Z",
+            "--key",
+            "release.key",
+            "--no-log",
+            "--out",
+            "site/empty.json",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("0 release(s), sequence 5"), "{out}");
+    let (code, out, err) = packslip(
+        d,
+        &[
+            "verify",
+            "site/empty.json",
+            "--pubkey",
+            "release.pub",
+            "--allow-unlogged",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("listing 0 release(s)"), "{out}");
     let (code, _, err) = packslip(
         d,
         &[

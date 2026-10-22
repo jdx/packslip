@@ -237,7 +237,7 @@ runs:
           releases+=("$base/$tag/$name=$bundle")
         done
         if [ "${#releases[@]}" -eq 0 ]; then
-          echo "no $name under $dir/<tag>/; a release list cannot be empty" >&2
+          echo "no $name under $dir/<tag>/; the action does not build an empty list" >&2
           exit 1
         fi
         printf '%s\n' "${releases[@]}" > "${RUNNER_TEMP}/packslip-releases"
