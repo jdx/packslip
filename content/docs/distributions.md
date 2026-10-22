@@ -1,94 +1,93 @@
 ---
-title: Distribution packages
-description: "Install from signed APT/RPM repositories, build offline source packages, or configure PPA and COPR publication."
-weight: 58
-group: consume
+title: Package packslip for a distribution
+description: Build packslip's install-cli binary from an offline source archive and package it for Debian, Ubuntu, Fedora, or another distribution.
+group: build
+weight: 68
 ---
 
-# Distribution packages
+# Package packslip for a distribution
 
-The distribution build provides `packslip install` and verification
-without the publisher commands. A native package manager installs
-packslip; packslip then installs tools from their signed upstream releases.
-See [Install a tool](/docs/bootstrap/) for usage and
-[Compatibility and support](/docs/compatibility/) for the tested platforms.
+For distribution packagers: build a packslip package that installs and
+verifies tools, without the publisher commands, offline from a source
+archive. To install packslip yourself, including from the signed APT and
+RPM repositories, see [Install packslip](/docs/install/).
 
-| Task | Start here |
-| --- | --- |
-| Install packslip through APT or DNF | [Signed APT and RPM repositories](#signed-apt-and-rpm-repositories) |
-| Install with mise, a script, or a container image | [Install packslip](/docs/getting-started/#install-packslip) |
-| Build a distribution package | [Build offline packages](#build-offline-packages) |
-| Publish source packages to Launchpad or COPR | [Configure PPA and COPR publication](#configure-ppa-and-copr-publication) |
+## Choose a build
 
-These upstream repositories are separate from a distribution's official
-archive. The source recipes bundle Cargo dependencies for offline builds;
-they do not claim admission to Debian main or compliance with Fedora's
-package policy.
+The package manager installs packslip; packslip then installs tools
+from their signed upstream releases. Build without default features and
+select one:
 
-## Signed APT and RPM repositories
-
-packslip publishes signed APT and RPM repositories for Linux x64 and
-ARM64. The packages contain a static installer and depend on the system's
-CA certificates. You do not need Rust, Cargo, or another language package
-manager to use them.
-
-The dedicated packslip package key has fingerprint
-`2A355C7DF63A62A5851534C583B336958530A3D2` and expires on October 2, 2028.
-Its [public key](/gpg-key.pub) authenticates both APT metadata and RPM packages
-and metadata. It is separate from the keys that upstream publishers use for
-their releases.
-
-For either repository, first download the key and check its fingerprint.
-These commands need `curl` and `gpg`:
+| Feature | Commands | Use it for |
+| --- | --- | --- |
+| `install-cli` | `install`, `verify`, `pin`, `show`, `completion`, `version` | A distribution package that bootstraps tools |
+| `verify-cli` | `verify`, `pin`, `show`, `completion`, `version` | A verifier-only package |
 
 ```sh
-curl --fail --silent --show-error --output packslip-key.asc https://packslip.dev/gpg-key.pub
-test "$(gpg --show-keys --with-colons packslip-key.asc | awk -F: '$1 == "fpr" {print $10; exit}')" = 2A355C7DF63A62A5851534C583B336958530A3D2
+cargo build --locked --release --no-default-features --features install-cli
+cargo build --locked --release --no-default-features --features verify-cli
 ```
 
-Continue only if the fingerprint check succeeds. On APT systems:
+- `install-cli` includes installation, verification, discovery, host
+  checks, archive extraction, and native command exports. It leaves out
+  publishing, signing, deriving `requires.libs` from executables, and
+  schema generation, so it has no publisher commands (`create`,
+  `releases`, `keygen`, `schema`).
+- The recipes and checks on this page build `install-cli`. A
+  verifier-only package needs its own recipe.
+- Both recipes build only for x64 and ARM64 (Debian `amd64` and `arm64`,
+  RPM `x86_64` and `aarch64`). On other architectures, `packslip install`
+  fails with `unsupported bootstrap host linux/<arch>`; package
+  `verify-cli` there.
+  [Supported platforms](/docs/compatibility/#supported-platforms) lists
+  the tested platforms.
 
-```sh
-gpg --dearmor --output packslip-key.gpg packslip-key.asc
-sudo install -m 644 packslip-key.gpg /usr/share/keyrings/packslip.gpg
-printf '%s\n' 'deb [signed-by=/usr/share/keyrings/packslip.gpg] https://packslip.dev/apt stable main' | sudo tee /etc/apt/sources.list.d/packslip.list
-sudo apt-get update
-sudo apt-get install packslip
-packslip install --help
-```
-
-On RPM systems, import the checked key and add the repository:
-
-```sh
-sudo rpm --import packslip-key.asc
-curl --fail --silent --show-error --output packslip.repo https://packslip.dev/rpm/packslip.repo
-sudo install -m 644 packslip.repo /etc/yum.repos.d/packslip.repo
-sudo dnf install packslip
-packslip install --help
-```
-
-The repository file enables both package and metadata signature checks.
-Keep both enabled. These signatures authenticate packslip's package
-repository; the tools it installs are checked independently against their
-publishers' release signatures and your trust policy.
+[The Rust crate's features](/docs/rust/#choose-features) lists the
+library features behind them.
 
 ## Build offline packages
 
-For local package validation, start with a committed checkout and a Rust
-toolchain compatible with `Cargo.toml`. Source preparation also needs
-Bash, Git, `tar`, and Python 3.11 or newer. Prepare the source archive:
+The source recipes in `packaging/debian/` and `packaging/rpm/packslip.spec`
+build from a source archive that bundles every Cargo dependency, so the
+package build needs no network. Neither recipe runs rustup or another
+language package manager. They do not claim admission to Debian main or
+compliance with Fedora's packaging policy.
+
+### Prepare the source archive
+
+This step needs network access, a Rust toolchain compatible with
+`Cargo.toml`, Bash, Git, `tar`, and Python 3.11 or newer. From a checkout
+of the release you are packaging, run:
 
 ```sh
+git clone https://github.com/jdx/packslip
+cd packslip
+git checkout vX.Y.Z
 scripts/package-source.sh source
 ```
 
-This exports `HEAD`, then downloads the locked Cargo dependencies into
-the source archive with their original checksum files and licenses. Commit
-changes you want to test before running it. Source preparation needs network
-access; the later package build does not. The archive keeps dependencies
-as separate crates, and only applicable platform dependencies are compiled.
+The script ends with:
 
-On Linux, with Docker available, build and install each package in its native
+```text
+Prepared packslip-X.Y.Z (complete installer, offline Cargo sources)
+```
+
+The script exports the committed `HEAD`, so commit local changes before
+testing them. It writes three files to `source/`:
+
+- `packslip-X.Y.Z.tar.gz`: the exported tree, with the locked Cargo
+  dependencies in `vendor/` and a `.cargo/config.toml` that points Cargo at
+  them.
+- `packslip_X.Y.Z.orig.tar.gz`: the same archive under its Debian name.
+- `packslip.spec`: the RPM spec with the version filled in.
+
+Each vendored crate keeps its original checksum file and license, and
+Cargo refuses one that no longer matches. The archive vendors every
+platform's dependencies; a build compiles only those its target needs.
+
+### Build and test the packages
+
+On Linux with Docker, build and install each package in its native
 distribution image:
 
 ```sh
@@ -96,93 +95,98 @@ scripts/check-distro-packages.sh deb source deb-results
 scripts/check-distro-packages.sh rpm source rpm-results
 ```
 
-Image preparation fetches the distribution's build tools. The package build,
-tests, and installation run with networking disabled and `cargo --frozen`.
-The checks also confirm the packaged CLI exposes `install`, omits publisher
-commands, and provides `/etc/packslip/pins.d` for administrator policy.
-CI requires these checks for both Linux architectures.
+- `deb` or `rpm`: the package type.
+- `source`: the directory `package-source.sh` wrote.
+- The third argument: the output directory, created if missing. It
+  receives the packages (`.deb`, or `.rpm` and `.src.rpm`) and the
+  packaged CLI's `installer.usage.kdl`.
 
-For unsigned source packages, install `devscripts`, `debhelper`, and `rpm`,
-then run:
+The `deb` check uses an Ubuntu 26.04 image and the `rpm` check a Fedora 44
+image, each with its distribution's Rust toolchain. Preparing the image
+fetches the build tools. The package build, tests, and installation then
+run with networking disabled and `cargo --frozen`.
+
+Each check fails unless the installed package:
+
+- runs `packslip install --help`;
+- omits the publisher commands;
+- provides `/etc/packslip/pins.d` for administrator policy.
+
+### Build unsigned source packages
+
+Install `devscripts`, `debhelper`, and `rpm`, then run:
 
 ```sh
 scripts/package-debian-source.sh source resolute
 scripts/package-rpm-source.sh source
 ```
 
-The Debian source uses a separate quilt orig archive. The RPM source package
-includes the same vendored source and a spec for the complete installer.
-Neither recipe invokes rustup or another language package manager during
-the distribution build. The build environment must supply a Rust toolchain
-at least as new as `rust-version` in `Cargo.toml`.
+- `package-debian-source.sh` builds a `3.0 (quilt)` source package with
+  the separate orig archive. The second argument is the target series
+  (default `resolute`). The unsigned `.dsc`, `.debian.tar.*`,
+  `.changes`, and `.buildinfo` files land in `source/`.
+- `package-rpm-source.sh` writes a `.src.rpm` to `source/` with the same
+  vendored source and a spec that builds the `install-cli` binary.
 
-## Configure PPA and COPR publication
+The Debian source package carries upstream's changelog entry and
+maintainer, so use it for testing. `PACKAGE_REVISION` sets that entry's
+revision number (default `1`). To build one under your own name:
 
-These workflows are publication recipes. Configure the accounts and
-validate their published packages before directing users to them.
+1. Unpack the archive beside its orig copy and add the Debian recipe:
 
-Create a Launchpad PPA and COPR project before enabling publication. Defaults
-are `ppa:jdxcode/packslip`, Ubuntu `resolute`, and COPR `jdxcode/packslip` with
-`fedora-44-x86_64` and `fedora-44-aarch64` chroots. Enable both architectures in
-the PPA. Register the source-signing key with Launchpad; COPR signs its own
-resulting repository packages.
+   ```sh
+   cd source
+   tar -xf packslip-X.Y.Z.tar.gz
+   cd packslip-X.Y.Z
+   cp -R packaging/debian debian
+   ```
 
-The `distro-source.yml` workflow accepts an already published stable release
-tag. It resolves that tag to a commit, checks the package version, prepares
-offline source packages, signs the Debian upload, and waits for both COPR
-architecture builds. Publishing credentials are available only in the
-publication jobs, after source preparation.
+2. Set `Maintainer` in `debian/control`.
+3. Write your own `debian/changelog` (for example with `dch`) with a
+   version `X.Y.Z-<revision>`, so `dpkg-source` finds the orig archive.
+4. Run `dpkg-buildpackage -S -d`. It signs the upload with your GPG key.
+   `-d` skips checking the build dependencies in `debian/control`, which
+   a source-only build does not use.
 
-| Setting | Purpose |
-| --- | --- |
-| Secret `PACKSLIP_GPG_KEY` | Private source-signing key accepted by Launchpad. |
-| Variable `PACKSLIP_GPG_FINGERPRINT` | Full 40-character fingerprint of that key. |
-| Secrets `COPR_API_LOGIN`, `COPR_API_TOKEN` | COPR build submission credentials. |
-| Variable `PPA_NAME` | PPA destination; defaults to `ppa:jdxcode/packslip`. |
-| Variables `PPA_DISTRIBUTION`, `PPA_REVISION` | Ubuntu series and source revision; defaults to `resolute` and `1`. Increment the revision for a source-package rebuild of the same upstream version. |
-| Variables `COPR_OWNER`, `COPR_PROJECT`, `COPR_CHROOTS` | COPR destination and architecture chroots. |
+## Write your own recipe
 
-Use the `ppa-publishing` and `copr-publishing` GitHub environments to restrict
-credential access. Once the accounts and settings are ready, dispatch a release:
+The recipes build and test with:
 
 ```sh
-gh workflow run distro-source.yml -f tag=vX.Y.Z
+cargo build --release --frozen --no-default-features --features install-cli --bin packslip
+cargo test --frozen --no-default-features --features install-cli
 ```
 
-An accepted PPA upload is not evidence that Launchpad built or published both
-architectures. Check those builds separately. COPR submission waits for its
-build results. Before announcing either repository, install its package on a
-clean native machine, confirm `packslip install --help`, and run the
-[publisher adoption checks](/docs/compatibility/#installation-platforms-and-tool-handoff).
+The build environment needs a Rust toolchain at least as new as
+`rust-version` in `Cargo.toml`, a C compiler, CMake, pkg-config, and `jq`.
+Only the action integration tests use `jq`; the installed CLI does not.
+The package needs the system's CA certificates at run time.
 
-The PPA/COPR signature authenticates packslip's package distribution. It does
-not approve the publishers installed by `packslip install`: their release
-signatures, remembered identities, freshness, and administrator constraints
-are still checked independently.
+Both recipes set `AWS_LC_SYS_NO_JITTER_ENTROPY=1` while building and
+testing, because the jitter-entropy sources of `aws-lc-sys` must compile
+without the distribution's optimization flags. The RPM spec also adds
+`-fPIE` to `LDFLAGS` for Fedora's hardening flags.
 
-## Maintain the direct repositories
+Both recipes install:
 
-Repository CI uses an ephemeral key, tests APT and DNF installation on both
-native Linux architectures, and rejects altered metadata, a wrong key, and
-a modified RPM. Publication signs with the dedicated production key; PR
-validation never receives that private key.
+| Installed path | Source |
+| --- | --- |
+| `/usr/bin/packslip` | The `install-cli` build |
+| `/etc/packslip/pins.d/` | An empty directory for administrators' pin files; see [Require signers with pin files](/docs/bootstrap/#require-signers-with-pin-files) |
+| `/usr/share/man/man1/packslip.1` | `packaging/packslip.1`, the `install-cli` man page |
+| `/usr/share/bash-completion/completions/packslip` | `packslip completion bash` |
+| `/usr/share/zsh/site-functions/_packslip` | `packslip completion zsh` |
+| `/usr/share/fish/vendor_completions.d/packslip.fish` | `packslip completion fish` |
+| `bootstrap.md` in the documentation directory | `content/docs/bootstrap.md` |
+| The license | `LICENSE`: Debian installs it as `/usr/share/doc/packslip/copyright-upstream`; the RPM marks it `%license` |
 
-`PACKAGE_REPOSITORIES_ENABLED=true` enables direct repository publication
-in the release workflow. It requires the repository-serving Worker and a
-stable release with the installer and packaging recipes. A weekly refresh
-keeps APT's fourteen-day signed metadata expiry current.
-`DISTRO_SOURCE_ENABLED=true` separately enables PPA and COPR source uploads.
-Publication jobs use the `package-repositories`,
-`ppa-publishing`, and `copr-publishing` environments.
+Packaging compresses the man page to `packslip.1.gz`, and Debian's tools
+also compress `bootstrap.md`. The RPM also ships `README.md`.
 
-APT indices and package payloads have content-addressed names; publication
-retains older objects so clients using an earlier authenticated index can
-finish their downloads. The signed APT `InRelease` object is published last.
-RPM's metadata and detached signature are separate requests: a concurrent
-refresh can briefly fail signature verification and should be retried.
-Keep signature checks enabled.
+## Keep a packaged version current
 
-Before key expiry, publish the replacement key and fingerprint through the
-documentation, update the publishing secret, and give repository users time
-to install the new key. Retain the old public key through the transition;
-clients must explicitly trust a replacement key.
+An unchanged package keeps working while its formats are supported and its
+trust root is current; a `verify-cli` build never refreshes its trust root.
+[Maintaining packaged
+verifiers](/docs/compatibility/#maintaining-packaged-verifiers) says what
+forces an update and what upstream backports.

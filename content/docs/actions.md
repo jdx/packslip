@@ -1,6 +1,6 @@
 ---
 title: GitHub Actions reference
-description: Inputs, outputs, and defaults of the jdx/packslip and jdx/packslip/releases actions, with the release that added each one.
+description: Every input and output of the jdx/packslip actions, how they check the packslip CLI, and what runners need.
 group: reference
 weight: 80
 ---
@@ -8,7 +8,74 @@ weight: 80
 
 # GitHub Actions reference
 
+Use this reference to write or review a workflow that runs `jdx/packslip`
+or `jdx/packslip/releases`. It gives each input's default and the release
+that added it, and how the actions choose and check the packslip CLI. To add
+the action step by step, follow [Publish with GitHub Actions](/docs/publishing/).
+
+## Versions and pinning
+
+The actions and the packslip CLI share one version number: each tag `vX.Y.Z`
+releases both, even when only an action changed. Both actions take these
+references; for the release list action, write `jdx/packslip/releases` in
+place of `jdx/packslip`:
+
+| Reference | What the workflow runs |
+| --- | --- |
+| `jdx/packslip@v1` | The latest 1.x release; `v1` moves to each release's commit once it is published. |
+| `jdx/packslip@vX.Y.Z` | Release X.Y.Z, which runs CLI X.Y.Z by default. |
+| `jdx/packslip@<full-commit-sha> # vX.Y.Z` | The same release, fixed to its commit. |
+
+A breaking change gets a new major tag, such as `v2`; after it, workflows on
+`@v1` stop receiving updates until they move to `@v2`.
+
+GitHub only warns `Unexpected input(s)` about an input the pinned release does
+not define, then runs the step without it. Check each input's Since column
+against the release you pin.
+
+### Pin the action to a commit
+
+The action's code decides what your workflow signs. As hardening, pin a
+release's full commit with the version in a comment, as
+[Publish with GitHub Actions](/docs/publishing/) does for
+`actions/upload-artifact`:
+
+```yaml
+- uses: jdx/packslip@<full-commit-sha> # vX.Y.Z
+```
+
+Release tags are annotated, so ask for the commit a tag points at:
+
+```sh
+git ls-remote https://github.com/jdx/packslip 'refs/tags/vX.Y.Z^{}'
+```
+
+Pinning the commit also pins the CLI download on every platform, with no
+hashes in your workflow; see
+[CLI version and download checks](#cli-version-and-download-checks).
+
 ## Publish action
+
+`jdx/packslip` signs keylessly. Its job needs these permissions:
+
+- `id-token: write`, always.
+- `attestations: write` while `attest` is `true`, the default.
+- `contents: write` while `upload` is `true`, the default.
+
+It runs these steps:
+
+1. Installs the packslip CLI; see
+   [CLI version and download checks](#cli-version-and-download-checks).
+2. Fetches the assets `download` matches from the release named by `tag`
+   into a new temporary directory; `token` must be able to read it.
+3. Collects those and the files `artifacts` matches, or fails with
+   `no artifacts matched`.
+4. Attests the collected files, unless `attest` is `link` or `false`; see
+   [Build provenance](#build-provenance).
+5. Runs `packslip create` to create and sign the statement.
+6. Verifies the bundle against the workflow's repository and GitHub's issuer.
+7. Uploads the bundle to the release named by `tag` unless `upload` is
+   `false`.
 
 ### Publish action inputs
 
@@ -19,17 +86,17 @@ weight: 80
 | `project` |  | 1.0.0 | The project's name; defaults to github.com/\<owner\>/\<repo\>. A tool in a monorepo names itself github.com/\<owner\>/\<repo\>/\<tool\> and runs this step once per tool. A host such as mytool.example.com names a project on its own domain; see https://packslip.dev/docs/self-hosting/. |
 | `version` |  | 1.0.0 | The release's semver version, such as 1.2.3; defaults to the tag without a leading v. Set it for tags such as mytool-v1.2.3 or v4.1, which the action does not normalize. |
 | `tag` |  | 1.0.0 | The release tag, such as v1.2.3. Defaults to the tag that triggered the workflow and is required otherwise. The action records it as the source tag, derives the default version, url-base, and notes-url from it, and downloads from and uploads to that release. |
-| `commit` |  | 1.3.0 | Source commit recorded in the release manifest; defaults to github.sha. Set this to the full commit SHA of the release tag when publishing a different revision, for example from a manually dispatched workflow. This does not change the workflow identity or artifact provenance. |
+| `commit` |  | 1.3.0 | Source commit recorded in the release bundle; defaults to github.sha. Set this to the full commit SHA of the release tag when publishing a different revision, for example from a manually dispatched workflow. This does not change the workflow identity or artifact provenance. |
 | `url-base` |  | 1.0.0 | Download URL prefix; defaults to this release's download URL |
 | `bin` |  | 1.0.0 | Executables inside every artifact, whitespace separated: a path relative to the archive root, a plain name to look up inside each archive (`tool` finds `tool-1.2.3-linux-x64/tool`), or NAME=PATH when the command name differs from the file's. For a bare executable artifact, the value is the name the file gets on PATH. |
-| `manifest` |  | 1.0.0 | A TOML manifest (`packslip create --manifest`) for what the inputs cannot say per artifact: executables at different paths in different archives, a platform the file name does not give, an artifact that runs anywhere, OS or glibc minimums, and resources for one artifact. Artifacts it lists are merged with the collected files. The action always sets project, version, url\_base, notes\_url, and \[source\] itself, from its inputs, their defaults, and the workflow's repository, so those keys in the file are ignored. The file must be present in the job, so check out the repository first. |
+| `manifest` |  | 1.0.0 | A release.toml file (`packslip create --manifest`) for what the inputs cannot say per artifact: executables at different paths in different archives, a platform the file name does not give, an artifact that runs anywhere, OS or glibc minimums, and resources for one artifact. Artifacts it lists are merged with the collected files. The action always sets project, version, url\_base, notes\_url, and \[source\] itself, from its inputs, their defaults, and the workflow's repository, so those keys in the file are ignored. The file must be present in the job, so check out the repository first. |
 | `variants` |  | 1.0.0 | Variants for artifacts that share a platform, as FILENAME=VARIANT, whitespace separated (tool-fips-linux-x64.tar.gz=fips). |
 | `formats` |  | 1.0.0 | The format of an artifact whose name does not say, as FILENAME=FORMAT, whitespace separated (tool-linux-x64.bin=raw). Every artifact needs one; the name gives it for the usual archive, installer, and bare executable spellings, and this is for the rest. |
 | `resources` |  | 1.0.0 | What ships besides the executables, one per line, each a `packslip create --resource` value: KIND\[/QUALIFIER\]\[@os\[/arch\[/libc\]\]\]=SOURCE:VALUE. For example: completion/zsh=archive:share/zsh/site-functions/\_tool, man=archive:share/man/man1/tool.1, cli-spec/usage=exec:tool usage, skill/tool=repo:skills/tool, skill/tool=asset:dist/tool-skill.tar.gz, or sbom/cyclonedx=asset:dist/tool.cdx.json. An @ scope limits an entry to one platform (man@linux=archive:share/man/man1/tool.1). An asset is a local file that is digested with the artifacts; upload it to the release yourself, because the action uploads only the bundle. A file the artifacts input also matched is recorded as the asset, not as an artifact. |
 | `require` |  | 1.0.0 | Commands the executables need on PATH, one per line, each a `packslip create --require` value: bin:NAME or bin:NAME@MIN, such as bin:java@17. What the executables load from the host is read from them and needs no input. |
 | `notes-url` |  | 1.0.0 | URL of the release notes; defaults to the release page |
 | `extensions` |  | 1.0.0 | Release-level extensions, one per line, each a `packslip create --extension` value: NAME=JSON, where NAME is who defines the value (a consumer such as mise, or a domain the vendor controls) and JSON is the value, such as example.com={"build\_id":"20260901.3"}. |
-| `attest` | `true` | 1.0.0 | What to do about build provenance. `true` attests every file collected by artifacts and download with actions/attest-build-provenance, links each artifact's attestation from the packslip, and needs the attestations: write permission; an artifact listed only in the TOML manifest is neither attested nor linked. `link` only links the attestations, for a workflow whose build jobs already attested the files as they produced them; it needs no extra permission, and an artifact nothing attested leaves a URL that resolves to nothing. `false` does neither. In a private or internal repository, GitHub attestations need GitHub Enterprise Cloud, so use `false` on other plans. |
+| `attest` | `true` | 1.0.0 | What to do about build provenance. `true` attests every file collected by artifacts and download with actions/attest-build-provenance, links each artifact's attestation from the packslip, and needs the attestations: write permission; an artifact listed only in the manifest input's release.toml is neither attested nor linked. `link` only links the attestations, for a workflow whose build jobs already attested the files as they produced them; it needs no extra permission, and an artifact nothing attested leaves a URL that resolves to nothing. `false` does neither. In a private or internal repository, GitHub attestations need GitHub Enterprise Cloud, so use `false` on other plans. |
 | `out` | `packslip` | 1.0.0 | Directory to write the bundle into. The file is packslip.sigstore.json, or packslip.\<subpath\>.sigstore.json for a tool in a GitHub monorepo (github.com/\<owner\>/\<repo\>/\<subpath\>), with any / in the subpath written as -. |
 | `upload` | `true` | 1.0.0 | Upload the bundle to the release named by tag, which needs contents: write. Defaults to true. Set false to sign in a job that has only contents: read, then upload the bundle output from a separate job that has contents: write; see https://packslip.dev/docs/publishing/#keep-the-action-away-from-release-write-access. |
 | `packslip-version` |  | 1.0.0 | The packslip version to run, such as 1.4.0, without a leading v; defaults to the version this action was released with (read from its Cargo.toml). An explicit override bypasses the internal release digest map with a warning; use packslip-sha256 for an explicit archive pin. Ignored when packslip-path is set. |
@@ -45,7 +112,70 @@ weight: 80
 | `bundle` | 1.0.0 | Path of the written bundle, under out |
 {.action-table}
 
+### How inputs reach packslip create
+
+The action always passes `--project`, `--version`, `--tag`, `--commit`,
+`--url-base`, `--notes-url`, and `--source-repo` to `packslip create`, from
+its inputs or their defaults. They override a release.toml given as
+`manifest`. `--source-repo` is always the workflow's repository,
+`https://github.com/<owner>/<repo>`. `commit` sets only `source.commit` in
+the statement, not the signing identity or the build provenance.
+
+Besides those seven flags, the inputs map this way:
+
+| Input | What the action passes to `packslip create` |
+| --- | --- |
+| `artifacts`, `download`, `variants` | Each collected file as a positional `ARTIFACTS` argument: `PATH`, or `PATH@VARIANT` when a `variants` entry names it |
+| `bin`, `formats` | `--bin`, `--format` for each entry |
+| `resources`, `require`, `extensions` | `--resource`, `--require`, `--extension` for each line |
+| `manifest`, `out` | `--manifest`, `--out` |
+| `attest` set to `true` or `link` | `--provenance NAME=URL` for each collected file |
+
+`upload`, `token`, and the `packslip-` inputs have no flag. A project that
+runs `packslip create` in place of the action, such as one
+that needs `--no-pin-workflow`, passes the same flags;
+[`packslip create`](/cli/create/) documents each one.
+
+### Build provenance
+
+`attest: true`, the default, attests the collected files and links each
+attestation from the packslip. `link` only links, and `false` does neither;
+use `false` in a private or internal repository without GitHub Enterprise
+Cloud. Each link is
+`https://api.github.com/repos/<owner>/<repo>/attestations/sha256:<digest>`.
+
+- Use `link` when your build jobs already attest each final file; GitHub
+  serves provenance by digest, whichever job attested it. `link` does not
+  check that an attestation exists.
+- To attest and link an artifact that only release.toml lists, add it to
+  `artifacts` too.
+- A resource asset carries no provenance link. The action attests one only
+  when `artifacts` or `download` also collected it.
+
+Before you switch to `false` after releases that carried provenance, read
+[Keep later releases acceptable](/docs/publishing/#keep-later-releases-acceptable).
+
 ## Release list action
+
+`jdx/packslip/releases` turns the bundles a project has published, laid out
+as `<dir>/<tag>/packslip.sigstore.json`, into a signed release list. See
+[Host releases on your own domain](/docs/self-hosting/) for the workflow and
+[Manage release lists](/docs/release-lists/) for what a list does. It signs
+keylessly, so its job needs `id-token: write`. It runs these steps:
+
+1. Installs the packslip CLI as the publish action does.
+2. Verifies every bundle under one identity policy (`issuer` with `identity`
+   or `identity-prefix`), refusing one whose source tag differs from its
+   directory's name.
+3. Builds and signs the list with `packslip releases`, which refuses a bundle
+   for another project. A tag in `yank` or `security` stands for
+   `<url-base>/<tag>/<bundle>`; a URL is used as given.
+4. Verifies the written list under the same identity policy.
+
+With no bundles in `dir`, the action fails with
+`no packslip.sigstore.json under <dir>/<tag>/; the action does not build an empty list`.
+To publish a list with no releases, follow
+[Retire every entry](/docs/release-lists/#retire-every-entry).
 
 ### Release list action inputs
 
@@ -57,7 +187,7 @@ weight: 80
 | `bundle` | `packslip.sigstore.json` | 1.1.0 | The bundle file name inside every tag directory. packslip create names every domain project's bundle packslip.sigstore.json, including a project with a path such as example.com/tool, so set this only if you uploaded the bundles under another name. |
 | `sequence` |  | 1.1.0 | The list's sequence, an integer that must increase with every list published; defaults to the current Unix time, which does so with no state to keep. A consumer refuses a list whose sequence is below one it accepted, so a project that switches to the default cannot go back to small hand-picked numbers. |
 | `valid-for` | `30d` | 1.1.0 | How long the list stays current, as a number and unit (30d, 12h, 2w). Publish a fresh list before it expires, whether or not a release shipped. |
-| `latest` |  | 1.1.0 | Recommend this exact listed version for unconstrained latest requests. Give the version, such as 1.2.3, not the tag that yank and security take. Empty leaves consumers to take the highest eligible version. |
+| `latest` |  | 1.1.0 | Recommend this exact listed version for unconstrained latest requests. Give the version, such as 1.2.3, not the tag that yank and security take. Empty leaves consumers to take GitHub's latest release for a GitHub project, and the highest eligible version for any other. |
 | `yank` |  | 1.1.0 | Releases to mark withdrawn, one per line, as TAG=REASON or URL=REASON. A withdrawn release stays in the list with its status. These marks apply to this run's list only; a later run without them drops them. |
 | `security` |  | 1.1.0 | Releases that fix a vulnerability, one per line, as a TAG or URL. These marks apply to this run's list only; a later run without them drops them. |
 | `identity-prefix` |  | 1.1.0 | The certificate identity prefix every input bundle, and the output list, must verify under; defaults to this repository's workflows. |
@@ -78,3 +208,66 @@ weight: 80
 | `list` | 1.1.0 | Path of the written list |
 | `count` | 1.1.0 | How many releases the list names |
 {.action-table}
+
+## CLI version and download checks
+
+By default, an action runs the CLI release with its own version, read from
+its commit's `Cargo.toml`. `packslip-version` picks another release. The
+action downloads `packslip-vX.Y.Z-<os>-<arch>.tar.xz`, or `.zip` on Windows,
+for `linux`, `darwin`, or `windows` on `x64` or `arm64`. There is no
+`darwin-x64` archive; see
+[Build the CLI on the runner](/docs/publishing/#build-the-cli-on-the-runner).
+
+Each release's action commit includes a digest map: the SHA-256 of the CLI
+archive for every platform packslip ships. With the default version, the
+action checks the downloaded archive against that map. It then verifies the
+archive's build provenance from jdx/packslip with `gh attestation verify`,
+and only then extracts and runs it. A `packslip-sha256` set alongside the
+default version must agree with the map. An action commit without the map
+stops with
+`the action checkout has no release digest map; use a published action commit`
+unless `packslip-version` or `packslip-path` is set.
+
+`packslip-path` runs an executable the job already has (a path, or a name on
+PATH) as `packslip` for the remaining steps. It downloads nothing and skips
+both checks, so the job vouches for the binary. It takes precedence over
+`packslip-version` and `packslip-sha256`, and the action warns when either is
+also set.
+
+### Override the CLI version
+
+With `packslip-version` set, the action skips the digest map, with a warning,
+and still verifies the archive's build provenance from jdx/packslip. To pin
+that archive too, set `packslip-sha256`:
+
+```yaml
+- uses: jdx/packslip@<full-commit-sha> # vX.Y.Z
+  with:
+    packslip-version: 1.10.1
+    packslip-sha256: <64 lowercase hex digits>
+    artifacts: dist/*.tar.xz
+    bin: mytool
+```
+
+Take the digest from the asset's metadata on GitHub:
+
+```sh
+gh release view v1.10.1 --repo jdx/packslip --json assets \
+  --jq '.assets[] | select(.name == "packslip-v1.10.1-linux-x64.tar.xz") | .digest | ltrimstr("sha256:")'
+```
+
+Each platform's archive has its own digest, so a matrix that spans platforms
+gives each runner its own.
+
+## Runner requirements
+
+GitHub-hosted Linux and Windows runners have every tool the actions use. Check
+macOS and self-hosted runners for these:
+
+| Tool | Used for |
+| --- | --- |
+| `bash` 4.4 or later | Every step; macOS's own `/bin/bash` 3.2 is too old. |
+| GitHub CLI (`gh`) 2.68.0 or later | Installing and verifying packslip, downloading assets, and uploading the bundle. An older `gh` fails the default CLI's provenance check. |
+| `tar` with xz support, or `unzip` on Windows | Unpacking the CLI. |
+| `sha256sum` | Linking provenance by digest and checking the CLI download; `shasum` also works for the download. |
+| `jq` | Reading the digest map, and in the releases action each bundle's tag. |

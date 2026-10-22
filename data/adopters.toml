@@ -1,0 +1,395 @@
+# Tools that have published a signed packslip release bundle, rendered on
+# /docs/who-is-using-packslip/ by layouts/shortcodes/adopters.html. The page
+# takes its counts and both dates from this file.
+#
+# surveyed is the date of the last search for published bundles. Change it
+# only after a fresh search for new adopters. Adding or changing a row
+# without that search leaves it as it is.
+#
+# checked and checked_with record the last check of every listed bundle.
+# Every row links a GitHub release (github.com/<repository>/releases/tag/<tag>)
+# and the bundle attached to it (<bundle>). When you add or change a row,
+# check every listed bundle again, then update checked and checked_with:
+# compare each bundle with the SHA-256 digest GitHub records for the asset,
+# then run packslip verify --issuer https://token.actions.githubusercontent.com
+# --source-repository https://github.com/<repository> on it.
+
+surveyed = "2026-10-13"
+checked = "2026-10-13"
+checked_with = "1.7.0"
+
+# Bundles published in the software's own upstream release repository.
+# One row per separately installable tool; prerelease marks a GitHub
+# prerelease.
+
+[[upstream]]
+tool = "anna"
+repository = "h3y6e/anna"
+version = "2026.10.3"
+tag = "v2026.10.3"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "Aube"
+repository = "aubepkg/aube"
+version = "2.7.0"
+tag = "v2.7.0"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "aws-sso-config-generator"
+repository = "djgoku/aws-sso-config-generator"
+version = "0.4.3"
+tag = "0.4.3"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "bercail"
+repository = "simoncrypta/bercail"
+version = "0.7.0"
+tag = "v0.7.0"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "bracco"
+repository = "rawnly/bracco"
+version = "0.2.4"
+tag = "v0.2.4"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "clrnd"
+repository = "masasuzu/clrnd"
+version = "0.5.1"
+tag = "v0.5.1"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "communique"
+repository = "jdx/communique"
+version = "1.6.0"
+tag = "v1.6.0"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "cxg"
+repository = "h3y6e/cxg"
+version = "2026.9.1"
+tag = "v2026.9.1"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "Dagu"
+repository = "dagucloud/dagu"
+version = "2.19.2"
+tag = "v2.19.2"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "docgraph"
+repository = "JTarasovic/docgraph"
+version = "0.5.1"
+tag = "v0.5.1"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "Flint"
+repository = "grafana/flint"
+version = "0.22.14"
+tag = "v0.22.14"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "fnox"
+repository = "jdx/fnox"
+version = "1.39.0"
+tag = "v1.39.0"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "FSL compiler (fslc)"
+repository = "ymm-oss/fsl"
+version = "4.10.0"
+tag = "v4.10.0"
+bundle = "packslip.fslc.sigstore.json"
+
+[[upstream]]
+tool = "FSL language server (fslc-lsp)"
+repository = "ymm-oss/fsl"
+version = "4.10.0"
+tag = "v4.10.0"
+bundle = "packslip.fslc-lsp.sigstore.json"
+
+[[upstream]]
+tool = "Helmfile"
+repository = "helmfile/helmfile"
+version = "1.8.1"
+tag = "v1.8.1"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "hk"
+repository = "jdx/hk"
+version = "2.6.0"
+tag = "v2.6.0"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "jactionlint"
+repository = "jdx/jactionlint"
+version = "2.1.0"
+tag = "v2.1.0"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "Jenesis"
+repository = "jenesis/jenesis"
+version = "0.15.5"
+tag = "v0.15.5"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "jpx"
+repository = "jenesis/jenesis"
+version = "0.15.5"
+tag = "v0.15.5"
+bundle = "packslip.jpx.sigstore.json"
+
+[[upstream]]
+tool = "kagikae"
+repository = "webkaz-labs/kagikae"
+version = "0.24.1"
+tag = "v0.24.1"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "kakitsugi"
+repository = "ta-dadadada/kakitsugi"
+version = "0.1.0"
+tag = "v0.1.0"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "mise"
+repository = "jdx/mise"
+version = "2026.10.9"
+tag = "v2026.10.9"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "mkghtag"
+repository = "suzuki-shunsuke/mkghtag"
+version = "0.1.14-10"
+tag = "v0.1.14-10"
+bundle = "packslip.sigstore.json"
+prerelease = true
+
+[[upstream]]
+tool = "mr-boxington"
+repository = "jdx/mr-boxington"
+version = "1.23.0"
+tag = "v1.23.0"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "mrq"
+repository = "flou/mrq"
+version = "0.1.0"
+tag = "v0.1.0"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "node-auth"
+repository = "the-chris-strange/node-auth"
+version = "0.3.0"
+tag = "v0.3.0"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "oci-extract"
+repository = "amartani/oci-extract"
+version = "0.18.0"
+tag = "0.18.0"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "op-s3-credentials"
+repository = "SeanLatimer/op-s3-credentials"
+version = "0.1.1"
+tag = "v0.1.1"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "packslip"
+repository = "jdx/packslip"
+version = "1.7.0"
+tag = "v1.7.0"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "pitchfork"
+repository = "jdx/pitchfork"
+version = "2.30.1"
+tag = "v2.30.1"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "plasma-drop"
+repository = "SkeLLLa/plasma-drop"
+version = "1.12.0"
+tag = "v1.12.0"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "quartz-drop"
+repository = "SkeLLLa/quartz-drop"
+version = "1.0.1"
+tag = "v1.0.1"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "sobalink"
+repository = "webkaz-labs/sobalink"
+version = "0.4.0-alpha.4"
+tag = "v0.4.0-alpha.4"
+bundle = "packslip.sigstore.json"
+prerelease = true
+
+[[upstream]]
+tool = "Splash CLI"
+repository = "rawnly/splash-cli"
+version = "4.2.0"
+tag = "4.2.0"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "star-forge"
+repository = "SkeLLLa/star-forge"
+version = "1.3.2"
+tag = "v1.3.2"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "tak"
+repository = "jdx/tak"
+version = "0.0.15"
+tag = "v0.0.15"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "Timoni"
+repository = "stefanprodan/timoni"
+version = "0.35.0"
+tag = "v0.35.0"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "ToolR"
+repository = "s0undt3ch/ToolR"
+version = "0.34.1"
+tag = "v0.34.1"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "touchcue"
+repository = "TheAifam5/touchcue"
+version = "0.2.1"
+tag = "v0.2.1"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "usage"
+repository = "jdx/usage"
+version = "6.12.1"
+tag = "v6.12.1"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "Worktrunk"
+repository = "max-sixty/worktrunk"
+version = "0.80.0"
+tag = "v0.80.0"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "yerk"
+repository = "salotz/yerk"
+version = "0.0.1"
+tag = "v0.0.1"
+bundle = "packslip.sigstore.json"
+
+[[upstream]]
+tool = "zeile"
+repository = "Entze/zeile"
+version = "0.9.0"
+tag = "v0.9.0"
+bundle = "packslip.sigstore.json"
+
+# Releases of another project's software. kind is "repackager" when the
+# statement says "attested_by": "repackager" and its artifacts are the
+# vendor's own files, or "build" when the publisher builds the upstream
+# source and signs its own build as the vendor of its project. Any other
+# kind fails the site build. prerelease marks a GitHub prerelease, as above.
+
+[[third_party]]
+software = "CANiv"
+home = "https://docs.ctr-electronics.com/cli-tools.html#caniv"
+repository = "jonahsnider/ctre-packslip"
+kind = "repackager"
+version = "1.1.1+ctre.0"
+tag = "caniv-v1.1.1+ctre.0"
+bundle = "packslip.caniv.sigstore.json"
+
+[[third_party]]
+software = "Corvus"
+home = "https://docs.ctr-electronics.com/cli-tools.html#corvus"
+repository = "jonahsnider/ctre-packslip"
+kind = "repackager"
+version = "26.50.0"
+tag = "corvus-v26.50.0"
+bundle = "packslip.corvus.sigstore.json"
+
+[[third_party]]
+software = "GNU Emacs"
+home = "https://www.gnu.org/software/emacs/"
+repository = "djgoku/misemacs-emacs-master"
+kind = "build"
+version = "2026.10.12"
+tag = "v2026.10.12"
+bundle = "packslip.sigstore.json"
+
+[[third_party]]
+software = "Owlet"
+home = "https://docs.ctr-electronics.com/cli-tools.html#owlet"
+repository = "jonahsnider/ctre-packslip"
+kind = "repackager"
+version = "26.3.0"
+tag = "owlet-v26.3.0"
+bundle = "packslip.owlet.sigstore.json"
+
+[[third_party]]
+software = "Passerine"
+home = "https://docs.ctr-electronics.com/cli-tools.html#passerine"
+repository = "jonahsnider/ctre-packslip"
+kind = "repackager"
+version = "0.0.1"
+tag = "passerine-v0.0.1"
+bundle = "packslip.passerine.sigstore.json"
+
+[[third_party]]
+software = "Phoenix Diagnostics Server"
+home = "https://docs.ctr-electronics.com/cli-tools.html#phoenix-diagnostic-server"
+repository = "jonahsnider/ctre-packslip"
+kind = "repackager"
+version = "26.3.0"
+tag = "phoenix-diagnostics-server-v26.3.0"
+bundle = "packslip.phoenix-diagnostics-server.sigstore.json"
+
+[[third_party]]
+software = "RustDesk Server"
+home = "https://github.com/rustdesk/rustdesk-server"
+repository = "webkaz-labs/rustdesk-server-macos"
+kind = "build"
+version = "0.1.1"
+tag = "v0.1.1"
+bundle = "packslip.sigstore.json"

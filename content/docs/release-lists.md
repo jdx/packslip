@@ -1,63 +1,36 @@
 ---
 title: Manage release lists
-weight: 40
+description: Publish a signed release list to withdraw releases, mark security fixes, recommend a default version, or list a domain project's releases.
 group: publish
-description: Publish a signed release list, withdraw versions, and recommend a default version.
+weight: 42
 ---
 # Manage release lists
 
-Publish a signed release list to tell consumers which versions are
-available, withdraw a broken release, mark a security fix, or recommend a
-default version. Each entry points to a release bundle and records its
-digest. Updating the list leaves the individual release manifests intact.
+Publishers use a signed release list to withdraw releases, mark security fixes, recommend a default version, or list a domain project's releases. You will build one with `packslip releases`, publish it, and keep it current.
+To build a domain project's list in GitHub Actions with the `jdx/packslip/releases` action, follow [Host releases on your own domain](/docs/self-hosting/).
 
-A project on its own domain must publish a list; a GitHub project may add
-one. This page covers the list itself and `packslip releases`. To publish
-from GitHub Actions to a host you run, follow
-[Host releases on your own domain](/docs/self-hosting/).
+A release list tells consumers which versions are available. Each entry points to a release bundle and records its digest, so withdrawing or recommending a release changes only the list.
 
-Publishing a list also means maintaining it: schedule a refresh before
-expiry and retain withdrawals on every rebuild. Consumers that have
-accepted a list reject a missing or expired replacement. See
-[Refresh or withdraw releases](#refresh-or-withdraw-releases) for the
-update procedure.
+## Decide whether you need a list
 
-## Where consumers look for the list
+| Project | List | Where consumers find it |
+| --- | --- | --- |
+| `mytool.example.com` | Required | `https://mytool.example.com/.well-known/packslip.json` |
+| `example.com/tools/mytool` | Required | `https://example.com/.well-known/packslip/tools/mytool.json` |
+| `github.com/owner/mytool` | Optional | `.well-known/packslip.json` on the repository's default branch |
+| `github.com/owner/tools/mytool` | Optional | `.well-known/packslip/mytool.json` on the default branch |
 
-For a project named after its own domain, the signed list is the only
-place consumers find releases. For a GitHub project, it supplements
-discovery from release tags that name a version. Add a list when you need
-withdrawals, security markers, a recommended version, or a release whose
-tag does not name a version.
+A domain project's consumers find releases only in its signed list. They do not offer a release the list leaves out, and they refuse a project with no list.
 
-The project name sets the list's location:
+github.com does not serve the well-known path, so a GitHub project commits its list to its default branch, where GitHub serves it at `https://raw.githubusercontent.com/owner/mytool/HEAD/.well-known/packslip.json`. GitLab is verify-only: version 1 defines no discovery for `gitlab.com` ([Discovery](/release/v1/#discovery)).
 
-| Project name | Where consumers find the signed list |
-| --- | --- |
-| `mytool.example.com` | `https://mytool.example.com/.well-known/packslip.json` |
-| `example.com/tools/mytool` | `https://example.com/.well-known/packslip/tools/mytool.json` |
-| `github.com/owner/repo` | Optional `.well-known/packslip.json` on the default branch. |
-| `github.com/owner/repo/tools/mytool` | Optional `.well-known/packslip/tools/mytool.json` on the default branch. |
+On GitHub, consumers find versions from release tags that name a version. A list there is supplementary: it overrides the releases it names, and a version it leaves out is still offered from its tag. Add one to withdraw a release (list it as yanked), mark a security fix, or recommend a default version. A list can also offer a release whose tag names no version of this tool, such as `nightly`, `release-1.2.3`, `2026-08-31`, or a monorepo tag that several tools share. Its entry maps the tag to the version in the bundle.
 
-Other forges need the discovery mechanism the specification describes in
-[Discovery](/release/v1/#discovery); a recognized signing issuer alone
-does not give consumers a release list.
-
-### A supplementary list adds to GitHub discovery
-
-A supplementary list overrides the releases it names; it does not replace
-discovery through the repository's GitHub releases. A version it omits is
-still discovered from its tag. To withdraw a release, list it with a
-yanked status.
+**Warning:** A published list is an ongoing commitment. Consumers of a domain or GitHub project refuse an expired list, and with it the project. Once a consumer has accepted a list, a missing one is an error, so deleting a GitHub project's list does not restore tag discovery. Re-sign the list before every expiry, even when nothing changed. Keep every withdrawal in each rebuild: one left out makes its release eligible again. To stop overriding releases, publish an empty list ([Retire every entry](#retire-every-entry)).
 
 ## Create the list
 
-Keep local copies of the released bundles and verify each one before
-listing it. `packslip releases` reads their version, tag, and publication
-time and records their digests; it does not verify their signatures.
-Each `--release` pairs a public bundle URL with its local path. This
-example lists version `1.2.3` of a key-signed project and recommends it as
-the default:
+`packslip releases` reads local copies of the release bundles and writes a signed list: each bundle's URL, digest, version, tag, and publish time, plus the list's sequence and expiry. It does not verify the bundles' signatures, so verify each copy first. A GitHub project's list must be signed keylessly, as in [Publish a GitHub repository's list](#publish-a-github-repositorys-list). This example lists and recommends version 1.2.3 of a key-signed domain project:
 
 ```sh
 packslip verify releases/v1.2.3/packslip.sigstore.json --pubkey release.pub
@@ -73,165 +46,243 @@ packslip releases \
 packslip verify site/.well-known/packslip.json --pubkey release.pub
 ```
 
-`packslip releases` writes a local file
-(`packslip-releases.sigstore.json` unless `--out` names it); upload it to
-the well-known location yourself. Sign with the key consumers pin for the
-project, and publish the public key where they can read it apart from the
-list, since a domain name implies no signer. In supported CI, omit
-`--key` to sign with the job's OIDC identity. On GitHub Actions, the
-`jdx/packslip/releases` action builds and signs the list from a directory
-of the published bundles; see
-[Host releases on your own domain](/docs/self-hosting/#build-and-publish-the-list).
+- `--project`: the project's name, which every listed bundle must name.
+- `--sequence`: see [Choose a sequence](#choose-a-sequence).
+- `--valid-for`: time until the list expires, a number and a unit (`s`, `m`, `h`, `d`, or `w`); default `30d`.
+- `--latest`: the version to recommend, if any; see [Recommend a default version](#recommend-a-default-version).
+- `--release URL=PATH`: where consumers fetch a bundle, and the local copy to read. Repeat it for every entry.
+- `--key`: the secret key to sign with. In supported CI, omit it to sign keylessly with the job's OIDC identity.
+- `--out`: where to write the list. The default, `packslip-releases.sigstore.json` (also the releases action's `out` default), is not a name consumers fetch.
 
-Verify the resulting list before uploading it, as the last command above
-does. `packslip verify` checks its signature and structure. Consumers also
-check expiry and remember the highest sequence they have accepted.
+The last two commands print:
 
-The example's sequence is the current Unix time, the action's default. A
-Unix-time sequence increases on its own; a project that adopts it cannot
-go back to small hand-picked numbers.
-
-### Publish a GitHub repository's list
-
-On GitHub, sign the list keylessly in a workflow of the repository, as
-its releases are signed. Run the commands below in a job of that
-workflow, with `GH_TOKEN` set to the job's token for `gh`. Without
-`--key`, `packslip releases` signs with the job's identity, so the
-commands work only there. A job that also commits the list needs these
-permissions:
-
-```yaml
-permissions:
-  contents: write  # Commit the list to the default branch.
-  id-token: write  # Sign the list with the workflow's identity.
+```text
+wrote site/.well-known/packslip.json (1 release(s), sequence 1792614248, expires 2026-11-20T20:24:08.981008304Z)
+ok: release list for mytool.example.com sequence 1792614248 expires 2026-11-20T20:24:08.981008304Z signed by 27A4A6F511135F9A (sigstore-key) listing 1 release(s)
 ```
 
-Commit the list to the default branch at `.well-known/packslip.json`, or
-at `.well-known/packslip/<subpath>.json` for a monorepo tool. Consumers
-read it from
-`https://raw.githubusercontent.com/owner/repo/HEAD/.well-known/packslip.json`.
+Upload the verified list to the well-known location yourself. For a key-signed list, sign with the key consumers pin for the project. A domain name implies no signer, so publish the public key apart from the list ([Publish the signer](/docs/self-hosting/#publish-the-signer)).
 
-The list needs only the releases it changes. To withdraw `v1.2.3`,
-download that release's bundle, verify it (the project name implies the
-pin), and list it at its release-asset URL with `--yank`:
+### Choose a sequence
 
-```sh
-gh release download v1.2.3 --repo owner/repo \
-  --pattern packslip.sigstore.json --dir bundles/v1.2.3
-packslip verify bundles/v1.2.3/packslip.sigstore.json
+Give each new list a higher `sequence` than the last, including a refresh that changes nothing else. Consumers refuse a list whose sequence is lower than one they have accepted ([Freshness and rollback protection](/release/v1/#freshness-and-rollback-protection)).
 
-packslip releases \
-  --project github.com/owner/repo \
-  --sequence "$(date +%s)" --valid-for 30d \
-  --release https://github.com/owner/repo/releases/download/v1.2.3/packslip.sigstore.json=bundles/v1.2.3/packslip.sigstore.json \
-  --yank https://github.com/owner/repo/releases/download/v1.2.3/packslip.sigstore.json='Incorrect Linux archive' \
-  --out .well-known/packslip.json
-```
-
-Once consumers have accepted the list, they treat a missing or expired
-one as an error. The repository then needs a scheduled job that rebuilds,
-re-signs, and commits the list before it expires. The list workflow in
-[Host releases on your own domain](/docs/self-hosting/#build-and-publish-the-list)
-shows the triggers and concurrency group to copy. It builds from a bucket
-and uploads the result, so run the commands above in place of its steps.
+Use the current Unix time, `$(date +%s)`, as this page does: it increases with no counter to keep, and the releases action defaults to it. A project that adopts Unix-time sequences cannot go back to small hand-picked numbers.
 
 ## Refresh or withdraw releases
 
-Publish a higher `sequence` every time you update the list, including
-expiry refreshes. Rebuild it with all entries you want to retain;
-`packslip releases` does not append to an existing list. Refresh before
-expiry even when no new release has shipped.
-
-Keep withdrawn releases in the list, and add `--yank` with the bundle's
-URL and a reason:
-
-```sh
-packslip releases ... \
-  --release https://mytool.example.com/v1.2.3/packslip.sigstore.json=releases/v1.2.3/packslip.sigstore.json \
-  --yank https://mytool.example.com/v1.2.3/packslip.sigstore.json='Incorrect Linux archive'
-```
-
-The URL must also appear in a `--release` argument. Consumers never
-select that version, and they warn users who already have it.
-`--security URL` marks a listed release as a security fix, and consumers
-may shorten their minimum release age for it.
-
-Because each rebuild starts from the arguments it is given, repeat every
-`--yank` and `--security` on every rebuild, including the weekly refresh. A
-withdrawal passed to one run only is gone from the next list, and the release
-is eligible again. Keep the withdrawals in a file under version control and
-build the arguments from it each time.
-[Host releases on your own domain](/docs/self-hosting/#keep-withdrawals-in-the-repository)
-shows this for a GitHub Actions release-list job.
-
-Consumers reject expired lists and sequences below the highest they have
-accepted. On GitHub, deleting a supplementary list does not return
-consumers to tag discovery: a consumer that accepted the list treats its
-absence as an error. A published list needs refreshing for as long as
-consumers use it; one upload is not enough.
-
-## Recommend a default version
-
-`--latest 1.2.3` recommends an exact version already in the list. It can
-point to an older supported release while a newer major version exists.
-It does not affect exact version requests, ranges, prefixes, or channels.
-
-For an unconstrained latest request, consumers prefer the vendor's signed
-recommendation. Without one, GitHub's latest release can provide an
-unsigned hint. If the recommendation is ineligible, consumers fall back
-to the highest eligible semver and report why the recommendation was
-skipped. An invalid signed list is an error, not a reason to fall back.
-A latest request skips prereleases, meaning versions with a prerelease
-part such as `1.3.0-rc.1`; GitHub's prerelease flag is not consulted. See
-the full [latest selection rules](/release/v1/#latest).
-
-## Publish or trust a third-party list
-
-A registry, mirror, or scanning service can sign a list of releases it has
-checked. The list places a *stamp* on each release it names; the service
-is a *stamping host*.
-
-The service publishes one list per vendor project on its own host, using
-the well-known path with the vendor's full project name. Set `--project`
-to the vendor's project, since every listed bundle must name it. Use
-`--evidence` to record what the service checked:
+`packslip releases` does not append to a list, so every update is a full rebuild: pass a `--release` for every entry you keep, and a higher `--sequence`. This rebuild keeps two releases, withdraws 1.2.3, marks 1.2.4 as a security fix, and recommends 1.2.4:
 
 ```sh
 packslip releases \
-  --project github.com/owner/repo \
+  --project mytool.example.com \
   --sequence "$(date +%s)" --valid-for 30d \
-  --release https://github.com/owner/repo/releases/download/v1.2.3/packslip.sigstore.json=bundles/v1.2.3/packslip.sigstore.json \
-  --evidence https://github.com/owner/repo/releases/download/v1.2.3/packslip.sigstore.json=scan=https://scanner.example/reports/1.2.3 \
-  --key scanner.key \
-  --out site/.well-known/packslip/github.com/owner/repo.json
+  --latest 1.2.4 \
+  --release https://mytool.example.com/v1.2.3/packslip.sigstore.json=releases/v1.2.3/packslip.sigstore.json \
+  --release https://mytool.example.com/v1.2.4/packslip.sigstore.json=releases/v1.2.4/packslip.sigstore.json \
+  --yank https://mytool.example.com/v1.2.3/packslip.sigstore.json='Incorrect Linux archive' \
+  --security https://mytool.example.com/v1.2.4/packslip.sigstore.json \
+  --key release.key \
+  --out site/.well-known/packslip.json
 ```
 
-A service at `scanner.example` serves it at
-`https://scanner.example/.well-known/packslip/github.com/owner/repo.json`.
-Consumers trust stamping hosts by configuration and pin each one
-separately. A consumer that trusts one or more stamping hosts installs
-only versions that at least one of them lists without a yank. A vendor
-withdrawal excludes a version regardless of its stamps. A user can also
-exempt a project and trust its vendor alone.
+- `--yank URL=REASON`: withdraw a listed release. Consumers never select a yanked version. The next time a user who still has it installed runs `packslip install` for the project, install warns with the version and REASON ([Read withdrawn-release warnings](/docs/bootstrap/#read-withdrawn-release-warnings)). mise does not warn, and users who do not run install again hear nothing, so also tell them through your own channels.
+- `--security URL`: mark a listed release as a security fix. Consumers may shorten their minimum release age for it.
 
-A stamp does not replace the vendor's signature: consumers check the
-list's digest of the release bundle and still verify the release against
-the vendor's pin. A mirror or repackager that signs its own release
-manifest makes a different claim. See
-[lists from other publishers](/release/v1/#lists-from-other-publishers)
-and [repackager attestation](/release/v1/#repackager-attestation).
+Each `--yank` and `--security` URL must appear, exactly as given, in a `--release` argument. Repeat every `--yank` and `--security` on every rebuild, including the refresh before expiry.
+
+### Keep withdrawals in the repository
+
+Keep withdrawals in two files on the default branch, and build every list from them. Blank lines and lines starting with `#` are ignored:
+
+- `.github/mytool/yanked`: one `TAG=REASON` line per withdrawn release.
+- `.github/mytool/security`: one tag per line for each release that fixes a vulnerability. Put any explanation in a `#` line above the tag.
+
+With the CLI, each `TAG=REASON` line becomes `--yank <bundle URL>=REASON`, and each security tag becomes `--security <bundle URL>`. The workflows in [Publish a GitHub repository's list](#publish-a-github-repositorys-list) and [Build and publish the list](/docs/self-hosting/#build-and-publish-the-list) read both files. To withdraw `v1.2.3` with either workflow, add this line to `.github/mytool/yanked` and merge it:
+
+```text
+v1.2.3=Incorrect Linux archive
+```
+
+The `push` trigger publishes the new list, and the release stays withdrawn until you remove the line.
+
+The workflows require both files, even when empty: a missing file fails the run, so a rename or deletion cannot silently restore every withdrawn release. [packslip.dev's own list workflow](https://github.com/jdx/packslip/blob/main/.github/workflows/packslip-releases.yml) is a working example.
+
+## Recommend a default version
+
+`--latest 1.2.3` recommends a version for an unconstrained latest request, without reordering versions. Give the exact version of a `--release` entry, including any build metadata, not its tag. It may point to an older supported release while a newer major exists, and it does not affect exact versions, ranges, prefixes, or channels.
+
+Consumers prefer the vendor's signed recommendation; a GitHub project without one gets GitHub's latest release as its recommendation. If the recommendation is ineligible, they fall back to the highest eligible version and say why ([Latest](/release/v1/#latest)).
+
+## Publish a GitHub repository's list
+
+Sign a GitHub project's list keylessly from one workflow file of its repository. That file may differ from the release workflow ([Release lists are pinned separately](/docs/trust/#release-lists-are-pinned-separately)). Once `packslip install` has accepted a list, it refuses one from another workflow file until a person approves the change. [Signer continuity and workflow pinning](/docs/trust/#signer-continuity-and-workflow-pinning) covers this and its opt-out, `packslip releases --no-pin-workflow`, which the releases action has no input for.
+
+The list needs to name only the releases it changes. This workflow builds it with the `jdx/packslip/releases` action from the releases that the [withdrawal files](#keep-withdrawals-in-the-repository) name, then commits it. It runs weekly, so the list is re-signed before it expires, and whenever a change to either file merges:
+
+```yaml
+# .github/workflows/packslip-list.yml
+name: packslip-list
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  push:
+    branches: [main]
+    paths:
+      - ".github/mytool/**"
+  workflow_dispatch:
+
+concurrency:
+  group: packslip-list
+
+jobs:
+  list:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Commit the list to the default branch.
+      id-token: write  # Sign the list with the workflow's identity.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: repo
+          sparse-checkout: |
+            .github/mytool
+            .well-known
+      - name: Read the withdrawals
+        id: withdrawn
+        run: |
+          set -euo pipefail
+          # The action takes entries only, so drop blank lines and comments.
+          entries() {
+            local file="repo/.github/mytool/$1"
+            [ -f "$file" ] || { echo "$file is missing" >&2; exit 1; }
+            grep -Ev '^[[:space:]]*(#|$)' "$file" || [ $? -eq 1 ]
+          }
+          delimiter="mytool_$(openssl rand -hex 16)"
+          {
+            echo "yank<<$delimiter"
+            entries yanked
+            echo "$delimiter"
+            echo "security<<$delimiter"
+            entries security
+            echo "$delimiter"
+          } >> "$GITHUB_OUTPUT"
+      - name: Download the bundles the list names
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ENTRIES: |
+            ${{ steps.withdrawn.outputs.yank }}
+            ${{ steps.withdrawn.outputs.security }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r line; do
+            tag="${line%%=*}"
+            if [ -z "$tag" ] || [ -e "lists/$tag" ]; then continue; fi
+            gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
+              --pattern packslip.sigstore.json --dir "lists/$tag"
+          done <<< "$ENTRIES"
+      - uses: jdx/packslip/releases@v1
+        id: list
+        with:
+          project: github.com/owner/mytool
+          dir: lists
+          url-base: https://github.com/owner/mytool/releases/download
+          yank: ${{ steps.withdrawn.outputs.yank }}
+          security: ${{ steps.withdrawn.outputs.security }}
+      - name: Commit the list
+        env:
+          LIST: ${{ steps.list.outputs.list }}
+        run: |
+          set -euo pipefail
+          mkdir -p repo/.well-known
+          cp "$LIST" repo/.well-known/packslip.json
+          cd repo
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .well-known/packslip.json
+          git commit -m "chore: re-sign the release list"
+          git push
+```
+
+- The download step fetches each named release's bundle into `lists/<tag>/`; the action verifies each one before listing it.
+- `url-base` makes each entry's URL the bundle's release asset, such as `https://github.com/owner/mytool/releases/download/v1.2.3/packslip.sigstore.json`.
+- The commit step pushes with the job's token, so branch protection must allow that push.
+- `contents: write` reaches every step, the action included. To keep it from the action, commit the list from a second job, as [Keep the action away from release write access](/docs/publishing/#keep-the-action-away-from-release-write-access) shows.
+- `workflow_dispatch` lets a person re-sign the list by hand.
+- To recommend a release or map its tag, add its tag as a line of `ENTRIES`. For a recommendation, also pass its version as the action's `latest` input.
+- With nothing in `ENTRIES`, the action fails instead of building an empty list; see [Retire every entry](#retire-every-entry).
+
+For a monorepo tool, set `project` to its name, such as `github.com/owner/tools/mytool`, set `url-base` to `https://github.com/owner/tools/releases/download`, and commit the list at `.well-known/packslip/mytool.json`. `packslip create` names the tool's bundle after its subpath, with each `/` written as `-`: `packslip.mytool.sigstore.json` here. Use that name in `--pattern` and as the action's `bundle` input.
+
+## Retire every entry
+
+**Warning:** Older consumers refuse an empty list, and with it the project; [Version requirements](/docs/compatibility/#version-requirements) names them. Keep at least one entry while your users run them.
+
+Run `packslip releases` with no `--release` to write an empty list, which retires every withdrawal, security mark, tag mapping, and recommendation earlier lists carried. A GitHub project's consumers then choose from its GitHub releases alone. A domain project offers nothing to install, and `packslip install` reports `no eligible release found`.
+
+An empty list expires like any other, so keep re-signing it. The releases action does not build one, so in `packslip-list.yml`, replace the three steps from `Read the withdrawals` through `jdx/packslip/releases` with these two:
+
+```yaml
+      - name: Install packslip
+        run: |
+          curl -fsSL https://packslip.sh/vX.Y.Z | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Build an empty list
+        id: list
+        run: |
+          set -euo pipefail
+          packslip releases \
+            --project github.com/owner/mytool \
+            --sequence "$(date +%s)" --valid-for 30d \
+            --out packslip-releases.sigstore.json
+          packslip verify packslip-releases.sigstore.json
+          echo "list=packslip-releases.sigstore.json" >> "$GITHUB_OUTPUT"
+```
+
+- The install step uses a [versioned install script](/docs/install/#pin-a-versioned-install-script); replace `X.Y.Z` with the release to run.
+- The project's name implies the signer policy, so `packslip verify` needs no trust flags.
+- The `Commit the list` step stays; it reads this step's `list` output.
+
+## Publish a list as a stamping host
+
+A registry, mirror, or scanning service that signs a list of the releases it has checked is a stamping host. Its list stamps each release it names and leaves the vendor's bundle unchanged. [Stamping hosts](/docs/trust/#stamping-hosts) explains how consumers choose and enforce them; [Lists from other publishers](/release/v1/#lists-from-other-publishers) defines the lists.
+
+Publish one list per vendor project on your host, at the well-known path built from the vendor's full project name, such as `https://scanner.example/.well-known/packslip/github.com/owner/mytool.json`. Set `--project` to the vendor's project, because every listed bundle must name it:
+
+```sh
+packslip releases \
+  --project github.com/owner/mytool \
+  --sequence "$(date +%s)" --valid-for 30d \
+  --release https://github.com/owner/mytool/releases/download/v1.2.3/packslip.sigstore.json=bundles/v1.2.3/packslip.sigstore.json \
+  --evidence https://github.com/owner/mytool/releases/download/v1.2.3/packslip.sigstore.json=scan=https://scanner.example/reports/1.2.3 \
+  --key scanner.key \
+  --out site/.well-known/packslip/github.com/owner/mytool.json
+```
+
+- `--evidence URL=KIND` or `URL=KIND=DETAIL`: what you checked about the listed release at URL. `scan` says the artifacts were scanned, and its detail points to the report. [Repackager attestation](/release/v1/#repackager-attestation) lists the kinds.
+
+## Fix a failed list build
+
+| Error | What to do |
+| --- | --- |
+| `URL is not among the --release entries` | The `--yank`, `--security`, or `--evidence` URL differs from every `--release` URL. Copy it exactly, or add a `--release` for that release. |
+| `latest "1.2.4" does not name a version in the release list` | List that release, or give `--latest` a listed bundle's version. |
+| `version must be semver 2.0.0 (MAJOR.MINOR.PATCH, with an optional prerelease part), got "v1.2.3"` | `--latest` takes a version, not a tag. Pass `1.2.3`. |
+| `PATH: not a packslip bundle: it is for github.com/owner/mytool, the list is for mytool.example.com` | Every listed bundle must name the `--project` value. |
+| `duration "30": expected a unit of s, m, h, d or w` | Give `--valid-for` a unit, such as `30d`. |
 
 ## Diagnose a release that is not offered
 
+Rows in code font are the errors `packslip install` prints; other consumers word them their own way.
+
 | Symptom | What to check |
 | --- | --- |
-| A domain project has no releases | Publish the signed list at the well-known path, including the project subpath. |
-| A GitHub tag is invisible | Check that it maps to a version for this project, or add an explicit version and tag mapping in the signed list. |
-| A release is found but refused | Verify its bundle and confirm the signed project, version, and bundle digest match discovery metadata. |
-| A withdrawn version reappears | Keep its yanked entry in every rebuild, from a committed file rather than a one-off input; omission from a supplementary list does not withdraw it. |
-| Consumers report an expired list | No list was published before the old one expired. Re-sign the retained entries with a later expiry and a higher sequence. |
-| Consumers refuse a new list as rolled back | Its `sequence` is below one they accepted; publish a higher one. After a list that used the Unix-time default, any small hand-picked number is lower. |
-| `latest` selects another version | Check whether the recommendation is eligible under withdrawal, prerelease, age, stamping, and host policy. |
-
-These are consumer discovery checks. `packslip verify` alone does not fetch
-a list, enforce its expiry, or remember its previously accepted sequence.
+| `host project has no signed release list` | No list is at the project's well-known URL (for `example.com/tools/mytool`, `https://example.com/.well-known/packslip/tools/mytool.json`), or it was removed. Publish the signed list there. |
+| A GitHub tag is invisible | The release must be published, not a draft, with its bundle attached. To offer a tag that does not map to a version for this project ([Tags](/release/v1/#tags)), list the release in the signed list. |
+| A release is found but refused | Verify its bundle, and check that its signed project, version, and digest match the discovery metadata. |
+| A withdrawn version reappears | A rebuild dropped its yanked entry, or a GitHub list left it out instead of yanking it; see [Keep withdrawals in the repository](#keep-withdrawals-in-the-repository). |
+| `release list is stale, missing, or rolled back` | The old list expired, a GitHub project's accepted list is gone, or the new sequence is lower than an accepted one. Re-sign the retained entries with a later expiry and a higher sequence ([Choose a sequence](#choose-a-sequence)). |
+| `no eligible release found` | The list names no release the request can take, for example because it is empty or all its releases are withdrawn. |
+| A latest request selects another version | Check that the recommendation is eligible under withdrawal, prerelease, minimum age, stamping, and host policy. |
