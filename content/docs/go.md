@@ -172,13 +172,13 @@ builds for 7, so pass the value your build used. A floating-point option
 is ignored, so `7,softfloat` counts as 7. Values other than 6 and 7 fall
 outside the vocabulary.
 
-`VariantFromGo(goarch, level)` returns the `variant` of a build above Go's
-default CPU level, so builds of one platform stay distinct. Pass the Go
+`VariantFromGo(goarch, level)` returns the `variant` that distinguishes
+non-default CPU-level and floating-point builds of one platform. Pass the Go
 setting for the architecture (`GOAMD64`, `GO386`, `GOARM64`, `GOMIPS`,
 `GOPPC64`, `GORISCV64`, or `GOARM` with its float option for `arm`):
 `VariantFromGo("amd64", "v3")` is `v3`, `VariantFromGo("arm", "7,softfloat")`
-is `softfloat`, and a default-level build such as `("amd64", "v1")` has no
-variant. A comma in a level becomes `-`, so `v8.2,lse` is `v8.2-lse`.
+is `softfloat`, `("arm", "5,hardfloat")` is `5-hardfloat`, and a default-level
+build such as `("amd64", "v1")` has no variant. A comma in a level becomes `-`, so `v8.2,lse` is `v8.2-lse`.
 `VariantFromRustABI(abi)` does the same for a Rust target's ABI: `gnueabi`
 and `musleabi` are `softfloat`, and `gnueabihf` has none
 ([Vocabularies](/release/v1/#vocabularies)).

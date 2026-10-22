@@ -142,8 +142,8 @@ The version tracks the implementation, not the statement format, which stays
 
 - [Publish from Go](https://packslip.dev/docs/go/): the guide for this
   module, including `ArchFromGo` for mapping `GOARCH` and `GOARM`,
-  `VariantFromGo` and `VariantFromRustABI` for CPU-level and float-ABI
-  variants, `NewBareBin` for single-file artifacts, and `BuildOptions` for resource
+  `VariantFromGo` and `VariantFromRustABI` for CPU-level and
+  floating-point variants, `NewBareBin` for single-file artifacts, and `BuildOptions` for resource
   assets.
 - [Go package reference](https://pkg.go.dev/github.com/jdx/packslip/go) on
   pkg.go.dev: every exported function and type.
