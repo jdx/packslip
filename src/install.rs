@@ -276,9 +276,87 @@ pub async fn run(mut request: Request) -> Result<Report> {
     run_in(request, scope).await
 }
 
+/// A previously installed release that the verified list has since yanked.
+struct Withdrawn {
+    version: String,
+    reason: Option<String>,
+}
+
+impl Withdrawn {
+    /// `list` is verified, and `installed` is the version this scope last
+    /// installed for the project. Warns only; it never affects selection.
+    fn find(list: &crate::ReleaseListStatement, installed: &str) -> Option<Self> {
+        let installed = crate::model::parse_version(installed).ok()?;
+        let entry = list.predicate.releases.iter().find(|r| {
+            r.is_yanked()
+                && crate::model::parse_version(&r.version).ok().as_ref() == Some(&installed)
+        })?;
+        // The reason is the publisher's text; keep it to one printable line.
+        let reason = entry
+            .status_reason
+            .as_deref()
+            .map(|r| {
+                r.chars()
+                    .map(|c| if c.is_control() { ' ' } else { c })
+                    .collect::<String>()
+                    .trim()
+                    .to_owned()
+            })
+            .filter(|r| !r.is_empty());
+        Some(Self {
+            version: entry.version.clone(),
+            reason,
+        })
+    }
+
+    /// `installed` is the release this run installed, or `None` when the run
+    /// ended without installing one.
+    fn describe(&self, project: &str, installed: Option<&str>) -> String {
+        let reason = self
+            .reason
+            .as_ref()
+            .map(|r| format!(": {r}"))
+            .unwrap_or_default();
+        let outcome = match installed {
+            Some(version) => format!("this run installed {version} instead"),
+            None => "this run did not install a different release".into(),
+        };
+        format!(
+            "the {project} {} you installed was withdrawn in its signed release list{reason}; {outcome}",
+            self.version
+        )
+    }
+}
+
 // Explicit scope injection keeps integration fixtures isolated from real user
 // and admin state. The CLI always obtains it from Scope::detect.
 async fn run_in(request: Request, scope: Scope) -> Result<Report> {
+    let project = request.project.clone();
+    let mut withdrawn = None;
+    match install_in(request, scope, &mut withdrawn).await {
+        Ok(mut report) => {
+            if let Some(withdrawn) = withdrawn {
+                let notice = withdrawn.describe(&report.project, Some(&report.receipt.version));
+                report.warnings.insert(0, notice);
+            }
+            Ok(report)
+        }
+        Err(error) => {
+            // Without a report, a failure is the only place the user can learn
+            // that the installed release was withdrawn.
+            if let Some(withdrawn) = withdrawn {
+                eprintln!("warning: {}", withdrawn.describe(&project, None));
+            }
+            Err(error)
+        }
+    }
+}
+
+async fn install_in(
+    request: Request,
+    scope: Scope,
+    withdrawn: &mut Option<Withdrawn>,
+) -> Result<Report> {
     let project = discovery::Project::parse(&request.project)?;
     let bin = absolute(request.bin_dir.clone().unwrap_or_else(|| scope.bin.clone()))?;
     let lookup = scope.installs.join(".lookup");
@@ -326,6 +404,9 @@ async fn run_in(request: Request, scope: Scope) -> Result<Report> {
     drop(lookup_session);
     let session = install_fs::Session::open_for(&scope.state, &tree, &bin, &key)?;
     let mut history = session.history(&key)?;
+    // Only a warning needs this, and the commit reads the receipt again and
+    // refuses one it cannot use, so an unreadable receipt is not an error here.
+    let installed = session.receipt(&key).ok().flatten().map(|r| r.version);
     // ID-based ownership follows renames, but a remembered name must never
     // silently become first use when that name is deleted and recreated.
     let alias = session.history(project.as_str())?;
@@ -403,6 +484,9 @@ async fn run_in(request: Request, scope: Scope) -> Result<Report> {
         session.remember(project.as_str(), &history)?;
     }
     let signed_list = list.as_ref().map(|l| &l.verified.list);
+    *withdrawn = signed_list
+        .zip(installed.as_deref())
+        .and_then(|(list, installed)| Withdrawn::find(list, installed));
     let selected = match &github {
         Some(github) => github.choose(signed_list, request.version.as_deref())?,
         None => discovery::choose(&[], signed_list, request.version.as_deref())?,
@@ -901,6 +985,38 @@ mod tests {
                 self.signed(&list).as_bytes(),
             );
         }
+        /// Publish a list of the given versions, each with its own signed
+        /// bundle; `Some(reason)` yanks that version.
+        fn publish_versions(&self, sequence: u64, releases: &[(&str, Option<&str>)]) {
+            let mut subjects = vec![];
+            let mut entries = vec![];
+            for (version, yanked) in releases {
+                let mut statement = self.statement.clone();
+                statement["predicate"]["version"] = json!(version);
+                let url = format!("https://example.test/releases/{version}/packslip.sigstore.json");
+                let bundle = self.signed(&statement);
+                self.cache(&url, true, bundle.as_bytes());
+                subjects.push(json!({"name":url,"digest":{"sha256":hex::encode(Sha256::digest(bundle.as_bytes()))}}));
+                let mut entry =
+                    json!({"version":version,"published_at":"2020-01-01T00:00:00Z","packslip":url});
+                if let Some(reason) = yanked {
+                    entry["status"] = json!("yanked");
+                    entry["status_reason"] = json!(reason);
+                }
+                entries.push(entry);
+            }
+            let now = jiff::Timestamp::now();
+            let list = json!({"_type":crate::model::STATEMENT_TYPE,"predicateType":crate::model::RELEASES_PREDICATE_TYPE,
+                "subject":subjects,
+                "predicate":{"project":"example.test","identity":self.statement["predicate"]["identity"],
+                    "generated_at":now.to_string(),"expires_at":(now+std::time::Duration::from_secs(86400)).to_string(),
+                    "sequence":sequence,"releases":entries}});
+            self.cache(
+                "https://example.test/.well-known/packslip.json",
+                true,
+                self.signed(&list).as_bytes(),
+            );
+        }
         fn request(&self, first: bool) -> Request {
             Request {
                 project: "example.test".into(),
@@ -929,6 +1045,17 @@ mod tests {
                 .build()
                 .unwrap()
                 .block_on(run_in(request, self.scope()))
+        }
+        /// The run's outcome with the withdrawal it found, which `run_in`
+        /// prints to stderr when the run fails.
+        fn run_withdrawn(&self, request: Request) -> (Result<Report>, Option<Withdrawn>) {
+            let mut withdrawn = None;
+            let result = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(install_in(request, self.scope(), &mut withdrawn));
+            (result, withdrawn)
         }
     }
 
@@ -995,6 +1122,112 @@ mod tests {
                 .version,
             "1.0.0"
         );
+    }
+
+    #[test]
+    fn upgrade_warns_when_the_installed_release_was_withdrawn() {
+        let f = Fixture::new();
+        let first = f.run(f.request(true)).unwrap();
+        assert_eq!(first.receipt.version, "1.0.0");
+        assert!(first.warnings.iter().all(|w| !w.contains("withdrawn")));
+        // Yanking some other version says nothing about the installed one.
+        f.publish_versions(8, &[("1.1.0", Some("bad build")), ("1.0.0", None)]);
+        let unaffected = f.run(f.request(false)).unwrap();
+        assert_eq!(unaffected.receipt.version, "1.0.0");
+        assert!(unaffected.warnings.iter().all(|w| !w.contains("withdrawn")));
+        f.publish_versions(9, &[("1.1.0", None), ("1.0.0", Some("CVE-2026-1234"))]);
+        let report = f.run(f.request(false)).unwrap();
+        assert_eq!(report.receipt.version, "1.1.0");
+        assert_eq!(
+            report.warnings[0],
+            "the example.test 1.0.0 you installed was withdrawn in its signed release list: \
+             CVE-2026-1234; this run installed 1.1.0 instead"
+        );
+        // The replacement is what the scope has now, so the next run is quiet.
+        let again = f.run(f.request(false)).unwrap();
+        assert!(again.warnings.iter().all(|w| !w.contains("withdrawn")));
+    }
+
+    #[test]
+    fn first_install_of_a_list_that_yanks_other_versions_does_not_warn() {
+        let f = Fixture::new();
+        f.publish_versions(8, &[("1.1.0", None), ("1.0.0", Some("CVE-2026-1234"))]);
+        let report = f.run(f.request(true)).unwrap();
+        assert_eq!(report.receipt.version, "1.1.0");
+        assert!(report.warnings.iter().all(|w| !w.contains("withdrawn")));
+    }
+
+    #[test]
+    fn warning_survives_a_run_that_cannot_install_a_replacement() {
+        let f = Fixture::new();
+        let first = f.run(f.request(true)).unwrap();
+        f.publish_versions(8, &[("1.0.0", Some("CVE-2026-1234"))]);
+        let (result, withdrawn) = f.run_withdrawn(f.request(false));
+        // Nothing is refused for the warning; there is simply nothing eligible.
+        assert!(result.is_err());
+        assert_eq!(
+            withdrawn.unwrap().describe("example.test", None),
+            "the example.test 1.0.0 you installed was withdrawn in its signed release list: \
+             CVE-2026-1234; this run did not install a different release"
+        );
+        {
+            // The session holds the scope lock, so it must end before the next run.
+            let session = install_fs::Session::open_for(
+                &f.scope().state,
+                &first.receipt.tree,
+                &f.scope().bin,
+                &first.receipt.project,
+            )
+            .unwrap();
+            assert_eq!(
+                session
+                    .receipt(&first.receipt.project)
+                    .unwrap()
+                    .unwrap()
+                    .version,
+                "1.0.0"
+            );
+        }
+        // An explicit request for the yanked release is still refused.
+        let mut request = f.request(false);
+        request.version = Some("1.0.0".into());
+        let (result, withdrawn) = f.run_withdrawn(request);
+        assert!(result.unwrap_err().to_string().contains("withdrawn"));
+        assert!(withdrawn.is_some());
+    }
+
+    #[test]
+    fn withdrawal_reason_is_one_printable_line() {
+        let list = |reason: &str| -> crate::ReleaseListStatement {
+            serde_json::from_value(json!({"_type":crate::model::STATEMENT_TYPE,
+                "predicateType":crate::model::RELEASES_PREDICATE_TYPE,
+                "subject":[{"name":"https://example.test/1.0.0/packslip.sigstore.json","digest":{"sha256":"0".repeat(64)}}],
+                "predicate":{"project":"example.test","identity":{"scheme":"sigstore-key","key_id":"5A0A0B8B9C6D7E1F"},
+                    "generated_at":"2026-09-01T12:00:00Z","expires_at":"2026-10-01T12:00:00Z","sequence":1,
+                    "releases":[{"version":"1.0.0","published_at":"2020-01-01T00:00:00Z",
+                        "packslip":"https://example.test/1.0.0/packslip.sigstore.json",
+                        "status":"yanked","status_reason":reason}]}}))
+            .unwrap()
+        };
+        for (reason, shown) in [
+            ("\u{1b}[2Jbad\nbuild\u{7}", ": [2Jbad build"),
+            ("  \t ", ""),
+            ("", ""),
+        ] {
+            let withdrawn = Withdrawn::find(&list(reason), "1.0.0").unwrap();
+            assert_eq!(
+                withdrawn.describe("example.test", Some("1.1.0")),
+                format!(
+                    "the example.test 1.0.0 you installed was withdrawn in its signed release list{shown}; \
+                     this run installed 1.1.0 instead"
+                ),
+                "{reason:?}"
+            );
+        }
+        // Only the installed version matters; build metadata is part of it.
+        assert!(Withdrawn::find(&list("x"), "1.0.1").is_none());
+        assert!(Withdrawn::find(&list("x"), "1.0.0+build.5").is_none());
+        assert!(Withdrawn::find(&list("x"), "not a version").is_none());
     }
 
     #[test]
