@@ -430,7 +430,9 @@ async fn install_in(
     // silently become first use when that name is deleted and recreated, in
     // whatever case the request spells it. A history written before names
     // folded case is under the spelling of the request that wrote it, which
-    // its records name.
+    // its records name. A domain project's name resolves to no repository:
+    // its records' pins name the repository that signed it, which the
+    // continuity checks below compare.
     let alias = alias_key(project.as_str());
     let mut names: BTreeSet<String> = session
         .remembered_projects()?
@@ -442,6 +444,7 @@ async fn install_in(
         let prior = session.history(name)?;
         if let Some(previous) = prior.release.as_ref().or(prior.list.as_ref())
             && let Some(pin) = &previous.repository
+            && github.is_some()
             && repository_id != Some(pin.repository_id.as_str())
         {
             bail!("repository name now resolves to a different remembered repository ID");
@@ -661,10 +664,14 @@ async fn install_in(
                 );
             }
         }
+        // The fingerprint of a forge project's repository. A keyless domain
+        // project's record names the repository that signed it too, but
+        // install reports a fingerprint only for a forge project.
         let pin = release
             .record
             .repository
             .as_ref()
+            .filter(|_| lookup.forge)
             .and_then(|r| {
                 crate::Fingerprint::of(release.record.issuer.as_deref()?, &r.repository_id)
             })
@@ -2100,6 +2107,44 @@ mod tests {
         remember("github.com/Older/Tool", "github.com/Older/Tool");
         assert!(refused("github.com/older/TOOL"));
         assert!(report.receipt.exports.keys().all(|p| p.exists()));
+    }
+
+    #[test]
+    fn a_domain_projects_repository_pin_is_held_by_continuity_not_by_name() {
+        let f = Fixture::new();
+        let report = f.run(f.request(true)).unwrap();
+        {
+            let scope = f.scope();
+            let session = install_fs::Session::open_for(
+                &scope.state,
+                &report.receipt.tree,
+                &scope.bin,
+                &report.receipt.project,
+            )
+            .unwrap();
+            // The fixture signs with a key, which no certificate ties to a
+            // repository.
+            let mut prior = session.history(&report.receipt.project).unwrap();
+            assert!(prior.list.as_ref().unwrap().repository.is_none());
+            assert!(prior.release.as_ref().unwrap().repository.is_none());
+            // A keyless domain project's records name the repository that
+            // signed it. The project's name resolves to no repository, so
+            // install holds the project to that pin, and does not refuse the
+            // name as one that now resolves to another repository.
+            let pin = crate::forge::ForgePin::of("github.com/jdx/tool", "42");
+            prior.list.as_mut().unwrap().repository = Some(pin.clone());
+            prior.release.as_mut().unwrap().repository = Some(pin);
+            session.remember(&report.receipt.project, &prior).unwrap();
+            session.remember("example.test", &prior).unwrap();
+        }
+        let error = f.run(f.request(false)).unwrap_err();
+        let Some(install_policy::Error::Change { reasons, .. }) = error.downcast_ref() else {
+            panic!("{error:?}")
+        };
+        assert!(
+            reasons.contains(&"repository pin lost: github.com/jdx/tool (ID 42)".into()),
+            "{reasons:?}"
+        );
     }
 
     #[test]

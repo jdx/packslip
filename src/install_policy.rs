@@ -97,6 +97,10 @@ pub struct Record {
     pub scheme: Scheme,
     pub signer: String,
     pub issuer: Option<String>,
+    /// For a GitHub or GitLab project, its forge pin, which follows the
+    /// repository to a new name. For a keyless domain project, the pin of
+    /// the repository that signed it, which holds later signers to that
+    /// repository as well as to the workflow URL (see [`continuity`]).
     pub repository: Option<ForgePin>,
     pub pin_workflow: bool,
     pub attested_by: Attestor,
@@ -207,6 +211,30 @@ fn retains_provenance(previous: &[Provenance], next: &[Provenance]) -> bool {
             })
         })
 }
+/// Whether `project` is a GitHub or GitLab project, whose repository ID
+/// follows it across renames. Any other project is named after its host.
+fn forge_project(project: &str) -> bool {
+    Policy::for_project(project).is_some()
+}
+
+/// The pin a keyless domain project's record keeps: the repository its
+/// signing certificate records, when the certificate records that
+/// repository's ID on GitHub or GitLab. A later list or release must then
+/// come from the same repository as well as the same workflow URL, so
+/// neither a repository recreated under the old name nor another
+/// repository's run that calls the signing workflow as a reusable workflow
+/// continues the signer. None for a forge project, whose pin
+/// [`crate::verify_forge`] gives, for a key-signed bundle, and for a
+/// certificate that records no repository ID on GitHub or GitLab.
+fn domain_repository(project: &str, bundle: &str) -> Result<Option<ForgePin>, Error> {
+    if forge_project(project) {
+        return Ok(None);
+    }
+    Ok(crate::sigstore::source_repository(bundle)?
+        .as_ref()
+        .and_then(crate::forge::source_pin))
+}
+
 fn changes(previous: &Record, next: &Record) -> Vec<String> {
     let mut changes = Vec::new();
     if previous.scheme == Scheme::SigstoreOidc && next.scheme == Scheme::SigstoreKey {
@@ -215,6 +243,16 @@ fn changes(previous: &Record, next: &Record) -> Vec<String> {
     let signer_continues = previous.scheme == next.scheme
         && previous.issuer == next.issuer
         && match (&previous.repository, &next.repository) {
+            // A keyless domain project is held to the repository that signed
+            // it as well as to the workflow URL: the signer continues only
+            // from the same repository ID and the same workflow URL apart
+            // from its ref, whatever `pin_workflow` declares, as without an
+            // ID. Its name is the host's, so a renamed repository's new URL
+            // still needs approval.
+            (Some(before), Some(now)) if !forge_project(&next.project) => {
+                now.continues(before)
+                    && crate::forge::same_workflow(&previous.signer, None, &next.signer, None)
+            }
             (Some(before), Some(now)) => {
                 now.continues(before)
                     && (!next.pin_workflow
@@ -226,6 +264,12 @@ fn changes(previous: &Record, next: &Record) -> Vec<String> {
                         ))
             }
             (Some(_), None) => false,
+            // A record without a repository ID has only its workflow URL to
+            // compare, such as one packslip 1.10.1 or earlier kept for a
+            // keyless domain project. The next list or release from that
+            // workflow continues it, and the record that replaces it adopts
+            // that document's repository ID without asking: trust on first
+            // use of the ID, as the URL alone was trusted before.
             _ if previous.scheme == Scheme::SigstoreOidc => crate::forge::same_workflow(
                 &previous.signer,
                 None,
@@ -291,12 +335,16 @@ pub fn continuity(
             "trust record belongs to a different document role".into(),
         ));
     }
+    // A forge project's repository ID follows it to a new name. A domain
+    // project's names the repository that signed it, which can sign other
+    // projects too, so it never makes another project's record this one's.
     let prior_project_matches = previous.is_none_or(|before| {
         crate::forge::same_project(&before.project, project)
             || before
                 .repository
                 .as_ref()
                 .zip(next.repository.as_ref())
+                .filter(|_| forge_project(&before.project) && forge_project(project))
                 .is_some_and(|(before_pin, next_pin)| {
                     next_pin.continues(before_pin)
                         && crate::model::repository_subpath(&before.project)
@@ -518,6 +566,10 @@ fn release_under(
             "signed project differs from requested project".into(),
         ));
     }
+    let repository = match repository {
+        None => domain_repository(project, bundle)?,
+        pin => pin,
+    };
     let statement: crate::Statement =
         serde_json::from_slice(&crate::sigstore::peek_statement(bundle)?)?;
     let record = Record {
@@ -602,6 +654,10 @@ fn list_under(
             "signed list project differs from requested project".into(),
         ));
     }
+    let repository = match repository {
+        None => domain_repository(project, bundle)?,
+        pin => pin,
+    };
     let record = Record {
         project: project.into(),
         role: Role::List,
@@ -709,6 +765,185 @@ mod tests {
         assert!(changes(&old, &next).is_empty());
         next.signer = record("other.yml@refs/tags/v2", true).signer;
         assert!(!changes(&old, &next).is_empty());
+    }
+    const PACKSLIP_WORKFLOW: &str = "https://github.com/jdx/packslip/.github/workflows/release.yml";
+    const PACKSLIP_REPOSITORY: Option<(&str, &str)> = Some(("github.com/jdx/packslip", "123"));
+    /// `PACKSLIP_WORKFLOW` at `tag`.
+    fn at(tag: &str) -> String {
+        format!("{PACKSLIP_WORKFLOW}@refs/tags/{tag}")
+    }
+    /// A record of packslip.dev, a keyless domain project, for `role`,
+    /// signed by `signer` in a run of `source`, the repository name and ID
+    /// its certificate records, if any.
+    fn domain(role: Role, signer: &str, source: Option<(&str, &str)>) -> Record {
+        Record {
+            project: "packslip.dev".into(),
+            role,
+            scheme: Scheme::SigstoreOidc,
+            signer: signer.into(),
+            issuer: Some(crate::sigstore::GITHUB_ISSUER.into()),
+            repository: source.map(|(name, id)| ForgePin::of(name, id)),
+            pin_workflow: true,
+            attested_by: Attestor::Vendor,
+            provenance: vec![],
+        }
+    }
+    #[test]
+    fn a_domain_project_remembers_the_repository_its_certificate_records() {
+        let hk = include_str!("../tests/fixtures/hk-v2.3.0.sigstore.json");
+        assert_eq!(
+            domain_repository("example.test", hk).unwrap(),
+            Some(ForgePin::of("github.com/jdx/hk", "922514152"))
+        );
+        // mkghtag signed through another repository's reusable workflow, so
+        // its certificate names that workflow and records mkghtag's
+        // repository, which ran it.
+        let mkghtag = include_str!("../tests/fixtures/mkghtag-v0.1.14-10.sigstore.json");
+        assert_eq!(
+            domain_repository("tools.example.test/mkghtag", mkghtag).unwrap(),
+            Some(ForgePin::of(
+                "github.com/suzuki-shunsuke/mkghtag",
+                "701940692"
+            ))
+        );
+        // A forge project's pin is the one verify_forge gives.
+        assert_eq!(domain_repository("github.com/jdx/hk", hk).unwrap(), None);
+    }
+    #[test]
+    fn a_domain_project_is_held_to_the_repository_that_signed_it() {
+        for role in [Role::List, Role::Release] {
+            let first = domain(role, &at("v1"), PACKSLIP_REPOSITORY);
+            // The same workflow of the same repository continues at any ref.
+            assert!(changes(&first, &domain(role, &at("v2"), PACKSLIP_REPOSITORY)).is_empty());
+            // A repository recreated under the old name has another ID,
+            // though its workflow URL is the same.
+            let recreated = domain(role, &at("v2"), Some(("github.com/jdx/packslip", "456")));
+            let reasons = changes(&first, &recreated);
+            assert!(
+                reasons.contains(&"repository identity changed from github.com/jdx/packslip (ID 123) to github.com/jdx/packslip (ID 456)".into()),
+                "{reasons:?}"
+            );
+            // Another repository's run that calls the signing workflow as a
+            // reusable workflow: the certificate names the same workflow and
+            // records the caller as its source repository.
+            let caller = domain(role, &at("v1"), Some(("github.com/someone/app", "789")));
+            let reasons = changes(&first, &caller);
+            assert!(
+                reasons.contains(&"repository identity changed from github.com/jdx/packslip (ID 123) to github.com/someone/app (ID 789)".into()),
+                "{reasons:?}"
+            );
+            // A renamed repository keeps its ID, but its workflow URL
+            // changes. As without an ID, a domain project needs approval for
+            // that; a GitHub project follows the ID to the new name.
+            let moved = "https://github.com/jdx/renamed/.github/workflows/release.yml@refs/tags/v2";
+            let renamed = domain(role, moved, Some(("github.com/jdx/renamed", "123")));
+            assert_eq!(
+                changes(&first, &renamed),
+                [format!("signer changed from {:?} to {moved:?}", at("v1"))]
+            );
+            // Another workflow of the same repository is a changed signer,
+            // whatever `pin_workflow` declares, as without an ID.
+            let mut unpinned = first.clone();
+            unpinned.pin_workflow = false;
+            let other = "https://github.com/jdx/packslip/.github/workflows/other.yml@refs/tags/v2";
+            let mut next = domain(role, other, PACKSLIP_REPOSITORY);
+            next.pin_workflow = false;
+            assert!(!changes(&unpinned, &next).is_empty());
+            next.signer = at("v2");
+            assert!(changes(&unpinned, &next).is_empty());
+            // Once an ID is remembered, a certificate without one cannot
+            // show the repository is the same.
+            assert!(
+                changes(&first, &domain(role, &at("v2"), None))
+                    .contains(&"repository pin lost: github.com/jdx/packslip (ID 123)".into())
+            );
+            // Each change is a proposal a person can accept.
+            let role_name = if role == Role::List {
+                "list"
+            } else {
+                "release"
+            };
+            for next in [&recreated, &caller, &renamed] {
+                let Err(Error::Change { id, .. }) = continuity(
+                    "packslip.dev",
+                    role_name,
+                    "bundle",
+                    Some(&first),
+                    next,
+                    &[],
+                    &[],
+                ) else {
+                    panic!("{next:?} continued {first:?}")
+                };
+                continuity(
+                    "packslip.dev",
+                    role_name,
+                    "bundle",
+                    Some(&first),
+                    next,
+                    &[],
+                    &[id],
+                )
+                .unwrap();
+            }
+        }
+        // The ID names the repository that signed, which can sign the
+        // host's other projects too, so another project's record never
+        // stands for this one's.
+        let first = domain(Role::List, &at("v1"), PACKSLIP_REPOSITORY);
+        let mut other = first.clone();
+        other.project = "packslip.dev/other".into();
+        assert!(matches!(
+            continuity(
+                "packslip.dev/other",
+                "list",
+                "bundle",
+                Some(&first),
+                &other,
+                &[],
+                &[]
+            ),
+            Err(Error::Constraint(_))
+        ));
+    }
+    #[test]
+    fn a_domain_record_without_a_repository_id_adopts_the_next_one() {
+        // A record packslip 1.10.1 kept for a keyless domain project.
+        let legacy: Record = serde_json::from_value(serde_json::json!({
+            "project": "packslip.dev",
+            "role": "list",
+            "scheme": "sigstore-oidc",
+            "signer": at("v1"),
+            "issuer": crate::sigstore::GITHUB_ISSUER,
+            "repository": null,
+            "pin_workflow": true,
+            "attested_by": "vendor",
+            "provenance": []
+        }))
+        .unwrap();
+        // The next list from the same workflow URL continues it without a
+        // proposal, and install remembers that list's record, ID included.
+        let adopted = domain(Role::List, &at("v2"), PACKSLIP_REPOSITORY);
+        continuity(
+            "packslip.dev",
+            "list",
+            "bundle",
+            Some(&legacy),
+            &adopted,
+            &[],
+            &[],
+        )
+        .unwrap();
+        // From then on the ID holds.
+        let recreated = domain(
+            Role::List,
+            &at("v3"),
+            Some(("github.com/jdx/packslip", "456")),
+        );
+        assert!(!changes(&adopted, &recreated).is_empty());
+        // A different workflow URL still needs approval, as before.
+        let other = "https://github.com/jdx/packslip/.github/workflows/other.yml@refs/tags/v2";
+        assert!(!changes(&legacy, &domain(Role::List, other, PACKSLIP_REPOSITORY)).is_empty());
     }
     #[test]
     fn project_aliases_follow_repository_ids_but_not_different_tools() {
