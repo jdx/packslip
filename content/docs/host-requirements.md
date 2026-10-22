@@ -89,6 +89,10 @@ them. Write them in each artifact's TOML `requires`:
 | `os_min` | `"12"` for macOS Monterey, or `"10.0.17763"` for Windows | That artifact's OS, using its own version numbering. |
 | `glibc_min` | `"2.31"` | A Linux artifact with `libc = "gnu"`. |
 
+Write each as a version number in the same form as a command's `MIN`.
+`create` rejects one that does not start with a digit, such as
+`glibc-2.31` or `v12`.
+
 For a release with several platforms, keep these fields out of the
 top-level `requires`. Every artifact without its own table inherits that
 default, so a top-level `glibc_min` would also be recorded on macOS and

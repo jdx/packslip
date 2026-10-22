@@ -1216,12 +1216,20 @@ command must not be one the release itself provides.
 
 ### Comparing versions
 
+A `min` is an ASCII digit followed by zero or more ASCII letters,
+digits, `.`, `-`, and `+`, such as `17` or `3.12`. A document with any
+other `min` is invalid, and a consumer refuses it when it checks the
+statement's structure under [consumer rule 2](#consumer-rules). A vendor
+must write `glibc_min` and `os_min` in the same grammar, and
+`packslip create` refuses other spellings, but a consumer does not refuse
+a document whose `glibc_min` or `os_min` breaks it.
+
 `min`, `glibc_min`, and `os_min` are numeric lower bounds, so a `min` of
 `17` means 17.0.0 and later, including 21. A consumer compares
 dot-separated nonnegative integer components numerically, padding missing
-components with zero; `2.10` exceeds `2.9`. If either spelling cannot be
-compared this way, the check is unknown and the consumer warns rather
-than guessing.
+components with zero; `2.10` exceeds `2.9`. If either spelling,
+including a valid `min` such as `17-ea`, cannot be compared this way, the
+check is unknown and the consumer warns rather than guessing.
 
 ### Checking requirements before installation
 
@@ -1246,10 +1254,15 @@ Check libraries using the loader's own search locations: the dynamic
 linker's cache and search path on Linux (`ldconfig -p`,
 `LD_LIBRARY_PATH`), system library and framework directories on macOS,
 and PATH with the system directory on Windows. Find commands on PATH,
-adding `.exe` on Windows, and run them with `--version` to read their
-versions. Compare `min`, `glibc_min`, and `os_min` against the command,
-glibc, and OS versions respectively. A failed version probe or an
-unrecognized version spelling leaves the check unknown.
+adding `.exe` on Windows. A consumer may run a command with `--version`
+to read its version, or may leave the version unknown: commands share no
+version interface, and running one only because a release names it
+executes a program the user did not choose to run. `packslip install`
+does not run them, so it warns that it cannot check the `min` of a
+command it finds. Compare `min`, `glibc_min`, and `os_min` against the
+command, glibc, and OS versions respectively. A version left unknown, a
+failed version probe, or a version spelling that cannot be compared
+leaves the check unknown.
 
 ### Limits of host requirements
 
@@ -1805,8 +1818,11 @@ of those candidates. The reference library exposes this process as
    absent or match the host. If the host's libc is unknown, accept only
    artifacts without a `libc`. A consumer may support additional
    fallbacks, such as a `gnu` host using a `musl` build or an `aarch64`
-   macOS host using `x86_64` under Rosetta. Rank exact matches first and
-   report any fallback used.
+   macOS host using `x86_64` under Rosetta. It uses a fallback only when
+   no artifact passes rules 1 to 3 without one; rules 2 to 6 then apply
+   to the artifacts the fallback admits. Any artifact that passes rules 1
+   to 3 without a fallback, even a portable one, therefore beats every
+   fallback build. Report any fallback used.
 2. **Match the variant.** If a variant was requested, keep only artifacts
    carrying it. Without a requested variant, keep only artifacts that
    have none.
@@ -1945,10 +1961,11 @@ their linked sections use this remembered state:
    the artifact selected by rule 6, using
    [Host requirements](#host-requirements). Refuse an install when a
    library, glibc, or OS version prevents the executables from starting.
-   Warn when a required command is missing or too old, and report either
-   outcome in the consumer's own terms. A requirement the consumer cannot
-   check produces a warning, never a refusal. Requirements do not resolve
-   an ambiguous artifact selection.
+   Warn when a required command is missing or known to be too old, and
+   report either outcome in the consumer's own terms. A requirement the
+   consumer cannot check, including a command's `min` when it did not
+   read the command's version, produces a warning, never a refusal.
+   Requirements do not resolve an ambiguous artifact selection.
 8. **Install resources.** Apply [Resources](#resources):
    - For each resource identity, filter to entries whose scope fits the
      selected artifact, then keep the most specific entries under

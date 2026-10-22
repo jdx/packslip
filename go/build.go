@@ -48,6 +48,9 @@ func Build(metadata Predicate, inputs []ArtifactInput, buildOptions ...BuildOpti
 		if input.Path == "" {
 			return Statement{}, fmt.Errorf("packslip: %q has no local path", input.Artifact.Name)
 		}
+		if err := checkRequirementMinimums(input.Artifact); err != nil {
+			return Statement{}, err
+		}
 		digest, size, err := hashPath(input.Path)
 		if err != nil {
 			return Statement{}, err
@@ -71,6 +74,25 @@ func Build(metadata Predicate, inputs []ArtifactInput, buildOptions ...BuildOpti
 		return Statement{}, err
 	}
 	return statement, nil
+}
+
+// checkRequirementMinimums holds a new artifact's os_min and glibc_min to
+// the grammar of a required bin's min. Validate accepts other spellings
+// there, which a consumer treats as an unknown check, because packslips
+// published before producers checked them may carry them.
+func checkRequirementMinimums(artifact Artifact) error {
+	if artifact.Requires == nil {
+		return nil
+	}
+	for _, m := range []struct{ field, value string }{
+		{"os_min", artifact.Requires.OSMin},
+		{"glibc_min", artifact.Requires.GlibcMin},
+	} {
+		if m.value != "" && !validMin(m.value) {
+			return fmt.Errorf("packslip: artifact %q requires %s %q; a minimum starts with a digit and holds only letters, digits, ., -, and +, as in 2.31 or 10.0.17763", artifact.Name, m.field, m.value)
+		}
+	}
+	return nil
 }
 
 func hashPath(path string) (Digest, int64, error) {

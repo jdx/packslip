@@ -2142,6 +2142,30 @@ fn host_requirements_are_read_and_declared() {
         out.contains("requires tool-linux-x64.tar.gz: libs libz.so.1; bin java>=17"),
         "{out}"
     );
+    // An os_min or glibc_min outside the grammar of a min is refused when
+    // written, though a consumer reading one only warns.
+    for (requires, expected) in [
+        (
+            r#"{ glibc_min = "glibc-2.31" }"#,
+            r#"requires glibc_min "glibc-2.31""#,
+        ),
+        (r#"{ os_min = "v5" }"#, r#"requires os_min "v5""#),
+        (r#"{ glibc_min = "" }"#, r#"requires glibc_min """#),
+    ] {
+        std::fs::write(
+            d.join("min.toml"),
+            format!(
+                "bin = [\"tool\"]\nrequires = {requires}\n[[artifact]]\npath = \"tool-linux-x64.tar.gz\"\n"
+            ),
+        )
+        .unwrap();
+        let (code, _, err) = manifest("min.toml");
+        assert_ne!(code, 0, "{requires}");
+        assert!(
+            err.contains(&format!("artifact \"tool-linux-x64.tar.gz\" {expected}")),
+            "{requires}: {err}"
+        );
+    }
 
     // Malformed and self-referential requirements are refused.
     for (spec, expected) in [
