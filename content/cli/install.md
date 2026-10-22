@@ -12,6 +12,8 @@ Keeps the complete installation tree. Does not run downloaded code, install depe
 
 ## Flags
 - **`--version <VERSION>`** — Version, prefix, tag, or latest (the default)
+
+  latest takes the vendor's recommended release, otherwise the highest stable version. When that release carries no packslip for the project or no artifact for this host, install tries the other stable releases from the highest down and warns about each release it skipped. It examines the first release in full, and stops before a later release would bring the bundles it fetched past 32. A version, prefix, or range request skips only releases without a packslip for the project; a tag tries only that release. Host requirements never select a different release.
 - **`--system`** — Install for all users; Unix root uses this scope by default
 - **`--user`** — Explicitly select the current user's installation scope
 - **`--force`** — Replace conflicting command entries and unmarked installation directories

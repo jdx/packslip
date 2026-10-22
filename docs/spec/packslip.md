@@ -1675,9 +1675,18 @@ Use the first applicable source:
    [latest release endpoint](https://docs.github.com/en/rest/releases/releases#get-the-latest-release).
    Resolve its tag through normal discovery, including any signed list
    entry that maps the tag. The release must belong to the requested
-   project: a repository-wide pointer for another tool supplies no
-   recommendation for this one. The endpoint is an unsigned discovery
-   hint; it supplies neither authenticity nor sequence protection.
+   project: a pointer whose tag names no version of this project, under
+   [Tags](#tags) or through a signed list entry, supplies no
+   recommendation for this one, as `oxfmt_v1.0.0` supplies none for
+   `github.com/oxc-project/oxc/oxlint`. When the tag does name a version
+   of this project but the release carries no packslip for it, which the
+   consumer may learn only by fetching the release's bundles, the
+   recommendation's target is absent from discovery, even if another
+   release's tag names the same version: fall back and report the skipped
+   recommendation as
+   [Falling back to version precedence](#falling-back-to-version-precedence)
+   says. The endpoint is an unsigned discovery hint; it supplies neither
+   authenticity nor sequence protection.
 3. **No recommendation.** Outside GitHub, a project without a signed
    pointer has no recommendation.
 

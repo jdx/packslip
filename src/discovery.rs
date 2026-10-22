@@ -3,7 +3,7 @@
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use sha2::Digest as _;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek, Write};
 use std::path::PathBuf;
 
@@ -499,6 +499,10 @@ pub struct Release {
     pub version: String,
     pub tag: String,
     pub bundles: Vec<String>,
+    /// True for the release the recommendation names: GitHub's latest
+    /// release, or the signed list's entry for the recommended version.
+    /// Another release whose tag names the same version, such as a signed
+    /// list entry that gives the version another tag, is not marked.
     pub recommended: bool,
 }
 #[derive(Deserialize)]
@@ -533,6 +537,169 @@ impl Github {
     ) -> Result<Release, Error> {
         choose_with_latest(&self.releases, list, requested, self.latest_tag.as_deref())
     }
+    /// Every release the request may install for `project`, in the order to
+    /// try them. See [`candidates_with_latest`].
+    pub fn candidates(
+        &self,
+        project: &str,
+        list: Option<&crate::ReleaseListStatement>,
+        requested: Option<&str>,
+    ) -> Result<Candidates, Error> {
+        candidates_with_latest(
+            project,
+            &self.releases,
+            list,
+            requested,
+            self.latest_tag.as_deref(),
+        )
+    }
+}
+
+/// Why a release with no packslip for `project` was skipped, whether
+/// discovery saw no packslip asset at all or the consumer fetched every
+/// bundle and none named the project.
+pub fn no_packslip(project: &str) -> String {
+    format!("its release carries no packslip for {project}")
+}
+
+/// A release that selection passed over, and why. The specification's
+/// Latest rules require a consumer to report a skipped recommendation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Skipped {
+    /// The release as a user knows it, such as
+    /// `2.0.0 (tag oxc_v2.0.0), GitHub's latest release`.
+    pub release: String,
+    /// Why it was passed over, such as `it is withdrawn`.
+    pub reason: String,
+    /// True when the release is a latest request's recommendation, which a
+    /// report names on its own rather than in a run of other releases.
+    pub recommendation: bool,
+}
+
+impl Skipped {
+    /// A skipped release that is not the recommendation.
+    pub fn new(release: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self {
+            release: release.into(),
+            reason: reason.into(),
+            recommendation: false,
+        }
+    }
+}
+
+impl std::fmt::Display for Skipped {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.release, self.reason)
+    }
+}
+
+/// The releases a request may install, in the order a consumer tries them.
+///
+/// For an unconstrained `latest` request, the eligible recommendation comes
+/// first, then every other eligible release by descending semver precedence,
+/// including another release that shares the recommendation's version.
+/// For a version, prefix, or range request, the matching releases come by
+/// descending precedence. An exact tag names its release alone. Otherwise,
+/// releases that share a version follow one another in the forge's order.
+///
+/// Whether a forge release carries a packslip for the requested project is
+/// known only once its bundles are fetched, so a consumer skips such a
+/// release and tries the next one, whatever the request.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct Candidates {
+    pub releases: Vec<Release>,
+    /// True for an unconstrained `latest` request. Only then does a release
+    /// with no artifact for the host count as ineligible, so the consumer
+    /// tries the next release instead of failing.
+    pub latest: bool,
+    /// The recommendation, when selection set it aside before any bundle
+    /// was fetched: it is withdrawn, it is a prerelease, or its forge release
+    /// carries no packslip.
+    pub skipped: Vec<Skipped>,
+    /// Who made the recommendation, for a latest request only: no other
+    /// request gives the recommendation a place, so no report names it.
+    recommended_by: Option<&'static str>,
+    /// The tag of the one candidate that is the recommendation itself.
+    recommendation: Option<String>,
+    /// Versions that more than one tag names, among forge releases and
+    /// signed list entries.
+    shared: BTreeSet<String>,
+}
+
+impl Candidates {
+    /// Name a release for a report: its version, its tag when that spells
+    /// the version differently or another release's tag names the same
+    /// version, and whether it is a latest request's recommendation.
+    pub fn describe(&self, release: &Release) -> String {
+        describe(
+            release,
+            self.role(release),
+            self.shared.contains(&release.version),
+        )
+    }
+
+    /// Report `release` as skipped for `reason`.
+    pub fn skip(&self, release: &Release, reason: impl Into<String>) -> Skipped {
+        Skipped {
+            recommendation: self.role(release).is_some(),
+            ..Skipped::new(self.describe(release), reason)
+        }
+    }
+
+    fn role(&self, release: &Release) -> Option<&'static str> {
+        self.recommended_by
+            .filter(|_| self.recommendation.as_deref() == Some(release.tag.as_str()))
+    }
+}
+
+/// The tag of the candidate a report calls the recommendation: the one
+/// release the recommendation names, whatever else shares its version.
+fn recommendation(releases: &[Release]) -> Option<String> {
+    releases
+        .iter()
+        .find(|r| r.recommended)
+        .map(|r| r.tag.clone())
+}
+
+/// Versions that more than one tag names, among forge releases and signed
+/// list entries, such as 2.0.0 for a release-please root release `v2.0.0`
+/// and the tool's own `tool-v2.0.0`. A report names those releases by tag
+/// as well.
+fn shared_versions(
+    live: &[Release],
+    list: Option<&crate::ReleaseListStatement>,
+) -> BTreeSet<String> {
+    let mut tags: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for release in live {
+        tags.entry(&release.version)
+            .or_default()
+            .insert(&release.tag);
+    }
+    for entry in list.iter().flat_map(|list| &list.predicate.releases) {
+        if let Some(tag) = &entry.tag {
+            tags.entry(&entry.version).or_default().insert(tag);
+        }
+    }
+    tags.into_iter()
+        .filter(|(_, tags)| tags.len() > 1)
+        .map(|(version, _)| version.to_owned())
+        .collect()
+}
+
+fn describe(release: &Release, role: Option<&str>, shared: bool) -> String {
+    let mut text = release.version.clone();
+    if shared
+        || (release.tag != release.version
+            && release.tag.strip_prefix('v') != Some(&release.version))
+    {
+        text = format!("{text} (tag {})", release.tag);
+    }
+    if let Some(role) = role {
+        text = format!("{text}, {role}");
+    }
+    text
 }
 
 pub async fn github(client: &Client, project: &Project) -> Result<Github, Error> {
@@ -669,6 +836,26 @@ pub fn choose_with_latest(
     requested: Option<&str>,
     latest_tag: Option<&str>,
 ) -> Result<Release, Error> {
+    candidates_with_latest("the requested project", live, list, requested, latest_tag)?
+        .releases
+        .into_iter()
+        .next()
+        .ok_or(Error::NoRelease)
+}
+
+/// Every release the request may install for `project`, in the order to
+/// try them, with the same merging, withdrawal, and matching rules as
+/// [`choose_with_latest`], whose choice is the first candidate. A consumer
+/// moves to the next candidate only when one is absent or ineligible, never
+/// after a fetch or verification failure. `project` names the tool in the
+/// reason for a skipped recommendation.
+pub fn candidates_with_latest(
+    project: &str,
+    live: &[Release],
+    list: Option<&crate::ReleaseListStatement>,
+    requested: Option<&str>,
+    latest_tag: Option<&str>,
+) -> Result<Candidates, Error> {
     for release in live {
         semver::Version::parse(&release.version)
             .map_err(|_| Error::Version(release.version.clone()))?;
@@ -689,22 +876,35 @@ pub fn choose_with_latest(
         .filter(|_| !numeric_prefix)
         .and_then(|tag| live.iter().find(|release| release.tag == tag));
     let mut choices: BTreeMap<String, Release> = BTreeMap::new();
+    // Another forge release with the same version, such as a monorepo
+    // sibling whose tag carries the repository-name prefix, stays a
+    // candidate after the one chosen above: only its bundles say which
+    // project it describes.
+    let mut alternates: BTreeMap<String, Vec<Release>> = BTreeMap::new();
     for release in live {
         match choices.entry(release.version.clone()) {
             std::collections::btree_map::Entry::Vacant(entry) => {
                 entry.insert(release.clone());
             }
             std::collections::btree_map::Entry::Occupied(mut entry) => {
-                let recommended = entry.get().recommended || release.recommended;
+                // Each release keeps its own mark. Another release that
+                // shares the recommended version is not the recommendation,
+                // and it does not stand in when that release is dropped.
                 if entry.get().bundles.is_empty() && !release.bundles.is_empty() {
                     entry.insert(release.clone());
+                } else if !release.bundles.is_empty() {
+                    alternates
+                        .entry(release.version.clone())
+                        .or_default()
+                        .push(release.clone());
                 }
-                entry.get_mut().recommended = recommended;
             }
         }
     }
     if let Some(list) = list {
         for entry in &list.predicate.releases {
+            // A signed entry pins one bundle for its version.
+            alternates.remove(&entry.version);
             if entry.is_yanked() {
                 let removed = choices.remove(&entry.version);
                 if requested.is_some_and(|v| {
@@ -717,21 +917,33 @@ pub fn choose_with_latest(
                 }
                 continue;
             }
+            // GitHub's latest release, when it has the entry's version, is
+            // the forge release of an entry that names no tag of its own.
+            let github_latest = || {
+                live.iter()
+                    .find(|r| {
+                        r.version == entry.version
+                            && (r.recommended || latest_tag == Some(r.tag.as_str()))
+                    })
+                    .map(|r| r.tag.clone())
+            };
             let tag = entry
                 .tag
                 .clone()
+                .or_else(|| github_latest().filter(|_| list.predicate.latest.is_none()))
                 .or_else(|| choices.get(&entry.version).map(|r| r.tag.clone()))
                 .unwrap_or_else(|| entry.version.clone());
             choices.insert(
                 entry.version.clone(),
                 Release {
                     version: entry.version.clone(),
+                    // GitHub's pointer marks only the release it names. An
+                    // entry that gives the version another tag is not that
+                    // release, so it does not inherit the mark.
                     recommended: list.predicate.latest.as_deref() == Some(&entry.version)
                         || (list.predicate.latest.is_none()
                             && (latest_tag == Some(tag.as_str())
-                                || live
-                                    .iter()
-                                    .any(|r| r.version == entry.version && r.recommended))),
+                                || live.iter().any(|r| r.tag == tag && r.recommended))),
                     tag,
                     bundles: vec![entry.packslip.clone()],
                 },
@@ -741,9 +953,43 @@ pub fn choose_with_latest(
             for choice in choices.values_mut() {
                 choice.recommended = list.predicate.latest.as_deref() == Some(&choice.version);
             }
+            for alternate in alternates.values_mut().flatten() {
+                alternate.recommended = false;
+            }
         }
     }
     choices.retain(|_, release| !release.bundles.is_empty());
+    let signed_latest = list.is_some_and(|l| l.predicate.latest.is_some());
+    let recommended_by = if signed_latest {
+        Some("the signed list's recommendation")
+    } else {
+        latest_tag.map(|_| "GitHub's latest release")
+    };
+    let shared = shared_versions(live, list);
+    let single = |release: Release| Candidates {
+        recommendation: None,
+        releases: vec![release],
+        latest: false,
+        skipped: Vec::new(),
+        recommended_by: None,
+        shared: shared.clone(),
+    };
+    // Order by descending precedence, each release followed by any others
+    // that share its version.
+    let ordered = |mut releases: Vec<Release>, alternates: &mut BTreeMap<String, Vec<Release>>| {
+        releases.sort_by(|a, b| {
+            semver::Version::parse(&b.version)
+                .unwrap()
+                .cmp(&semver::Version::parse(&a.version).unwrap())
+        });
+        let mut all = Vec::with_capacity(releases.len());
+        for release in releases {
+            let others = alternates.remove(&release.version).unwrap_or_default();
+            all.push(release);
+            all.extend(others);
+        }
+        all
+    };
     if let Some(request) = requested.filter(|r| *r != "latest") {
         if let Some(exact) = exact_tag {
             // Signed entries remain authoritative over every forge tag alias.
@@ -754,10 +1000,14 @@ pub fn choose_with_latest(
                     .iter()
                     .any(|entry| entry.version == exact.version)
             }) {
-                return choices.get(&exact.version).cloned().ok_or(Error::NoRelease);
+                return choices
+                    .get(&exact.version)
+                    .cloned()
+                    .map(single)
+                    .ok_or(Error::NoRelease);
             }
             if !exact.bundles.is_empty() {
-                return Ok(exact.clone());
+                return Ok(single(exact.clone()));
             }
             // A numeric version may select any installable tag for that
             // version; a named tag without its own bundle cannot substitute.
@@ -765,32 +1015,114 @@ pub fn choose_with_latest(
                 return Err(Error::NoRelease);
             }
         }
-        let mut matches: Vec<_> = choices
+        let matches: Vec<_> = choices
             .into_values()
             .filter(|r| matches_request(r, request))
             .collect();
-        matches.sort_by(|a, b| {
-            semver::Version::parse(&b.version)
-                .unwrap()
-                .cmp(&semver::Version::parse(&a.version).unwrap())
+        let releases: Vec<_> = ordered(matches, &mut alternates)
+            .into_iter()
+            .filter(|r| matches_request(r, request))
+            .collect();
+        if releases.is_empty() {
+            return Err(Error::NoRelease);
+        }
+        return Ok(Candidates {
+            recommendation: None,
+            releases,
+            latest: false,
+            skipped: Vec::new(),
+            recommended_by: None,
+            shared,
         });
-        return matches.into_iter().next().ok_or(Error::NoRelease);
     }
-    let mut choices: Vec<_> = choices
-        .into_values()
-        .filter(|r| semver::Version::parse(&r.version).is_ok_and(|v| v.pre.is_empty()))
-        .collect();
-    choices.sort_by(|a, b| {
-        semver::Version::parse(&b.version)
-            .unwrap()
-            .cmp(&semver::Version::parse(&a.version).unwrap())
-    });
-    choices
-        .iter()
-        .find(|r| r.recommended)
-        .cloned()
-        .or_else(|| choices.into_iter().next())
-        .ok_or(Error::NoRelease)
+    // The recommendation as discovery names it, before eligibility applies.
+    let target = match list.and_then(|l| Some((l, l.predicate.latest.as_deref()?))) {
+        Some((list, latest)) => list
+            .predicate
+            .releases
+            .iter()
+            .find(|entry| entry.version == latest)
+            .map(|entry| Release {
+                version: entry.version.clone(),
+                tag: entry.tag.clone().unwrap_or_else(|| entry.version.clone()),
+                bundles: Vec::new(),
+                recommended: true,
+            }),
+        None => latest_tag.and_then(|tag| {
+            list.and_then(|list| {
+                list.predicate
+                    .releases
+                    .iter()
+                    .find(|entry| entry.tag.as_deref() == Some(tag))
+            })
+            .map(|entry| Release {
+                version: entry.version.clone(),
+                tag: tag.to_owned(),
+                bundles: Vec::new(),
+                recommended: true,
+            })
+            .or_else(|| live.iter().find(|release| release.tag == tag).cloned())
+        }),
+    };
+    let stable = |release: &Release| {
+        semver::Version::parse(&release.version).is_ok_and(|v| v.pre.is_empty())
+    };
+    let mut eligible = ordered(
+        choices.into_values().filter(stable).collect(),
+        &mut alternates,
+    );
+    let mut skipped = Vec::new();
+    if let Some(index) = eligible.iter().position(|r| r.recommended) {
+        // Only the recommendation itself goes first. Another release that
+        // shares its version keeps its place by precedence, so a higher
+        // release is tried before it.
+        let recommendation = eligible.remove(index);
+        eligible.insert(0, recommendation);
+    } else if let Some(target) = target {
+        let reason = if list.is_some_and(|list| {
+            list.predicate
+                .releases
+                .iter()
+                .any(|entry| entry.version == target.version && entry.is_yanked())
+        }) {
+            "it is withdrawn".to_owned()
+        } else if !stable(&target) {
+            "it is a prerelease".to_owned()
+        } else if let Some(tag) = list
+            .and_then(|list| {
+                list.predicate
+                    .releases
+                    .iter()
+                    .find(|entry| entry.version == target.version)
+            })
+            .and_then(|entry| entry.tag.as_deref())
+            .filter(|tag| *tag != target.tag)
+        {
+            // GitHub's latest release names a listed version, but the
+            // signed entry gives that version another release.
+            format!("the signed list maps {} to tag {tag}", target.version)
+        } else {
+            no_packslip(project)
+        };
+        skipped.push(Skipped {
+            recommendation: true,
+            ..Skipped::new(
+                describe(&target, recommended_by, shared.contains(&target.version)),
+                reason,
+            )
+        });
+    }
+    if eligible.is_empty() {
+        return Err(Error::NoRelease);
+    }
+    Ok(Candidates {
+        recommendation: recommendation(&eligible),
+        releases: eligible,
+        latest: true,
+        skipped,
+        recommended_by,
+        shared,
+    })
 }
 
 // Numeric selectors use the same leading-zero normalization as forge tags,
@@ -1130,7 +1462,9 @@ mod tests {
         ] {
             let release = choose(&live, None, Some("2.0.0")).unwrap();
             assert_eq!(release.bundles, vec!["https://example.test/bundle"]);
-            assert!(release.recommended);
+            // Only the release the pointer names is the recommendation;
+            // another tag for its version does not inherit the mark.
+            assert!(!release.recommended);
         }
     }
     #[test]
@@ -1378,5 +1712,335 @@ mod tests {
             choose(&[], Some(&list), None),
             Err(Error::Version(_))
         ));
+    }
+
+    const P: &str = "github.com/owner/repo/tool";
+
+    fn release(version: &str, tag: &str, bundles: &[&str], recommended: bool) -> Release {
+        Release {
+            version: version.into(),
+            tag: tag.into(),
+            bundles: bundles.iter().map(|b| (*b).to_owned()).collect(),
+            recommended,
+        }
+    }
+    fn tags(candidates: &Candidates) -> Vec<&str> {
+        candidates.releases.iter().map(|r| r.tag.as_str()).collect()
+    }
+
+    #[test]
+    fn latest_candidates_try_the_recommendation_then_descending_precedence() {
+        let live = vec![
+            release("1.5.0", "v1.5.0", &["https://example.test/1.5"], false),
+            release("1.0.0", "v1.0.0", &["https://example.test/1.0"], true),
+            release(
+                "3.0.0-rc.1",
+                "v3.0.0-rc.1",
+                &["https://example.test/rc"],
+                false,
+            ),
+            release("2.0.0", "v2.0.0", &["https://example.test/2.0"], false),
+        ];
+        let candidates = candidates_with_latest(P, &live, None, None, Some("v1.0.0")).unwrap();
+        assert!(candidates.latest);
+        assert!(candidates.skipped.is_empty());
+        assert_eq!(tags(&candidates), ["v1.0.0", "v2.0.0", "v1.5.0"]);
+        assert_eq!(
+            candidates.describe(&candidates.releases[0]),
+            "1.0.0, GitHub's latest release"
+        );
+        assert_eq!(candidates.describe(&candidates.releases[1]), "2.0.0");
+        // A version request keeps its matches by precedence and never treats
+        // a missing host artifact as a reason to move on.
+        let candidates = candidates_with_latest(P, &live, None, Some("1"), Some("v1.0.0")).unwrap();
+        assert!(!candidates.latest);
+        assert_eq!(tags(&candidates), ["v1.5.0", "v1.0.0"]);
+        assert_eq!(
+            choose_with_latest(&live, None, None, Some("v1.0.0"))
+                .unwrap()
+                .version,
+            "1.0.0"
+        );
+    }
+
+    #[test]
+    fn a_skipped_recommendation_is_reported_with_its_reason() {
+        let live = vec![
+            release("2.0.0", "v2.0.0", &["https://example.test/2.0"], false),
+            release("1.0.0", "v1.0.0", &["https://example.test/1.0"], false),
+        ];
+        let mut list = signed_list();
+        list.predicate.latest = Some("2.0.0".into());
+        let candidates = candidates_with_latest(P, &live, Some(&list), None, None).unwrap();
+        assert_eq!(tags(&candidates), ["v1.0.0"]);
+        assert_eq!(
+            candidates.skipped,
+            [Skipped {
+                recommendation: true,
+                ..Skipped::new("2.0.0, the signed list's recommendation", "it is withdrawn")
+            }]
+        );
+        list.predicate.releases[0].version = "3.0.0-rc.1".into();
+        list.predicate.releases[0].tag = Some("release-candidate".into());
+        list.predicate.releases[0].status = None;
+        list.predicate.latest = Some("3.0.0-rc.1".into());
+        let candidates = candidates_with_latest(P, &live, Some(&list), None, None).unwrap();
+        assert_eq!(tags(&candidates), ["v2.0.0", "v1.0.0"]);
+        assert_eq!(
+            candidates.skipped[0].to_string(),
+            "3.0.0-rc.1 (tag release-candidate), the signed list's recommendation: it is a prerelease"
+        );
+        // GitHub's pointer at a release with no packslip asset at all.
+        let mut assetless = live.clone();
+        assetless.insert(0, release("3.0.0", "v3.0.0", &[], true));
+        let candidates = candidates_with_latest(P, &assetless, None, None, Some("v3.0.0")).unwrap();
+        assert_eq!(tags(&candidates), ["v2.0.0", "v1.0.0"]);
+        assert_eq!(
+            candidates.skipped[0].to_string(),
+            "3.0.0, GitHub's latest release: its release carries no packslip for github.com/owner/repo/tool"
+        );
+        // Another tag for the same version does not stand in for an
+        // assetless latest release: the recommendation is still reported
+        // as skipped, by tag so that it cannot be mistaken for the other
+        // release, which is tried at its version's place.
+        assetless.insert(
+            1,
+            release("3.0.0", "tool-v3.0.0", &["https://example.test/3.0"], false),
+        );
+        let candidates = candidates_with_latest(P, &assetless, None, None, Some("v3.0.0")).unwrap();
+        assert_eq!(
+            candidates.skipped[0].to_string(),
+            "3.0.0 (tag v3.0.0), GitHub's latest release: its release carries no packslip for github.com/owner/repo/tool"
+        );
+        assert_eq!(tags(&candidates), ["tool-v3.0.0", "v2.0.0", "v1.0.0"]);
+        assert_eq!(
+            candidates.describe(&candidates.releases[0]),
+            "3.0.0 (tag tool-v3.0.0)"
+        );
+        // A repository-wide pointer whose tag names no version of this
+        // project supplies no recommendation, so nothing was skipped.
+        let candidates =
+            candidates_with_latest(P, &live, None, None, Some("other_v9.0.0")).unwrap();
+        assert!(candidates.skipped.is_empty());
+        assert_eq!(tags(&candidates), ["v2.0.0", "v1.0.0"]);
+    }
+
+    #[test]
+    fn forge_releases_sharing_a_version_remain_candidates() {
+        // oxc_v2.0.0 names version 2.0.0 for .../oxc/oxlint through the
+        // repository-name prefix, but only its bundles say which tool it
+        // describes.
+        let live = vec![
+            release("2.0.0", "oxc_v2.0.0", &["https://example.test/oxc"], true),
+            release(
+                "2.0.0",
+                "oxlint_v2.0.0",
+                &["https://example.test/oxlint"],
+                false,
+            ),
+            release(
+                "1.9.0",
+                "oxlint_v1.9.0",
+                &["https://example.test/1.9"],
+                false,
+            ),
+        ];
+        let candidates = candidates_with_latest(P, &live, None, None, Some("oxc_v2.0.0")).unwrap();
+        assert_eq!(
+            tags(&candidates),
+            ["oxc_v2.0.0", "oxlint_v2.0.0", "oxlint_v1.9.0"]
+        );
+        assert_eq!(
+            candidates.describe(&candidates.releases[0]),
+            "2.0.0 (tag oxc_v2.0.0), GitHub's latest release"
+        );
+        assert_eq!(
+            candidates.describe(&candidates.releases[1]),
+            "2.0.0 (tag oxlint_v2.0.0)"
+        );
+        // GitHub's listing order does not decide which release is the
+        // recommendation: GitHub's latest release goes first either way.
+        let reversed = vec![live[1].clone(), live[0].clone(), live[2].clone()];
+        let candidates =
+            candidates_with_latest(P, &reversed, None, None, Some("oxc_v2.0.0")).unwrap();
+        assert_eq!(
+            tags(&candidates),
+            ["oxc_v2.0.0", "oxlint_v2.0.0", "oxlint_v1.9.0"]
+        );
+        let described: Vec<_> = candidates
+            .releases
+            .iter()
+            .map(|r| candidates.describe(r))
+            .collect();
+        assert_eq!(
+            described,
+            [
+                "2.0.0 (tag oxc_v2.0.0), GitHub's latest release",
+                "2.0.0 (tag oxlint_v2.0.0)",
+                "1.9.0 (tag oxlint_v1.9.0)"
+            ]
+        );
+        assert_eq!(
+            choose_with_latest(&reversed, None, None, Some("oxc_v2.0.0"))
+                .unwrap()
+                .tag,
+            "oxc_v2.0.0"
+        );
+        // A version request ignores the recommendation, so its reports do
+        // not name it, and keeps releases that share a version in GitHub's
+        // order.
+        let candidates =
+            candidates_with_latest(P, &reversed, None, Some("2"), Some("oxc_v2.0.0")).unwrap();
+        assert_eq!(tags(&candidates), ["oxlint_v2.0.0", "oxc_v2.0.0"]);
+        assert_eq!(
+            candidates.describe(&candidates.releases[0]),
+            "2.0.0 (tag oxlint_v2.0.0)"
+        );
+        assert_eq!(
+            candidates.skip(&candidates.releases[1], "no packslip"),
+            Skipped::new("2.0.0 (tag oxc_v2.0.0)", "no packslip")
+        );
+        let candidates = candidates_with_latest(P, &live, None, Some("2.0.0"), None).unwrap();
+        assert_eq!(tags(&candidates), ["oxc_v2.0.0", "oxlint_v2.0.0"]);
+        let candidates =
+            candidates_with_latest(P, &live, None, Some("oxlint_v2.0.0"), None).unwrap();
+        assert_eq!(tags(&candidates), ["oxlint_v2.0.0"]);
+        // A signed entry pins the one bundle for its version.
+        let mut list = signed_list();
+        list.predicate.releases[0].status = None;
+        list.predicate.releases[0].tag = Some("oxlint_v2.0.0".into());
+        let candidates = candidates_with_latest(P, &live, Some(&list), None, None).unwrap();
+        assert_eq!(tags(&candidates), ["oxlint_v2.0.0", "oxlint_v1.9.0"]);
+        assert_eq!(
+            candidates.releases[0].bundles,
+            [list.predicate.releases[0].packslip.clone()]
+        );
+    }
+
+    #[test]
+    fn a_list_entry_under_another_tag_is_not_githubs_latest_release() {
+        // GitHub marks the release-please root release v2.0.0 latest. It
+        // carries no packslip asset, and the signed list maps 2.0.0 to the
+        // tool's own tag. That entry is not GitHub's latest release, so the
+        // recommendation is reported as skipped, and the entry is tried at
+        // its version's place.
+        let root = release("2.0.0", "v2.0.0", &[], true);
+        let tool = release(
+            "2.0.0",
+            "tool-v2.0.0",
+            &["https://example.test/2.0.0"],
+            false,
+        );
+        let older = release(
+            "1.0.0",
+            "tool-v1.0.0",
+            &["https://example.test/1.0.0"],
+            false,
+        );
+        let patch = release(
+            "2.0.1",
+            "tool-v2.0.1",
+            &["https://example.test/2.0.1"],
+            false,
+        );
+        let mut list = signed_list();
+        list.predicate.releases[0].status = None;
+        list.predicate.releases[0].tag = Some("tool-v2.0.0".into());
+        let skipped = "2.0.0 (tag v2.0.0), GitHub's latest release: the signed list maps 2.0.0 to tag tool-v2.0.0";
+        let live = vec![root.clone(), tool.clone(), older.clone()];
+        let candidates =
+            candidates_with_latest(P, &live, Some(&list), None, Some("v2.0.0")).unwrap();
+        assert_eq!(tags(&candidates), ["tool-v2.0.0", "tool-v1.0.0"]);
+        assert_eq!(candidates.skipped[0].to_string(), skipped);
+        assert_eq!(
+            candidates.describe(&candidates.releases[0]),
+            "2.0.0 (tag tool-v2.0.0)"
+        );
+        assert!(!candidates.releases[0].recommended);
+        // A higher release is tried before the entry.
+        let live = vec![root.clone(), patch.clone(), tool.clone(), older.clone()];
+        let candidates =
+            candidates_with_latest(P, &live, Some(&list), None, Some("v2.0.0")).unwrap();
+        assert_eq!(
+            tags(&candidates),
+            ["tool-v2.0.1", "tool-v2.0.0", "tool-v1.0.0"]
+        );
+        assert_eq!(candidates.skipped[0].to_string(), skipped);
+        // Without GitHub's tag, a caller's mark on v2.0.0 does not pass to
+        // the entry either.
+        assert_eq!(choose(&live, Some(&list), None).unwrap().tag, "tool-v2.0.1");
+        // An entry with no tag of its own is GitHub's latest release when
+        // that release has its version, whatever GitHub's listing order.
+        list.predicate.releases[0].tag = None;
+        let root = release("2.0.0", "v2.0.0", &["https://example.test/root"], true);
+        for live in [
+            vec![root.clone(), tool.clone(), patch.clone()],
+            vec![tool.clone(), root.clone(), patch.clone()],
+        ] {
+            let candidates =
+                candidates_with_latest(P, &live, Some(&list), None, Some("v2.0.0")).unwrap();
+            assert!(candidates.skipped.is_empty());
+            assert_eq!(tags(&candidates), ["v2.0.0", "tool-v2.0.1"]);
+            assert_eq!(
+                candidates.describe(&candidates.releases[0]),
+                "2.0.0 (tag v2.0.0), GitHub's latest release"
+            );
+            assert_eq!(
+                candidates.releases[0].bundles,
+                [list.predicate.releases[0].packslip.clone()]
+            );
+        }
+    }
+
+    #[test]
+    fn a_release_sharing_the_recommended_version_keeps_its_place() {
+        // A release-please monorepo tags the root release v2.0.0 and marks
+        // it latest; the tool's own releases are unmarked. If v2.0.0 turns
+        // out to carry only the root's packslip, the next release to try
+        // is the highest one, tool-v2.0.1, not tool-v2.0.0.
+        let root = release("2.0.0", "v2.0.0", &["https://example.test/root"], true);
+        let patch = release(
+            "2.0.1",
+            "tool-v2.0.1",
+            &["https://example.test/2.0.1"],
+            false,
+        );
+        let sibling = release(
+            "2.0.0",
+            "tool-v2.0.0",
+            &["https://example.test/2.0.0"],
+            false,
+        );
+        for live in [
+            vec![patch.clone(), root.clone(), sibling.clone()],
+            vec![sibling.clone(), root.clone(), patch.clone()],
+        ] {
+            let candidates = candidates_with_latest(P, &live, None, None, Some("v2.0.0")).unwrap();
+            assert_eq!(tags(&candidates), ["v2.0.0", "tool-v2.0.1", "tool-v2.0.0"]);
+            assert!(candidates.skipped.is_empty());
+            let described: Vec<_> = candidates
+                .releases
+                .iter()
+                .map(|r| candidates.describe(r))
+                .collect();
+            // Both releases of 2.0.0 are named by tag, so a report that
+            // skipped v2.0.0 cannot be read as skipping tool-v2.0.0.
+            assert_eq!(
+                described,
+                [
+                    "2.0.0 (tag v2.0.0), GitHub's latest release",
+                    "2.0.1 (tag tool-v2.0.1)",
+                    "2.0.0 (tag tool-v2.0.0)"
+                ]
+            );
+            assert!(candidates.skip(&candidates.releases[0], "r").recommendation);
+            assert!(!candidates.skip(&candidates.releases[2], "r").recommendation);
+            assert_eq!(
+                choose_with_latest(&live, None, None, Some("v2.0.0"))
+                    .unwrap()
+                    .tag,
+                "v2.0.0"
+            );
+        }
     }
 }
