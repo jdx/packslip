@@ -162,8 +162,13 @@ fn a_release_signed_through_another_repositorys_reusable_workflow_verifies_witho
 fn verify_source_repository_goes_by_the_certificates_repository_not_its_workflow() {
     let dir = tempfile::tempdir().unwrap();
     let d = dir.path();
-    // A trailing slash is the same repository.
-    for source in ["https://github.com/jdx/hk", "https://github.com/jdx/hk/"] {
+    // A trailing slash is the same repository, and so is its name in
+    // another case, as GitHub resolves it.
+    for source in [
+        "https://github.com/jdx/hk",
+        "https://github.com/jdx/hk/",
+        "https://github.com/JDX/HK",
+    ] {
         let (code, _, err) = packslip(
             d,
             &[
@@ -178,23 +183,29 @@ fn verify_source_repository_goes_by_the_certificates_repository_not_its_workflow
         assert_eq!(code, 0, "{source}: {err}");
     }
 
-    // Another repository is refused whichever workflow signed.
-    let (code, _, err) = packslip(
-        d,
-        &[
-            "verify",
-            HK_BUNDLE,
-            "--issuer",
-            GITHUB_ISSUER,
-            "--source-repository",
-            "https://github.com/jdx/other",
-        ],
-    );
-    assert_eq!(code, 1, "{err}");
-    assert!(
-        err.contains("source repository is https://github.com/jdx/hk"),
-        "{err}"
-    );
+    // Another repository is refused whichever workflow signed, and so is a
+    // path inside this one.
+    for source in [
+        "https://github.com/jdx/other",
+        "https://github.com/jdx/hk/sub",
+    ] {
+        let (code, _, err) = packslip(
+            d,
+            &[
+                "verify",
+                HK_BUNDLE,
+                "--issuer",
+                GITHUB_ISSUER,
+                "--source-repository",
+                source,
+            ],
+        );
+        assert_eq!(code, 1, "{source}: {err}");
+        assert!(
+            err.contains("source repository is https://github.com/jdx/hk"),
+            "{err}"
+        );
+    }
 
     // The issuer is required, and a workflow pin cannot be combined with it.
     let (code, _, err) = packslip(
@@ -454,6 +465,56 @@ fn a_key_signed_release_and_list_for_a_forge_project_answer_to_the_key_alone() {
         let (code, _, err) = packslip(d, &["verify", bundle, "--allow-unlogged"]);
         assert_eq!(code, 1, "{bundle}");
         assert!(err.contains("pin the key instead"), "{bundle}: {err}");
+    }
+}
+
+#[test]
+fn verify_identity_flags_match_a_github_repository_name_in_any_case() {
+    let dir = tempfile::tempdir().unwrap();
+    let workflow = "/.github/workflows/release.yml@refs/tags/v2.3.0";
+    for flags in [
+        ["--identity-prefix", "https://github.com/JDX/HK/"].as_slice(),
+        &[
+            "--issuer",
+            GITHUB_ISSUER,
+            "--identity",
+            &format!("https://github.com/JDX/HK{workflow}"),
+        ],
+    ] {
+        let (code, out, err) = packslip(dir.path(), &[&["verify", HK_BUNDLE], flags].concat());
+        assert_eq!(code, 0, "{flags:?}: {err}");
+        assert!(out.starts_with("ok: github.com/jdx/hk 2.3.0 "), "{out}");
+    }
+    // The workflow's path inside the repository, and its ref, keep their
+    // case.
+    let (code, _, err) = packslip(
+        dir.path(),
+        &[
+            "verify",
+            HK_BUNDLE,
+            "--identity-prefix",
+            "https://github.com/jdx/hk/.GITHUB/",
+        ],
+    );
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("expected an identity starting with"), "{err}");
+    for identity in [
+        "https://github.com/jdx/hk/.GITHUB/workflows/release.yml@refs/tags/v2.3.0",
+        "https://github.com/jdx/hk/.github/workflows/release.yml@refs/tags/V2.3.0",
+    ] {
+        let (code, _, err) = packslip(
+            dir.path(),
+            &[
+                "verify",
+                HK_BUNDLE,
+                "--issuer",
+                GITHUB_ISSUER,
+                "--identity",
+                identity,
+            ],
+        );
+        assert_eq!(code, 1, "{identity}: {err}");
+        assert!(err.contains("identity mismatch"), "{err}");
     }
 }
 

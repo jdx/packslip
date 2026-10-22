@@ -628,6 +628,166 @@
       }
     },
     {
+      "name": "a project path segment with a tilde",
+      "expect": "accept",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "example.org/~tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "libc": "gnu",
+              "size": 5,
+              "format": "tar.xz",
+              "bin": [
+                "tool"
+              ]
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-oidc",
+            "key_id": "https://github.com/example/tool/.github/workflows/release.yml@refs/tags/v1.0.0",
+            "issuer": "https://token.actions.githubusercontent.com"
+          }
+        }
+      },
+      "reason": "A project name's host is lowercase LDH labels with at least one dot and no port; its path segments use only ASCII letters, digits, `.`, `_`, `~`, and `-`."
+    },
+    {
+      "name": "a project host with a port",
+      "expect": "reject",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "example.org:8443/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "libc": "gnu",
+              "size": 5,
+              "format": "tar.xz",
+              "bin": [
+                "tool"
+              ]
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-oidc",
+            "key_id": "https://github.com/example/tool/.github/workflows/release.yml@refs/tags/v1.0.0",
+            "issuer": "https://token.actions.githubusercontent.com"
+          }
+        }
+      },
+      "reason": "A project name's host is lowercase LDH labels with at least one dot and no port; its path segments use only ASCII letters, digits, `.`, `_`, `~`, and `-`."
+    },
+    {
+      "name": "a project host label with an underscore",
+      "expect": "reject",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "exa_mple.org/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "libc": "gnu",
+              "size": 5,
+              "format": "tar.xz",
+              "bin": [
+                "tool"
+              ]
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-oidc",
+            "key_id": "https://github.com/example/tool/.github/workflows/release.yml@refs/tags/v1.0.0",
+            "issuer": "https://token.actions.githubusercontent.com"
+          }
+        }
+      },
+      "reason": "A project name's host is lowercase LDH labels with at least one dot and no port; its path segments use only ASCII letters, digits, `.`, `_`, `~`, and `-`."
+    },
+    {
+      "name": "a project path segment with a character outside the set",
+      "expect": "reject",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "example.org/@scope/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "libc": "gnu",
+              "size": 5,
+              "format": "tar.xz",
+              "bin": [
+                "tool"
+              ]
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-oidc",
+            "key_id": "https://github.com/example/tool/.github/workflows/release.yml@refs/tags/v1.0.0",
+            "issuer": "https://token.actions.githubusercontent.com"
+          }
+        }
+      },
+      "reason": "A project name's host is lowercase LDH labels with at least one dot and no port; its path segments use only ASCII letters, digits, `.`, `_`, `~`, and `-`."
+    },
+    {
       "name": "no artifacts",
       "expect": "reject",
       "statement": {

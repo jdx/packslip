@@ -353,7 +353,9 @@ pub fn channel(version: &semver::Version) -> Option<&str> {
 /// followed by `/`, `-`, `_`, or `@`. `v1.2.3` names `1.2.3`;
 /// `oxlint_v1.0.0` names `1.0.0` for `github.com/oxc-project/oxc/oxlint`;
 /// `jq-1.7.1` names `1.7.1` for `github.com/jqlang/jq`; `cli/v1.9.4`
-/// names `1.9.4` for `github.com/biomejs/biome/crates/cli`.
+/// names `1.9.4` for `github.com/biomejs/biome/crates/cli`. The repository
+/// name matches in any ASCII case, as GitHub resolves it, so `jq-1.7.1`
+/// names `1.7.1` for `github.com/jqlang/JQ` too; a subpath matches exactly.
 ///
 /// Each allowed prefix is tried in that order, then no prefix, and the
 /// first that leaves a version wins. A prefix that begins the tag without
@@ -367,22 +369,32 @@ pub fn channel(version: &semver::Version) -> Option<&str> {
 /// consumer refuses it. A tag that names no version is skipped, and the
 /// release is reachable only through a signed release list.
 pub fn tag_version(tag: &str, project: &str) -> Option<String> {
-    let mut prefixes: Vec<&str> = Vec::new();
+    // Each prefix, and whether it matches in any ASCII case.
+    let mut prefixes: Vec<(&str, bool)> = Vec::new();
     if let Some(sub) = repository_subpath(project) {
-        prefixes.push(sub);
+        prefixes.push((sub, false));
         if let Some(last) = sub.rsplit('/').next()
             && last != sub
         {
-            prefixes.push(last);
+            prefixes.push((last, false));
         }
     }
     if let Some((_, _, repo)) = repository(project) {
-        prefixes.push(repo);
+        prefixes.push((repo, true));
     }
-    let after_prefixes = prefixes.into_iter().flat_map(|prefix| {
+    fn strip<'a>(tag: &'a str, prefix: &str, any_case: bool) -> Option<&'a str> {
+        let head = tag.get(..prefix.len())?;
+        let same = if any_case {
+            head.eq_ignore_ascii_case(prefix)
+        } else {
+            head == prefix
+        };
+        same.then(|| &tag[prefix.len()..])
+    }
+    let after_prefixes = prefixes.into_iter().flat_map(|(prefix, any_case)| {
         ['/', '-', '_', '@']
             .into_iter()
-            .filter_map(move |sep| tag.strip_prefix(prefix)?.strip_prefix(sep))
+            .filter_map(move |sep| strip(tag, prefix, any_case)?.strip_prefix(sep))
     });
     after_prefixes.chain([tag]).find_map(|rest| {
         let version = normalize_version(rest.strip_prefix('v').unwrap_or(rest))?;
@@ -2040,9 +2052,12 @@ pub fn github_list_path(project: &str) -> Option<String> {
     })
 }
 
-/// A project name is a lowercase DNS host, optionally followed by path
-/// segments: `github.com/jdx/mise`, `mise.jdx.dev`. No scheme, no empty
-/// or dot segments, no trailing slash, and the host has at least one dot.
+/// Whether `project` follows the specification's project-name grammar: a
+/// host of dot-separated labels, at least two, each of lowercase ASCII
+/// letters, digits, and `-` that neither starts nor ends with `-`, and no
+/// port; then optional `/`-separated path segments of ASCII letters,
+/// digits, `.`, `_`, `~`, and `-`, none empty, `.`, or `..`.
+/// `github.com/jdx/mise` and `mise.jdx.dev` are project names.
 pub fn valid_project(project: &str) -> bool {
     let mut parts = project.split('/');
     let Some(host) = parts.next() else {
@@ -2922,6 +2937,13 @@ mod tests {
             "github.com/../mise",
             ".github.com/x",
             "git hub.com/x",
+            "exa_mple.com/x",
+            "-example.com/x",
+            "example-.com/x",
+            "example.com:8443/x",
+            "github.com/jdx/a+b",
+            "github.com/jdx/tool@v1",
+            "example.com/@scope/pkg",
         ] {
             assert!(!valid_project(bad), "{bad}");
         }
@@ -3049,6 +3071,11 @@ mod tests {
             ("v1.2.3-rc.1", "github.com/o/r", Some("1.2.3-rc.1")),
             ("jq-1.7.1", "github.com/jqlang/jq", Some("1.7.1")),
             ("jq@1.7.1", "github.com/jqlang/jq", Some("1.7.1")),
+            // The repository name matches in any case, as GitHub resolves
+            // it; a subpath matches exactly.
+            ("jq-1.7.1", "github.com/jqlang/JQ", Some("1.7.1")),
+            ("JQ-1.7.1", "github.com/jqlang/jq", Some("1.7.1")),
+            ("OXLINT_v1.0.0", "github.com/oxc-project/oxc/oxlint", None),
             (
                 "oxlint_v1.0.0",
                 "github.com/oxc-project/oxc/oxlint",

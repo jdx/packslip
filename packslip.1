@@ -269,10 +269,10 @@ The pinned minisign public key file, or its base64 line
 Require this OIDC issuer as well as the project's default identity
 .TP
 \fB\-\-identity\fR \fI<IDENTITY>\fR
-Require this exact certificate identity
+Require this certificate identity; a GitHub or GitLab repository name in it matches in any case
 .TP
 \fB\-\-identity\-prefix\fR \fI<IDENTITY_PREFIX>\fR
-Require this certificate identity prefix
+Require this certificate identity prefix; a GitHub or GitLab repository name in it matches in any case
 .TP
 \fB\-\-accept\-trust\-change\fR \fI<ACCEPT_TRUST_CHANGE>\fR
 Approve one exact displayed trust\-change proposal (repeatable)
@@ -347,10 +347,10 @@ Verification works as in `packslip verify` without \-\-allow\-other\-repository:
 .PP
 .TP
 \fB\-\-identity\fR \fI<IDENTITY>\fR
-The exact certificate identity a keyless signer must have, including its ref, such as https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3
+The certificate identity a keyless signer must have, including its ref, such as https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3; a GitHub or GitLab repository name in it matches in any case
 .TP
 \fB\-\-identity\-prefix\fR \fI<IDENTITY_PREFIX>\fR
-A prefix the certificate identity must start with, such as https://github.com/owner/repo/
+A prefix the certificate identity must start with, such as https://github.com/owner/repo/; a GitHub or GitLab repository name in it matches in any case
 .TP
 \fB\-\-issuer\fR \fI<ISSUER>\fR
 The OIDC issuer a keyless signer must have; pass it with \-\-identity or \-\-identity\-prefix, since for a project not on GitHub or GitLab it alone accepts any signer from that issuer
@@ -502,7 +502,7 @@ Verify a packslip, or a release list, against a pinned identity or key
 
 Check the signature, log evidence, and statement structure. With \-\-artifact, also check local files against signed digests and artifact sizes. Without it, only the bundle is checked. Nothing is downloaded: remote artifacts and linked provenance are not fetched.
 
-Choose what to trust. By default, the identity policy comes from the project the document claims, if it is on github.com or gitlab.com: that forge's issuer and a certificate that records that repository as its source, whichever workflow signed, so a reusable workflow of another repository may sign (a certificate that records no source must come from a workflow of that repository). Any other project needs \-\-pubkey or an identity flag. For a keyless release, \-\-issuer with \-\-identity\-prefix (any workflow of a repository, such as https://github.com/owner/repo/) or \-\-identity (one exact certificate identity, including its ref) pins the signer. \-\-issuer with \-\-source\-repository instead pins the repository the certificate must record as its source, whichever workflow signed: unlike an identity prefix of that repository, it also matches a reusable workflow of another repository. For a key\-signed release, pass \-\-pubkey. \-\-pin adds a check on top of the identity policy: the signing repository must have that signer fingerprint.
+Choose what to trust. By default, the identity policy comes from the project the document claims, if it is on github.com or gitlab.com: that forge's issuer and a certificate that records that repository as its source, whichever workflow signed, so a reusable workflow of another repository may sign (a certificate that records no source must come from a workflow of that repository). Any other project needs \-\-pubkey or an identity flag. For a keyless release, \-\-issuer with \-\-identity\-prefix (any workflow of a repository, such as https://github.com/owner/repo/) or \-\-identity (one certificate identity, including its ref) pins the signer. \-\-issuer with \-\-source\-repository instead pins the repository the certificate must record as its source, whichever workflow signed: unlike an identity prefix of that repository, it also matches a reusable workflow of another repository. In \-\-identity, \-\-identity\-prefix, and \-\-source\-repository, a github.com or gitlab.com repository's name matches in any letter case, as the forge resolves it; the rest, such as a workflow's path and ref, matches exactly. For a key\-signed release, pass \-\-pubkey. \-\-pin adds a check on top of the identity policy: the signing repository must have that signer fingerprint.
 
 For a GitHub or GitLab project, the identity flags narrow what the project's name requires and never replace it: the run that signed must match the flags and still belong to the project's repository, so \-\-issuer alone accepts only that repository's workflows and the reusable workflows it calls. To verify a document signed outside the project's repository, such as a repackager's, name its signer with \-\-issuer and \-\-identity, \-\-identity\-prefix, or \-\-source\-repository, and add \-\-allow\-other\-repository. For any other project, the flags you pass are the whole policy: there, \-\-issuer alone accepts any signer from that issuer.
 
@@ -517,10 +517,10 @@ Then match the verified project and version to what you meant to install. For a 
 The pinned public key file, or its base64 line
 .TP
 \fB\-\-identity\fR \fI<IDENTITY>\fR
-The exact certificate identity a keyless signer must have, including its ref, such as https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3
+The certificate identity a keyless signer must have, including its ref, such as https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3; a GitHub or GitLab repository name in it matches in any case
 .TP
 \fB\-\-identity\-prefix\fR \fI<IDENTITY_PREFIX>\fR
-A prefix the certificate identity must start with, such as https://github.com/owner/repo/
+A prefix the certificate identity must start with, such as https://github.com/owner/repo/; a GitHub or GitLab repository name in it matches in any case
 .TP
 \fB\-\-issuer\fR \fI<ISSUER>\fR
 The OIDC issuer a keyless signer must have; pass it with \-\-identity or \-\-identity\-prefix, since for a project not on GitHub or GitLab it alone accepts any signer from that issuer

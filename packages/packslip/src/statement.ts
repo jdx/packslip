@@ -1,5 +1,6 @@
 import { StatementError } from './errors.ts';
 import { checkStatement, RELEASE_PREDICATE_TYPE, type Statement } from './model.ts';
+import { sameProject } from './project.ts';
 
 export { RELEASE_PREDICATE_TYPE };
 
@@ -74,9 +75,13 @@ export function readRelease(payload: string): { statement: Omit<VerifiedStatemen
   };
 }
 
-/** Require the statement to name the project and source tag the caller asked for. */
+/**
+ * Require the statement to name the project and source tag the caller asked
+ * for. A GitHub or GitLab repository's name matches in any case, as the
+ * forge resolves it.
+ */
 export function checkExpected(model: Statement, expect: { project?: string | undefined; tag?: string | undefined }): void {
-  if (expect.project !== undefined && model.predicate.project !== expect.project) {
+  if (expect.project !== undefined && !sameProject(model.predicate.project, expect.project)) {
     throw new StatementError(`the statement is for ${model.predicate.project}, not ${expect.project}`, 'project');
   }
   if (expect.tag !== undefined) {

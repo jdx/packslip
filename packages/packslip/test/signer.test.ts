@@ -175,6 +175,22 @@ describe('checkProjectSigner', () => {
     );
   });
 
+  it("matches the repository's name in any case, as the forge resolves it, and the rest exactly", () => {
+    checkProjectSigner('github.com/JDX/Mise', signer(RELEASE, GITHUB_ISSUER, 'https://github.com/jdx/mise'));
+    checkProjectSigner('github.com/jdx/mise', signer(SHARED, GITHUB_ISSUER, 'https://github.com/JDX/MISE'));
+    checkProjectSigner('github.com/JDX/Mise', signer(RELEASE, GITHUB_ISSUER));
+    checkProjectSigner('gitlab.com/Group/Sub/Tool', signer('https://gitlab.com/group/sub/tool//.gitlab-ci.yml@refs/tags/v1', GITLAB_ISSUER));
+    rejectsProject('github.com/JDX/Mise', signer(RELEASE, GITHUB_ISSUER, 'https://github.com/jdx/mise-fork'), 'source-repository', /mise-fork/);
+    rejectsProject(
+      'github.com/JDX/Mise',
+      signer('https://github.com/jdx/mise-fork/.github/workflows/release.yml@refs/tags/v1', GITHUB_ISSUER),
+      'signer',
+      /mise-fork/,
+    );
+    // The scheme and host are not a repository name.
+    rejectsProject('github.com/jdx/mise', signer(RELEASE, GITHUB_ISSUER, 'https://GITHUB.COM/jdx/mise'), 'source-repository', /GITHUB.COM/);
+  });
+
   it("leaves a project that is not on a forge to the caller's identity policy", () => {
     checkProjectSigner('mise.jdx.dev', signer('jdx@example.com', 'https://accounts.google.com'));
     checkProjectSigner('github.com/jdx', signer('jdx@example.com', 'https://accounts.google.com'));

@@ -634,6 +634,8 @@ fn releases_action_passes_allow_other_repository_when_needed() {
         // signer to that repository as well as to the pin.
         ("github.com/owner/tool", "owner/tool", false),
         ("github.com/owner/tool/cli", "owner/tool", false),
+        // GitHub resolves the repository's name in any case.
+        ("github.com/Owner/Tool", "owner/tool", false),
         // A project on its own domain names no repository.
         ("tool.example.com", "owner/tool", false),
         // A registry's or repackager's list for another repository's

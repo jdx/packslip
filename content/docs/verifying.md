@@ -63,7 +63,9 @@ with `--issuer` and `--identity-prefix`, `--identity`, or
 any other host, the flags are the whole policy and each one checks only
 what it names, so pass `--issuer` together with `--identity-prefix` or
 `--identity`: `--issuer` alone accepts a workflow of any repository on that
-forge.
+forge. In `--identity`, `--identity-prefix`, and `--source-repository`, a
+GitHub or GitLab repository's name matches in any letter case, as the
+forge resolves it; the workflow's path and ref match exactly.
 
 A release signed through a reusable workflow of another repository
 verifies without flags, because its certificate still records the
@@ -76,7 +78,7 @@ as its source, whichever workflow signed.
 
 To pin one workflow file, extend the prefix through its `@`:
 `--identity-prefix https://github.com/owner/repo/.github/workflows/release.yml@`.
-`--identity` takes one exact certificate identity, which includes the
+`--identity` takes one certificate identity, which includes the
 workflow's ref, such as
 `https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3`,
 so it accepts only releases signed from that tag. Use it to check a single
@@ -322,7 +324,7 @@ for inspection, not as evidence of authenticity.
 
 | Symptom | What to check |
 | --- | --- |
-| `expected an identity starting with` or `identity mismatch: expected` | The release was signed outside the repository or identity you pinned. `--identity` is exact, including the tag ref, so a standing pin needs `--identity-prefix`. Do not loosen the pin just to make the command pass. If the repository was renamed or moved, see the next row. |
+| `expected an identity starting with` or `identity mismatch: expected` | The release was signed outside the repository or identity you pinned. `--identity` names one identity, including the tag ref, so a standing pin needs `--identity-prefix`. Do not loosen the pin just to make the command pass. If the repository was renamed or moved, see the next row. |
 | The repository was renamed or moved to another owner | With `--pin`, or a pin the library stored, nothing changes: the repository ID is the same, so releases from before and after the move verify, and the `ok:` and `repository` lines show the name each release was signed under. An `--identity-prefix` pin names the old location, so releases signed after the move fail with `expected an identity starting with`. Before you update the prefix, confirm the move: check that `packslip pin` prints the same fingerprint for a new release as for one you accepted before the move, or ask the project. |
 | `must be signed from its repository` | The statement names a GitHub or GitLab project, but a run in another repository signed it. Identity flags cannot accept that signer on their own. If you expected it, such as a repackager you trust, name it with `--issuer` and `--identity`, `--identity-prefix`, or `--source-repository`, and add `--allow-other-repository`; otherwise do not use the release. |
 | `issuer mismatch: expected` | `--issuer` names a different OIDC issuer from the one that signed the release. Pass the issuer of the CI system that ran the release: `https://token.actions.githubusercontent.com` for GitHub Actions, `https://gitlab.com` for GitLab CI. |

@@ -1,6 +1,6 @@
 {
   "rule": "https://packslip.dev/release/v1/#repository-identity-and-renames",
-  "description": "Whether a verified release is the forge project a consumer expected. A consumer pinned `pin.project` and `pin.repository_id` from a release it accepted earlier, and now asks for `requested`. The release's statement names `release.project`, and its signing certificate records the Source Repository URI, Source Repository Identifier, and the owner's URI and ID as `release.certificate` (`owner_uri` and `owner_id` are omitted when the certificate carries none). `release.signer` is the workflow, without its ref, that signed; it may be a reusable workflow of another repository, since the certificate's Source Repository URI, not the signer, binds the release to the repository. `expect.outcome` is `same` (accept it under the requested name), `renamed` (accept it and report the name it was signed under: the repository was renamed or transferred to another owner), or `refuse`, with `expect.reason` `different-repository` (the certificate's repository ID is not the pinned one) or `project-mismatch` (the statement names another project and the certificate gives no repository ID to show it is the same one). The owner never changes an outcome: only a repository's current owner can transfer it. A case with `previous_signer` also says whether that workflow, recorded for the pin before, continues as `release.signer`, as `expect.signer_continues`: the workflow's path inside the repository is compared when the repository ID matches, and a reusable workflow of another repository continues only the same path in that same repository: it and the project's own workflow at that path never continue each other.",
+  "description": "Whether a verified release is the forge project a consumer expected. A consumer pinned `pin.project` and `pin.repository_id` from a release it accepted earlier, and now asks for `requested`. The release's statement names `release.project`, and its signing certificate records the Source Repository URI, Source Repository Identifier, and the owner's URI and ID as `release.certificate` (`owner_uri` and `owner_id` are omitted when the certificate carries none). `release.signer` is the workflow, without its ref, that signed; it may be a reusable workflow of another repository, since the certificate's Source Repository URI, not the signer, binds the release to the repository. `expect.outcome` is `same` (accept it under the requested name), `renamed` (accept it and report the name it was signed under: the repository was renamed or transferred to another owner), or `refuse`, with `expect.reason` `different-repository` (the certificate's repository ID is not the pinned one) or `project-mismatch` (the statement names another project: one the certificate gives no repository ID to show is the same repository, or another tool of the repository, with a different monorepo subpath). The owner never changes an outcome: only a repository's current owner can transfer it. A case with `previous_signer` also says whether that workflow, recorded for the pin before, continues as `release.signer`, as `expect.signer_continues`: the workflow's path inside the repository is compared when the repository ID matches, and a reusable workflow of another repository continues only the same path in that same repository: it and the project's own workflow at that path never continue each other. On github.com and gitlab.com a repository's name compares without regard to ASCII case, as the forge resolves it, in `requested`, `release.project`, the certificate's URI, and the signers: a case-only difference is `same`, never `renamed`. A monorepo subpath and a workflow's path compare exactly.",
   "cases": [
     {
       "name": "the pinned repository under its own name",
@@ -221,6 +221,79 @@
       },
       "previous_signer": "https://gitlab.com/group/sub/tool//.gitlab-ci.yml",
       "expect": { "outcome": "renamed", "signer_continues": true }
+    },
+    {
+      "name": "a certificate that spells the repository in another case",
+      "comment": "The certificate carries GitHub's own spelling, jdx/HK; the statement and the pin spell it jdx/hk. GitHub resolves both to one repository and lets no two repositories differ only in case, so this is the requested project.",
+      "pin": { "project": "github.com/jdx/hk", "repository_id": "922514152" },
+      "requested": "github.com/jdx/hk",
+      "release": {
+        "project": "github.com/jdx/hk",
+        "signer": "https://github.com/jdx/HK/.github/workflows/release.yml",
+        "certificate": { "uri": "https://github.com/jdx/HK", "id": "922514152", "owner_uri": "https://github.com/jdx", "owner_id": "216188" }
+      },
+      "previous_signer": "https://github.com/jdx/hk/.github/workflows/release.yml",
+      "expect": { "outcome": "same", "signer_continues": true }
+    },
+    {
+      "name": "a request in another case is the same project, not a rename",
+      "pin": { "project": "github.com/jdx/hk", "repository_id": "922514152" },
+      "requested": "github.com/JDX/hk",
+      "release": {
+        "project": "github.com/jdx/hk",
+        "signer": "https://github.com/jdx/hk/.github/workflows/release.yml",
+        "certificate": { "uri": "https://github.com/jdx/hk", "id": "922514152", "owner_uri": "https://github.com/jdx", "owner_id": "216188" }
+      },
+      "expect": { "outcome": "same" }
+    },
+    {
+      "name": "another case without a repository ID",
+      "comment": "With no repository ID the name is all there is, and the name is the same in any case. So is the workflow, compared by its whole identity less the ref.",
+      "pin": { "project": "github.com/jdx/hk", "repository_id": "922514152" },
+      "requested": "github.com/jdx/hk",
+      "release": {
+        "project": "github.com/jdx/HK",
+        "signer": "https://github.com/jdx/HK/.github/workflows/release.yml",
+        "certificate": { "uri": "https://github.com/jdx/HK" }
+      },
+      "previous_signer": "https://github.com/jdx/hk/.github/workflows/release.yml",
+      "expect": { "outcome": "same", "signer_continues": true }
+    },
+    {
+      "name": "another case does not make another repository the pinned one",
+      "pin": { "project": "github.com/jdx/hk", "repository_id": "922514152" },
+      "requested": "github.com/jdx/hk",
+      "release": {
+        "project": "github.com/jdx/HK",
+        "signer": "https://github.com/jdx/HK/.github/workflows/release.yml",
+        "certificate": { "uri": "https://github.com/jdx/HK", "id": "555", "owner_uri": "https://github.com/jdx", "owner_id": "216188" }
+      },
+      "expect": { "outcome": "refuse", "reason": "different-repository" }
+    },
+    {
+      "name": "a monorepo subpath in another case is another tool",
+      "comment": "The subpath names a tool inside the repository, not a forge name, so it compares exactly.",
+      "pin": { "project": "github.com/jdx/tools/hk", "repository_id": "77" },
+      "requested": "github.com/jdx/tools/hk",
+      "release": {
+        "project": "github.com/jdx/tools/HK",
+        "signer": "https://github.com/jdx/tools/.github/workflows/release.yml",
+        "certificate": { "uri": "https://github.com/jdx/tools", "id": "77", "owner_uri": "https://github.com/jdx", "owner_id": "216188" }
+      },
+      "expect": { "outcome": "refuse", "reason": "project-mismatch" }
+    },
+    {
+      "name": "a GitLab path in another case",
+      "comment": "GitLab also resolves group and project paths without regard to case and keeps them unique ignoring case.",
+      "pin": { "project": "gitlab.com/group/sub/tool", "repository_id": "42" },
+      "requested": "gitlab.com/group/sub/tool",
+      "release": {
+        "project": "gitlab.com/Group/Sub/Tool",
+        "signer": "https://gitlab.com/Group/Sub/Tool//.gitlab-ci.yml",
+        "certificate": { "uri": "https://gitlab.com/Group/Sub/Tool", "id": "42", "owner_uri": "https://gitlab.com/Group/Sub", "owner_id": "7" }
+      },
+      "previous_signer": "https://gitlab.com/group/sub/tool//.gitlab-ci.yml",
+      "expect": { "outcome": "same", "signer_continues": true }
     }
   ]
 }

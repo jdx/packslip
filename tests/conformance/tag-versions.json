@@ -15,6 +15,8 @@
     { "name": "a prefix that leaves no version does not end the search", "tag": "tool-suite-1.2.0", "project": "github.com/acme/tool-suite/tool", "expect": "1.2.0", "comment": "The subpath tool- begins the tag but leaves suite-1.2.0; the repository name tool-suite- leaves 1.2.0." },
     { "name": "the subpath still prefixes the tool's own tags", "tag": "tool-v1.3.0", "project": "github.com/acme/tool-suite/tool", "expect": "1.3.0" },
     { "name": "the first prefix that leaves a version wins", "tag": "tool-2.0-1.0.0", "project": "github.com/acme/tool-2.0/tool", "expect": "2.0.0-1.0.0", "comment": "Prefixes are tried in order: subpath, last subpath segment, repository name, then none. The subpath tool- leaves 2.0-1.0.0, which is 2.0.0-1.0.0, before the longer repository name tool-2.0- is tried." },
+    { "name": "the repository name prefixes the tag in any case", "tag": "jq-1.7.1", "project": "github.com/jqlang/JQ", "expect": "1.7.1", "comment": "GitHub resolves jqlang/JQ as jqlang/jq, so a request in another case lists the same tags." },
+    { "name": "a subpath prefixes the tag only in its own case", "tag": "OXLINT_v1.0.0", "project": "github.com/oxc-project/oxc/oxlint", "expect": null, "comment": "A monorepo subpath names a tool, not a forge name, so it compares exactly." },
     { "name": "a tag naming no version is skipped", "tag": "nightly", "project": "github.com/jdx/mise", "expect": null },
     { "name": "another project's prefix is not this project's", "tag": "otherthing-1.2.3", "project": "github.com/jdx/mise", "expect": null },
     { "name": "a date is not a version tag for this project", "tag": "release-2026-09-01", "project": "github.com/jdx/mise", "expect": null },

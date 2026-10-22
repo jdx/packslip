@@ -50,6 +50,11 @@ struct PinFile {
 
 /// Every matching file is an independent requirement. Pins within one file
 /// are alternatives; pins in different files and caller pins must all agree.
+///
+/// A file's entry matches `project` as [`crate::forge::same_project`]
+/// compares names: a GitHub or GitLab repository's name in any case, as the
+/// forge resolves it. A file with two entries for the project, spelled in
+/// different cases, is refused, since it does not say which one it means.
 pub fn admin_constraints(dirs: &[&Path], project: &str) -> Result<Vec<Constraints>, Error> {
     let mut constraints = Vec::new();
     for dir in dirs {
@@ -66,8 +71,18 @@ pub fn admin_constraints(dirs: &[&Path], project: &str) -> Result<Vec<Constraint
             .into_iter()
             .filter(|p| p.extension().is_some_and(|e| e == "toml"))
         {
-            let file: PinFile = toml::from_str(&std::fs::read_to_string(path)?)?;
-            if let Some(c) = file.projects.get(project) {
+            let file: PinFile = toml::from_str(&std::fs::read_to_string(&path)?)?;
+            let mut matching = file
+                .projects
+                .iter()
+                .filter(|(name, _)| crate::forge::same_project(name, project));
+            if let Some((name, c)) = matching.next() {
+                if let Some((other, _)) = matching.next() {
+                    return Err(Error::Constraint(format!(
+                        "{} pins {project} twice, as {name} and {other}; keep one entry",
+                        path.display()
+                    )));
+                }
                 constraints.push(c.clone());
             }
         }
@@ -277,7 +292,7 @@ pub fn continuity(
         ));
     }
     let prior_project_matches = previous.is_none_or(|before| {
-        before.project == project
+        crate::forge::same_project(&before.project, project)
             || before
                 .repository
                 .as_ref()
@@ -370,10 +385,12 @@ fn check_constraints(
         if c.issuer
             .as_ref()
             .is_some_and(|s| record.issuer.as_ref() != Some(s))
-            || c.identity.as_ref().is_some_and(|s| s != &record.signer)
+            || c.identity
+                .as_ref()
+                .is_some_and(|s| !crate::forge::same_url(&record.signer, s))
             || c.identity_prefix
                 .as_ref()
-                .is_some_and(|s| !record.signer.starts_with(s))
+                .is_some_and(|s| !crate::forge::identity_has_prefix(&record.signer, s))
         {
             return Err(Error::Constraint(format!(
                 "signer does not match constraint {index}'s identity policy"
@@ -494,7 +511,7 @@ fn release_under(
             None,
         )
     };
-    if verified.project != project && repository.is_none() {
+    if !crate::forge::same_project(&verified.project, project) && repository.is_none() {
         return Err(Error::Constraint(
             "signed project differs from requested project".into(),
         ));
@@ -576,7 +593,9 @@ fn list_under(
             None,
         )
     };
-    if verified.list.predicate.project != project && repository.is_none() {
+    if !crate::forge::same_project(&verified.list.predicate.project, project)
+        && repository.is_none()
+    {
         return Err(Error::Constraint(
             "signed list project differs from requested project".into(),
         ));
@@ -721,6 +740,105 @@ mod tests {
             )
             .is_err()
         );
+    }
+    #[test]
+    fn github_repository_names_match_in_any_case() {
+        // A prior record under another spelling of the repository's name
+        // continues, with no repository ID to go by.
+        let mut old = record("release.yml@refs/tags/v1", true);
+        old.repository = None;
+        let mut next = record("release.yml@refs/tags/v2", true);
+        next.repository = None;
+        next.project = "github.com/JDX/Tool".into();
+        continuity(
+            &next.project,
+            "release",
+            "verified bundle",
+            Some(&old),
+            &next,
+            &[],
+            &[],
+        )
+        .unwrap();
+        // A monorepo subpath names a tool exactly.
+        old.project = "github.com/jdx/tool/cli".into();
+        next.project = "github.com/JDX/Tool/CLI".into();
+        assert!(
+            continuity(
+                &next.project,
+                "release",
+                "verified bundle",
+                Some(&old),
+                &next,
+                &[],
+                &[]
+            )
+            .is_err()
+        );
+
+        // So does an identity-prefix constraint, apart from the workflow's
+        // path inside the repository.
+        let bundle = include_str!("../tests/fixtures/hk-v2.3.0.sigstore.json");
+        let root = crate::sigstore::trusted_root(None).unwrap();
+        let options = crate::Options {
+            require_log: true,
+            trusted_root: &root,
+        };
+        let prefix = |prefix: &str| Constraints {
+            identity_prefix: Some(prefix.into()),
+            ..Constraints::default()
+        };
+        let accepted = release(
+            "github.com/JDX/HK",
+            Some("922514152"),
+            bundle,
+            &[prefix("https://github.com/JDX/HK/")],
+            options,
+        )
+        .unwrap();
+        assert_eq!(accepted.record.project, "github.com/JDX/HK");
+        assert!(
+            release(
+                "github.com/jdx/hk",
+                Some("922514152"),
+                bundle,
+                &[prefix("https://github.com/jdx/hk/.GITHUB/")],
+                options
+            )
+            .is_err()
+        );
+        // So does an identity constraint, apart from the workflow's path
+        // and ref.
+        let exact = |identity: &str| Constraints {
+            identity: Some(identity.into()),
+            ..Constraints::default()
+        };
+        release(
+            "github.com/jdx/hk",
+            Some("922514152"),
+            bundle,
+            &[exact(
+                "https://github.com/JDX/HK/.github/workflows/release.yml@refs/tags/v2.3.0",
+            )],
+            options,
+        )
+        .unwrap();
+        for identity in [
+            "https://github.com/jdx/hk/.GITHUB/workflows/release.yml@refs/tags/v2.3.0",
+            "https://github.com/jdx/hk/.github/workflows/release.yml@refs/tags/V2.3.0",
+        ] {
+            assert!(
+                release(
+                    "github.com/jdx/hk",
+                    Some("922514152"),
+                    bundle,
+                    &[exact(identity)],
+                    options
+                )
+                .is_err(),
+                "{identity}"
+            );
+        }
     }
     #[test]
     fn empty_identity_pins_are_rejected_even_with_named_host_authority() {
@@ -1183,6 +1301,67 @@ mod tests {
                 }
             )
             .is_err()
+        );
+    }
+    #[test]
+    fn administrator_entries_match_a_github_repository_name_in_any_case() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("a.toml"),
+            "[projects.\"github.com/JDX/HK\"]\npins = [\"ps1_snirenkjwr7m5ozgcufameodnm\"]\n",
+        )
+        .unwrap();
+        for project in [
+            "github.com/jdx/hk",
+            "github.com/JDX/HK",
+            "github.com/Jdx/Hk",
+        ] {
+            assert_eq!(
+                admin_constraints(&[dir.path()], project).unwrap().len(),
+                1,
+                "{project}"
+            );
+        }
+        // A monorepo subpath, and a name on another host, match exactly.
+        std::fs::write(
+            dir.path().join("b.toml"),
+            "[projects.\"github.com/jdx/hk/Tool\"]\npins = [\"ps1_snirenkjwr7m5ozgcufameodnm\"]\n\
+             [projects.\"tool.example.com/Tool\"]\npins = [\"ps1_snirenkjwr7m5ozgcufameodnm\"]\n",
+        )
+        .unwrap();
+        assert!(
+            admin_constraints(&[dir.path()], "github.com/jdx/hk/tool")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            admin_constraints(&[dir.path()], "tool.example.com/tool")
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            admin_constraints(&[dir.path()], "github.com/JDX/HK/Tool")
+                .unwrap()
+                .len(),
+            1
+        );
+        // Two entries for one repository in one file are refused, not
+        // picked between.
+        std::fs::write(
+            dir.path().join("c.toml"),
+            "[projects.\"github.com/jdx/hk\"]\npins = [\"ps1_snirenkjwr7m5ozgcufameodnm\"]\n\
+             [projects.\"github.com/JDX/hk\"]\npins = []\n",
+        )
+        .unwrap();
+        let err = admin_constraints(&[dir.path()], "github.com/jdx/HK")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("c.toml pins github.com/jdx/HK twice"), "{err}");
+        // A project the duplicates are not for is unaffected.
+        assert!(
+            admin_constraints(&[dir.path()], "github.com/jdx/mise")
+                .unwrap()
+                .is_empty()
         );
     }
     #[test]

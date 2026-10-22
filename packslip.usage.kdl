@@ -205,10 +205,10 @@ latest takes the vendor's recommended release, otherwise the highest stable vers
     flag --issuer help="Require this OIDC issuer as well as the project's default identity" {
         arg <ISSUER>
     }
-    flag --identity help="Require this exact certificate identity" {
+    flag --identity help="Require this certificate identity; a GitHub or GitLab repository name in it matches in any case" {
         arg <IDENTITY>
     }
-    flag --identity-prefix help="Require this certificate identity prefix" {
+    flag --identity-prefix help="Require this certificate identity prefix; a GitHub or GitLab repository name in it matches in any case" {
         arg <IDENTITY_PREFIX>
     }
     flag --accept-trust-change help="Approve one exact displayed trust-change proposal (repeatable)" var=#true {
@@ -255,10 +255,10 @@ The fingerprint is derived from the forge's issuer and repository ID only. It st
 
 Verification works as in `packslip verify` without --allow-other-repository: the policy is the one the project's name implies, and --identity, --identity-prefix, and --issuer narrow it without replacing it, so a GitHub or GitLab project's release must still be signed from its repository. See https://packslip.dev/docs/verifying/.
 """#
-    flag --identity help="The exact certificate identity a keyless signer must have, including its ref, such as https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3" help_heading=Trust {
+    flag --identity help="The certificate identity a keyless signer must have, including its ref, such as https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3; a GitHub or GitLab repository name in it matches in any case" help_heading=Trust {
         arg <IDENTITY>
     }
-    flag --identity-prefix help="A prefix the certificate identity must start with, such as https://github.com/owner/repo/" help_heading=Trust {
+    flag --identity-prefix help="A prefix the certificate identity must start with, such as https://github.com/owner/repo/; a GitHub or GitLab repository name in it matches in any case" help_heading=Trust {
         arg <IDENTITY_PREFIX>
     }
     flag --issuer help="The OIDC issuer a keyless signer must have; pass it with --identity or --identity-prefix, since for a project not on GitHub or GitLab it alone accepts any signer from that issuer" help_heading=Trust {
@@ -365,7 +365,7 @@ Verify a packslip, or a release list, against a pinned identity or key
 
 Check the signature, log evidence, and statement structure. With --artifact, also check local files against signed digests and artifact sizes. Without it, only the bundle is checked. Nothing is downloaded: remote artifacts and linked provenance are not fetched.
 
-Choose what to trust. By default, the identity policy comes from the project the document claims, if it is on github.com or gitlab.com: that forge's issuer and a certificate that records that repository as its source, whichever workflow signed, so a reusable workflow of another repository may sign (a certificate that records no source must come from a workflow of that repository). Any other project needs --pubkey or an identity flag. For a keyless release, --issuer with --identity-prefix (any workflow of a repository, such as https://github.com/owner/repo/) or --identity (one exact certificate identity, including its ref) pins the signer. --issuer with --source-repository instead pins the repository the certificate must record as its source, whichever workflow signed: unlike an identity prefix of that repository, it also matches a reusable workflow of another repository. For a key-signed release, pass --pubkey. --pin adds a check on top of the identity policy: the signing repository must have that signer fingerprint.
+Choose what to trust. By default, the identity policy comes from the project the document claims, if it is on github.com or gitlab.com: that forge's issuer and a certificate that records that repository as its source, whichever workflow signed, so a reusable workflow of another repository may sign (a certificate that records no source must come from a workflow of that repository). Any other project needs --pubkey or an identity flag. For a keyless release, --issuer with --identity-prefix (any workflow of a repository, such as https://github.com/owner/repo/) or --identity (one certificate identity, including its ref) pins the signer. --issuer with --source-repository instead pins the repository the certificate must record as its source, whichever workflow signed: unlike an identity prefix of that repository, it also matches a reusable workflow of another repository. In --identity, --identity-prefix, and --source-repository, a github.com or gitlab.com repository's name matches in any letter case, as the forge resolves it; the rest, such as a workflow's path and ref, matches exactly. For a key-signed release, pass --pubkey. --pin adds a check on top of the identity policy: the signing repository must have that signer fingerprint.
 
 For a GitHub or GitLab project, the identity flags narrow what the project's name requires and never replace it: the run that signed must match the flags and still belong to the project's repository, so --issuer alone accepts only that repository's workflows and the reusable workflows it calls. To verify a document signed outside the project's repository, such as a repackager's, name its signer with --issuer and --identity, --identity-prefix, or --source-repository, and add --allow-other-repository. For any other project, the flags you pass are the whole policy: there, --issuer alone accepts any signer from that issuer.
 
@@ -374,10 +374,10 @@ Then match the verified project and version to what you meant to install. For a 
     flag "-p --pubkey" help="The pinned public key file, or its base64 line" help_heading=Trust {
         arg <PUBKEY>
     }
-    flag --identity help="The exact certificate identity a keyless signer must have, including its ref, such as https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3" help_heading=Trust {
+    flag --identity help="The certificate identity a keyless signer must have, including its ref, such as https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3; a GitHub or GitLab repository name in it matches in any case" help_heading=Trust {
         arg <IDENTITY>
     }
-    flag --identity-prefix help="A prefix the certificate identity must start with, such as https://github.com/owner/repo/" help_heading=Trust {
+    flag --identity-prefix help="A prefix the certificate identity must start with, such as https://github.com/owner/repo/; a GitHub or GitLab repository name in it matches in any case" help_heading=Trust {
         arg <IDENTITY_PREFIX>
     }
     flag --issuer help="The OIDC issuer a keyless signer must have; pass it with --identity or --identity-prefix, since for a project not on GitHub or GitLab it alone accepts any signer from that issuer" help_heading=Trust {

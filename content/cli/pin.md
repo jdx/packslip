@@ -18,8 +18,8 @@ Verification works as in `packslip verify` without --allow-other-repository: the
 - **`-h --help`** — Print help
 
 ## Trust
-- **`--identity <IDENTITY>`** — The exact certificate identity a keyless signer must have, including its ref, such as https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3
-- **`--identity-prefix <IDENTITY_PREFIX>`** — A prefix the certificate identity must start with, such as https://github.com/owner/repo/
+- **`--identity <IDENTITY>`** — The certificate identity a keyless signer must have, including its ref, such as https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3; a GitHub or GitLab repository name in it matches in any case
+- **`--identity-prefix <IDENTITY_PREFIX>`** — A prefix the certificate identity must start with, such as https://github.com/owner/repo/; a GitHub or GitLab repository name in it matches in any case
 - **`--issuer <ISSUER>`** — The OIDC issuer a keyless signer must have; pass it with --identity or --identity-prefix, since for a project not on GitHub or GitLab it alone accepts any signer from that issuer
 - **`--allow-unlogged`** — Accept a bundle without a transparency log entry
 - **`--trusted-root <TRUSTED_ROOT>`** — A sigstore trusted_root.json to use instead of the embedded one
