@@ -115,8 +115,9 @@ The name is the location and, on a forge, says who may sign:
   make paths arbitrary depth, so the whole path names the repository.
 - **Other hosts, including forges this version does not name:** the
   vendor controls the domain and publishes a release list at the
-  well-known URL [The signed list](#the-signed-list) defines, signed with
-  the key or identity the consumer pins.
+  well-known URL [The signed list](#the-signed-list) defines. The consumer
+  pins the key or identity that signs the list and, separately, the one
+  that signs the releases, as [consumer rule 1](#consumer-rules) says.
 
 For a known forge, a consumer derives its initial signer policy from the
 project the user intends to install. Deriving it from an untrusted
@@ -226,6 +227,16 @@ minisign's public-key format. Consumers pin that public-key file, never the
 hint carried by the bundle. The bundle also carries the Rekor entry, whose
 verifier is the public key.
 
+The key ID is the 8-byte number that follows the `Ed` algorithm bytes in
+a minisign public key. `identity.key_id` spells it as minisign prints it:
+those bytes read as a little-endian integer, written as 16 uppercase
+hexadecimal digits with leading zeros, such as `5A0A0B8B9C6D7E1F`. The
+tool that generates a key chooses its ID, and minisign chooses it at
+random, so a consumer cannot in general recompute the ID from the Ed25519
+key. A consumer therefore pins the minisign public key, which carries both
+the ID and the Ed25519 key, and compares `key_id` with that key's ID
+without regard to case.
+
 A key-signed bundle also supports a dependency-free signature check: its
 DSSE signature is a raw Ed25519 signature over the pre-authentication
 encoding of the payload, with payload type `application/vnd.in-toto+json`.
@@ -244,9 +255,10 @@ repository should record that choice per vendor.
 ### Workflow pinning
 
 By default, a consumer of a keylessly signed project compares the signing
-workflow with the workflow of the last release it accepted. A different
-workflow in the same repository is a changed signer: the consumer refuses
-the release until a person approves it
+workflow with the workflow of the last release it accepted, or, for a
+release list, of the last list it accepted. A different workflow in the
+same repository is a changed signer: the consumer refuses
+the release or list until a person approves it
 ([consumer rule 3](#consumer-rules)).
 
 This default requires approval each time a vendor switches between release
@@ -717,12 +729,13 @@ provenance establishes build claims at the
 ### Signer and additional metadata
 
 `identity` describes how the statement is signed and by whom, allowing a
-consumer to compare its pin with the received signature. For
+consumer to compare its pin with the received signature. It must name the
+actual signer, as [consumer rule 2](#consumer-rules) requires. For
 `sigstore-oidc`, `key_id` is the certificate's subject identity: a
 workflow URI for CI or an email address for a person. `issuer` is the
 OIDC issuer. Both are required for `sigstore-oidc`, and neither is
-empty. For `sigstore-key`, `key_id` is the key ID in uppercase
-hexadecimal. See [Signing](#signing).
+empty. For `sigstore-key`, `key_id` is the signing key's minisign key ID
+in uppercase hexadecimal. See [Key signing](#key-signing).
 
 `attested_by` is `vendor` by default, or `repackager`. A repackager
 describes what it checked in `evidence`. See
@@ -869,7 +882,7 @@ Paths beginning with `artifacts[]` or `resources[]` below are relative to
 |---|---|---|---|
 | `predicate.identity` | object | required | How the document is signed and by whom. See [Signing](#signing). |
 | `predicate.identity.scheme` | string | required | `sigstore-oidc` or `sigstore-key`. |
-| `predicate.identity.key_id` | string | required | The certificate identity, or the key id in uppercase hex. |
+| `predicate.identity.key_id` | string | required | The certificate identity, or the minisign key ID in uppercase hex. See [Key signing](#key-signing). |
 | `predicate.identity.issuer` | string | conditional | The OIDC issuer, for `sigstore-oidc`, where it is required. |
 | `predicate.identity.pin_workflow` | boolean | optional | For `sigstore-oidc`: `false` asks consumers to hold later releases to the signing repository, not to the workflow that signed this one. `true` when absent. See [Workflow pinning](#workflow-pinning). |
 | `predicate.attested_by` | string | optional | `vendor` (default) or `repackager`. See [Repackager attestation](#repackager-attestation). |
@@ -1463,8 +1476,13 @@ a monorepo tool (`.well-known/packslip/crates/cli.json` for
 `github.com/biomejs/biome/crates/cli`). GitHub serves the file at
 `https://raw.githubusercontent.com/<owner>/<repo>/HEAD/<path>`.
 
-The list is signed by the same identity as the release packslips. It
-supplements the endpoint rather than replacing it:
+Like the release packslips, the list is signed from the repository
+through the forge's OIDC issuer, as [Project names](#project-names) and
+[Repository identity and renames](#repository-identity-and-renames)
+require. It need not be signed by the workflow that signs the releases: a
+consumer pins the list's signer separately, as
+[consumer rule 1](#consumer-rules) says. The list supplements the
+endpoint rather than replacing it:
 
 - For a listed version, the entry's `tag`, `status`, and `security` apply,
   and the consumer accepts only the bundle whose digest the list pins.
@@ -1738,16 +1756,23 @@ Consumers must keep state across installs to enforce signer continuity,
 no-downgrade policy, and release-list rollback protection. The rules and
 their linked sections use this remembered state:
 
-- **Pins:** the signer and its repository ID, any signer fingerprint or
-  lockfile commitment, and the `pin_workflow` value.
+- **Pins:** the signer, its repository ID, and the `pin_workflow` value,
+  kept for the releases and separately for a signed list; and any signer
+  fingerprint or lockfile commitment.
 - **Accepted trust properties:** the last accepted release's
   `identity.scheme`, `attested_by`, and provenance.
 - **List history:** the highest accepted `sequence` and whether a signed
   list has ever been accepted.
-- **User choices:** approved signer changes, permission to accept
+- **User choices:** approved trust changes, permission to accept
   unlogged bundles, and decisions to trust a vendor without a stamp.
 
 1. **Pin the identity once.**
+   - Pin a project's signed list and its releases separately. Their
+     signers may differ, as when a scheduled workflow re-signs the list,
+     but on a forge both are signed from the project's repository.
+     Compare a list's signer with the last accepted list's, and a
+     release's signer with the last accepted release's, as rule 3
+     compares signers.
    - For a forge project, use the project name to establish the first
      pin: accept only the forge's issuer and a certificate whose Source
      Repository URI is that repository, or, when the certificate records
@@ -1761,22 +1786,33 @@ their linked sections use this remembered state:
      pin and check releases against it. This avoids trusting a release
      on first use.
    - For other projects, pin a public key or identity from the consumer's
-     maintained pins, or from the well-known list on first use.
+     maintained pins or, on first use, a keyless identity from the
+     well-known list fetched over HTTPS from the project's host: take the
+     list's signer from the list, and the releases' signer from a release
+     bundle whose digest that list pins. A public key comes only from the
+     consumer's pins.
    - Trust another publisher's list per host, through configuration.
    - Never take a key from the document itself or trust a bundle's key
      hint.
 2. **Verify the bundle and downloaded files.** Verify the signature,
    certificate chain, and log entry as Sigstore defines them, then the
-   statement's structure. For a forge project, check that the statement
-   names the requested project or the same repository renamed, under
+   statement's structure. Refuse a statement whose `identity` does not
+   name the actual signer: `scheme` is `sigstore-oidc` for a bundle signed
+   with a certificate and `sigstore-key` for one signed with a pinned key;
+   for `sigstore-oidc`, `key_id` equals the certificate's subject identity
+   and `issuer` equals the OIDC issuer the certificate records; for
+   `sigstore-key`, `key_id` is the pinned key's ID, compared as
+   [Key signing](#key-signing) says. For a forge project, check that the
+   statement names the requested project or the same repository renamed, under
    [Project names](#project-names) and [Repository identity and renames](#repository-identity-and-renames). Then verify the
    subject digest of every downloaded artifact or asset and the size of
    every artifact. Refuse a bundle without a log entry unless unlogged
    bundles were explicitly allowed under [Signing](#signing).
 3. **Enforce no-downgrade.** Compared with the last release accepted for
-   the project, refuse a release:
-   - whose `identity.scheme` is weaker;
-   - whose signer changed without a person's approval;
+   the project, refuse a release until a person approves the change:
+   - whose `identity.scheme` is weaker, which means it went from
+     `sigstore-oidc` to `sigstore-key`;
+   - whose signer changed;
    - whose `attested_by` went from vendor to repackager;
    - that dropped per-artifact provenance the last release carried.
 

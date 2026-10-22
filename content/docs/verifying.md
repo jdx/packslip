@@ -18,7 +18,7 @@ release you already trust:
 | --- | --- |
 | A GitHub or GitLab repository | [An identity prefix and issuer](#verify-against-the-expected-repository) |
 | A `ps1_…` signer fingerprint | [`--pin`](#pin-a-signer-with-its-fingerprint), which identifies the repository across renames |
-| An Ed25519 public key | [`--pubkey`](#verify-against-a-public-key) |
+| A minisign public key (`.pub` file) | [`--pubkey`](#verify-against-a-public-key) |
 
 Pass every downloaded file with `--artifact`. If you have not chosen a
 file yet, verify the bundle alone, inspect it with `packslip show`, then

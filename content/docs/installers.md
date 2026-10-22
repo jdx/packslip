@@ -105,9 +105,9 @@ checklist to find the parts your implementation still needs.
 
 | Rule | Responsibility | What to implement beyond checking a signature |
 | --- | --- | --- |
-| 1 | Pin the signer | Establish trust from configuration, a public key, a forge identity, or a published signer fingerprint. Never take a trusted key from the bundle itself. Remember forge repository IDs across renames and transfers. |
-| 2 | Verify the bundle and files | Validate the statement, compare its project with the request, and check every downloaded artifact and resource asset. Require log evidence unless the user has explicitly accepted unlogged releases. |
-| 3 | Preserve signer continuity | Refuse a weaker scheme, lost provenance, or a change from vendor to repackager. Require approval for signer changes or relaxed workflow pinning. Compare with the last accepted release, including across repository renames. |
+| 1 | Pin the signer | Establish trust from configuration, a public key, a forge identity, or a published signer fingerprint. Pin a signed list and its releases separately. Never take a trusted key from the bundle itself. Remember forge repository IDs across renames and transfers. |
+| 2 | Verify the bundle and files | Validate the statement, check that its identity names the actual signer (scheme, `key_id`, and issuer), compare its project with the request, and check every downloaded artifact and resource asset. Require log evidence unless the user has explicitly accepted unlogged releases. |
+| 3 | Preserve signer continuity | Require a person's approval for a weaker scheme (OIDC to key), lost provenance, a change from vendor to repackager, a signer change, or relaxed workflow pinning. Compare with the last accepted release, including across repository renames. |
 | 4 | Apply release-age policy | Measure any minimum age from authenticated log integration time; use `published_at` only for deliberately accepted unlogged bundles. |
 | 5 | Discover eligible releases | Verify release lists, enforce expiry and sequence, honor withdrawals and version policy, and check the selected bundle's digest and version. Enforce configured stamping-host policy too. |
 | 6 | Select one artifact | Apply the specified platform and format preferences; fail when two candidates tie. |
@@ -124,10 +124,11 @@ verifier cannot enforce for you.
 
 The [consumer rules](/release/v1/#consumer-rules) list the state to keep
 for each project: the pin (the signer, its repository ID, and the
-remembered `pin_workflow` value), the trust properties of the last
+remembered `pin_workflow` value, kept separately for the releases and for
+a signed list), the trust properties of the last
 accepted release (its scheme, `attested_by`, and provenance), the highest
 release-list `sequence` you accepted and whether you accepted a signed
-list at all, and the choices a person made, such as an approved signer
+list at all, and the choices a person made, such as an approved trust
 change or an allowed unlogged bundle.
 
 A lockfile can carry a project's pin alongside artifact URLs and digests

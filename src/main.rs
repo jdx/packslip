@@ -120,7 +120,7 @@ struct Install {
     /// Allowed signer fingerprint (repeatable, alternatives within this option)
     #[usage(long)]
     pin: Vec<String>,
-    /// Ed25519 public key or path to its public-key file
+    /// The pinned minisign public key file, or its base64 line
     #[usage(long)]
     pubkey: Option<String>,
     /// Require this OIDC issuer as well as the project's default identity

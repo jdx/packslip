@@ -194,7 +194,7 @@ Keeps the complete installation tree. Does not run downloaded code, install depe
     flag --pin help="Allowed signer fingerprint (repeatable, alternatives within this option)" var=#true {
         arg <PIN>
     }
-    flag --pubkey help="Ed25519 public key or path to its public-key file" {
+    flag --pubkey help="The pinned minisign public key file, or its base64 line" {
         arg <PUBKEY>
     }
     flag --issuer help="Require this OIDC issuer as well as the project's default identity" {
