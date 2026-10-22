@@ -222,6 +222,164 @@
       "reason": "identity.pin_workflow is a boolean; a string is not false."
     },
     {
+      "name": "a keyless identity with an empty key_id",
+      "expect": "reject",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "github.com/example/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "libc": "gnu",
+              "size": 5,
+              "format": "tar.xz",
+              "bin": [
+                "tool"
+              ]
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-oidc",
+            "key_id": "",
+            "issuer": "https://token.actions.githubusercontent.com"
+          }
+        }
+      },
+      "reason": "key_id is the certificate's subject identity. Both key_id and issuer are required for sigstore-oidc, and neither is empty."
+    },
+    {
+      "name": "a keyless identity with no key_id",
+      "expect": "reject",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "github.com/example/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "libc": "gnu",
+              "size": 5,
+              "format": "tar.xz",
+              "bin": [
+                "tool"
+              ]
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-oidc",
+            "issuer": "https://token.actions.githubusercontent.com"
+          }
+        }
+      },
+      "reason": "identity.key_id is required."
+    },
+    {
+      "name": "a keyless identity with no issuer",
+      "expect": "reject",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "github.com/example/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "libc": "gnu",
+              "size": 5,
+              "format": "tar.xz",
+              "bin": [
+                "tool"
+              ]
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-oidc",
+            "key_id": "https://github.com/example/tool/.github/workflows/release.yml@refs/tags/v1.0.0"
+          }
+        }
+      },
+      "reason": "identity.issuer is the OIDC issuer, required for sigstore-oidc."
+    },
+    {
+      "name": "a keyless identity with an empty issuer",
+      "expect": "reject",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "github.com/example/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "libc": "gnu",
+              "size": 5,
+              "format": "tar.xz",
+              "bin": [
+                "tool"
+              ]
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-oidc",
+            "key_id": "https://github.com/example/tool/.github/workflows/release.yml@refs/tags/v1.0.0",
+            "issuer": ""
+          }
+        }
+      },
+      "reason": "For sigstore-oidc, key_id is the certificate's subject identity and issuer is the OIDC issuer. Both are required for sigstore-oidc, and neither is empty."
+    },
+    {
       "name": "extensions carry data the specification does not define",
       "expect": "accept",
       "statement": {
@@ -765,6 +923,296 @@
         }
       },
       "reason": "`bin` names go on PATH; a name cannot contain a separator."
+    },
+    {
+      "name": "an executable with an empty name",
+      "expect": "reject",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "github.com/example/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "libc": "gnu",
+              "size": 5,
+              "format": "tar.xz",
+              "bin": [
+                {
+                  "path": "bin/tool",
+                  "name": ""
+                }
+              ]
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-oidc",
+            "key_id": "https://github.com/example/tool/.github/workflows/release.yml@refs/tags/v1.0.0",
+            "issuer": "https://token.actions.githubusercontent.com"
+          }
+        }
+      },
+      "reason": "A command name is the name as typed, without `.exe`, and is not empty."
+    },
+    {
+      "name": "an executable path that ends in a slash",
+      "expect": "reject",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "github.com/example/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "libc": "gnu",
+              "size": 5,
+              "format": "tar.xz",
+              "bin": [
+                "tool/"
+              ]
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-oidc",
+            "key_id": "https://github.com/example/tool/.github/workflows/release.yml@refs/tags/v1.0.0",
+            "issuer": "https://token.actions.githubusercontent.com"
+          }
+        }
+      },
+      "reason": "A command name is not empty, so a string entry's path ends in a file name rather than `/`; `tool/` names no file."
+    },
+    {
+      "name": "requires written as an array",
+      "expect": "reject",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "github.com/example/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "libc": "gnu",
+              "size": 5,
+              "format": "tar.xz",
+              "bin": [
+                "tool"
+              ],
+              "requires": []
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-oidc",
+            "key_id": "https://github.com/example/tool/.github/workflows/release.yml@refs/tags/v1.0.0",
+            "issuer": "https://token.actions.githubusercontent.com"
+          }
+        }
+      },
+      "reason": "`requires` is an object. An array, even an empty one, is not."
+    },
+    {
+      "name": "an identity written as an array of its fields",
+      "expect": "reject",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "github.com/example/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "libc": "gnu",
+              "size": 5,
+              "format": "tar.xz",
+              "bin": [
+                "tool"
+              ]
+            }
+          ],
+          "identity": [
+            "sigstore-oidc",
+            "https://github.com/example/tool/.github/workflows/release.yml@refs/tags/v1.0.0",
+            "https://token.actions.githubusercontent.com"
+          ]
+        }
+      },
+      "reason": "`identity` is an object. An array of its values in field order is not."
+    },
+    {
+      "name": "a digest written as an array",
+      "expect": "reject",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": [
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "github.com/example/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "libc": "gnu",
+              "size": 5,
+              "format": "tar.xz",
+              "bin": [
+                "tool"
+              ]
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-oidc",
+            "key_id": "https://github.com/example/tool/.github/workflows/release.yml@refs/tags/v1.0.0",
+            "issuer": "https://token.actions.githubusercontent.com"
+          }
+        }
+      },
+      "reason": "`subject[].digest` is an object keyed by algorithm, not an array."
+    },
+    {
+      "name": "a source written as an array",
+      "expect": "reject",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "github.com/example/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "libc": "gnu",
+              "size": 5,
+              "format": "tar.xz",
+              "bin": [
+                "tool"
+              ]
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-oidc",
+            "key_id": "https://github.com/example/tool/.github/workflows/release.yml@refs/tags/v1.0.0",
+            "issuer": "https://token.actions.githubusercontent.com"
+          },
+          "source": [
+            "https://github.com/example/tool"
+          ]
+        }
+      },
+      "reason": "A supplied `source` is an object that includes `repo`, not an array."
+    },
+    {
+      "name": "an executable written as an array of its path and name",
+      "expect": "reject",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "github.com/example/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "libc": "gnu",
+              "size": 5,
+              "format": "tar.xz",
+              "bin": [
+                [
+                  "bin/tool",
+                  "tool"
+                ]
+              ]
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-oidc",
+            "key_id": "https://github.com/example/tool/.github/workflows/release.yml@refs/tags/v1.0.0",
+            "issuer": "https://token.actions.githubusercontent.com"
+          }
+        }
+      },
+      "reason": "A `bin` entry is a path or a `{ path, name }` object, not an array."
     },
     {
       "name": "static completion names one shell",

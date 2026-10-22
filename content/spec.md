@@ -693,9 +693,10 @@ When the command name on PATH differs from the file name, use an object:
 share a path under different names, allowing aliases such as `pnpx` for
 `pnpm`; a consumer may create links or copies.
 
-A command name is the name as typed, without `.exe`. A Windows path
-keeps its extension, such as `bin/tool.exe`, and the consumer places it
-on PATH as `name.exe`. Names in `requires.bin` and a resource's `bin`
+A command name is the name as typed, without `.exe`, and is not empty,
+so a string entry's path ends in a file name rather than `/`. A Windows
+path keeps its extension, such as `bin/tool.exe`, and the consumer places
+it on PATH as `name.exe`. Names in `requires.bin` and a resource's `bin`
 follow the same convention, so consumers compare them without adding or
 stripping an extension. For compatibility, the reference implementation
 reads an older document whose `name` includes `.exe` as if it did not.
@@ -725,7 +726,8 @@ provenance establishes build claims at the
 consumer to compare its pin with the received signature. For
 `sigstore-oidc`, `key_id` is the certificate's subject identity: a
 workflow URI for CI or an email address for a person. `issuer` is the
-OIDC issuer. For `sigstore-key`, `key_id` is the key ID in uppercase
+OIDC issuer. Both are required for `sigstore-oidc`, and neither is
+empty. For `sigstore-key`, `key_id` is the key ID in uppercase
 hexadecimal. See [Signing](#signing).
 
 `attested_by` is `vendor` by default, or `repackager`. A repackager
@@ -835,7 +837,7 @@ Paths beginning with `artifacts[]` or `resources[]` below are relative to
 | `artifacts[].size` | integer | required | File size in bytes. Verified alongside the digest. |
 | `artifacts[].url` | string | optional | Download URL. |
 | `artifacts[].format` | string | required | Archive, compression, or installer type, or `raw` for a bare executable. |
-| `artifacts[].bin[]` | array of string or object | optional | Executables inside the artifact: a path from the archive root, or `{ path, name }` when the PATH name differs. A name is the command as typed, without `.exe`. |
+| `artifacts[].bin[]` | array of string or object | optional | Executables inside the artifact: a path from the archive root, or `{ path, name }` when the PATH name differs. A name is the command as typed, without `.exe`, and is not empty. |
 | `artifacts[].requires` | object | optional | What the host must provide. See [Host requirements](#host-requirements). |
 | `artifacts[].provenance[]` | array of string | optional | URLs of SLSA build provenance statements for this artifact. |
 
@@ -874,7 +876,7 @@ Paths beginning with `artifacts[]` or `resources[]` below are relative to
 | `predicate.identity` | object | required | How the document is signed and by whom. See [Signing](#signing). |
 | `predicate.identity.scheme` | string | required | `sigstore-oidc` or `sigstore-key`. |
 | `predicate.identity.key_id` | string | required | The certificate identity, or the key id in uppercase hex. |
-| `predicate.identity.issuer` | string | optional | The OIDC issuer, for `sigstore-oidc`. |
+| `predicate.identity.issuer` | string | conditional | The OIDC issuer, for `sigstore-oidc`, where it is required. |
 | `predicate.identity.pin_workflow` | boolean | optional | For `sigstore-oidc`: `false` asks consumers to hold later releases to the signing repository, not to the workflow that signed this one. `true` when absent. See [Workflow pinning](#workflow-pinning). |
 | `predicate.attested_by` | string | optional | `vendor` (default) or `repackager`. See [Repackager attestation](#repackager-attestation). |
 | `predicate.evidence[]` | array of object | optional | What a repackager checked: `{ kind, detail? }`. |
