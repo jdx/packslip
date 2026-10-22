@@ -314,6 +314,7 @@ its own with no counter to keep. Its validity defaults to 30 days.
 | `yank` | Releases to withdraw, one per line, as `TAG=REASON` or `URL=REASON`. Applies to this run's list only; see [Keep withdrawals in the repository](#keep-withdrawals-in-the-repository). |
 | `security` | Releases that fix a vulnerability, one tag or URL per line. Applies to this run's list only; see [Keep withdrawals in the repository](#keep-withdrawals-in-the-repository). |
 | `identity-prefix`, `identity`, `issuer` | The pin the bundles and the list must verify under; default to this repository's workflows through GitHub's issuer. `identity` is an exact certificate identity, ref included; GitHub identities name the ref the workflow ran on, so bundles signed on different tags never share one. Most projects want `identity-prefix`. |
+| `allow-other-repository` | `true` accepts bundles that match the pin but were signed from a repository other than the one a `github.com` or `gitlab.com` project names, such as an owner's shared build repository; defaults to `false`. The action already does this when `project` names a repository other than the one running it, as a registry's list does. |
 | `out` | Where to write the list; defaults to `packslip-releases.sigstore.json`. |
 | `packslip-version`, `packslip-sha256`, `packslip-path`, `token` | As for the [release action](/docs/publishing/#action-inputs). |
 
@@ -435,6 +436,7 @@ name is a new project with no signer history.
 | `a release list cannot be empty` | Nothing under `<dir>/<tag>/`; check the sync, or backfill a release. |
 | `is for github.com/owner/repo, not mytool.example.com` | A bundle from before the move is in the directory; describe that release again under the new name, or remove it. |
 | `is release v1.2.3 but sits under v1.2.4/` | The directory is named by the tag the bundle records; move it. |
+| `must be signed from its repository` | The project is on `github.com` or `gitlab.com`, and a bundle matches the pin but was signed from another repository. If you meant to list it, set `allow-other-repository: true`; otherwise leave it out of `dir`. |
 | `is not among the --release entries` | A `yank` or `security` entry names a tag or URL that is not in `dir`. |
 | A withdrawn release is eligible again after a scheduled or post-release run | The withdrawal was given to a single run. [Commit it](#keep-withdrawals-in-the-repository) so every run passes it. |
 | `signed by "https://github.com/old/repo/...", expected an identity starting with "https://github.com/new/repo/"` | The repository was renamed or transferred after that release was signed, and the action pins the current name. Leave that bundle out of `dir`: delete it from the bucket, or exclude it from the sync. To keep the release listed instead, describe it again from the renamed repository and purge the old copy from every cache, as [Sign as the repository](#sign-as-the-repository) explains. |

@@ -1428,14 +1428,23 @@ fn parse_duration(s: &str) -> Result<std::time::Duration> {
 /// needs --pubkey or an identity flag. For a keyless release, --issuer with
 /// --identity-prefix (any workflow of a repository, such as
 /// https://github.com/owner/repo/) or --identity (one exact certificate
-/// identity, including its ref) replaces the derived policy, and only the
-/// flags you pass are checked: --issuer alone accepts any signer from that
-/// issuer. For a release signed through another repository's reusable
-/// workflow, --issuer with --source-repository requires the certificate to
-/// record that repository as its source, whichever workflow signed. For a
-/// key-signed release, pass --pubkey. --pin adds a check on top of the
-/// identity policy: the signing repository must have that signer
-/// fingerprint.
+/// identity, including its ref) pins the signer. For a release signed
+/// through another repository's reusable workflow, --issuer with
+/// --source-repository requires the certificate to record that repository
+/// as its source, whichever workflow signed. For a key-signed release, pass
+/// --pubkey. --pin adds a check on top of the identity policy: the signing
+/// repository must have that signer fingerprint.
+///
+/// For a GitHub or GitLab project, the identity flags narrow what the
+/// project's name requires and never replace it: the run that signed must
+/// match the flags and still belong to the project's repository, so
+/// --issuer alone accepts only that repository's workflows and the reusable
+/// workflows it calls. To verify a document signed outside the project's
+/// repository, such as a repackager's, name its signer with --issuer and
+/// --identity, --identity-prefix, or --source-repository, and add
+/// --allow-other-repository. For any other project, the flags you pass are
+/// the whole policy: there, --issuer alone accepts any signer from that
+/// issuer.
 ///
 /// Then match the verified project and version to what you meant to
 /// install. For a release list, the command does not check the expiry or
@@ -1479,8 +1488,8 @@ struct Verify {
     #[usage(long, help_heading = "Trust")]
     identity_prefix: Option<String>,
     /// The OIDC issuer a keyless signer must have; pass it with --identity
-    /// or --identity-prefix, since alone it accepts any signer from that
-    /// issuer
+    /// or --identity-prefix, since for a project not on GitHub or GitLab it
+    /// alone accepts any signer from that issuer
     #[usage(long, help_heading = "Trust")]
     issuer: Option<String>,
     /// The repository the signing certificate must record as its source,
@@ -1494,6 +1503,12 @@ struct Verify {
     /// have, as `packslip pin` prints it
     #[usage(long, help_heading = "Trust")]
     pin: Option<String>,
+    /// Accept a keyless signer outside the repository a GitHub or GitLab
+    /// project names, such as a repackager's; needs --issuer, and
+    /// --identity, --identity-prefix, or --source-repository to name that
+    /// signer
+    #[usage(long, help_heading = "Trust")]
+    allow_other_repository: bool,
     /// Accept a bundle without a transparency log entry
     #[usage(long, help_heading = "Trust")]
     allow_unlogged: bool,
@@ -1543,6 +1558,21 @@ impl RunWith<BinInfo> for Verify {
             Some(pin) => Some(pin.parse().wrap_err("--pin")?),
             None => None,
         };
+        if self.allow_other_repository
+            && self.pubkey.is_none()
+            && self.identity.is_none()
+            && self.identity_prefix.is_none()
+            && self.source_repository.is_none()
+        {
+            bail!(
+                "--allow-other-repository accepts a signer outside the project's repository, so name that signer with --identity, --identity-prefix, or --source-repository"
+            );
+        }
+        if self.allow_other_repository && self.pubkey.is_none() && self.issuer.is_none() {
+            bail!(
+                "--allow-other-repository needs --issuer: a signer outside the project's repository is only as good as the issuer that vouches for it"
+            );
+        }
         let pin = match &self.pubkey {
             Some(text) => {
                 if self.identity.is_some()
@@ -1557,6 +1587,11 @@ impl RunWith<BinInfo> for Verify {
                 if want_fingerprint.is_some() {
                     bail!(
                         "--pin is the fingerprint of a certificate's repository; a key has none. Use --pubkey alone"
+                    );
+                }
+                if self.allow_other_repository {
+                    bail!(
+                        "--allow-other-repository is about a certificate's repository; a key has none. Use --pubkey alone"
                     );
                 }
                 let pubkey_text = if Path::new(text).is_file() {
@@ -1597,6 +1632,9 @@ impl RunWith<BinInfo> for Verify {
             trusted_root: &trusted_root,
         };
         let artifacts: Vec<&Path> = self.artifact.iter().map(PathBuf::as_path).collect();
+        // Only a certificate names a repository; a pinned key is the whole
+        // policy.
+        let keyless = matches!(pin, TrustPin::Identity(_));
 
         if is_list {
             if !artifacts.is_empty() {
@@ -1605,28 +1643,20 @@ impl RunWith<BinInfo> for Verify {
             return match packslip::verify_release_list(&text, &pin.as_trust(), options) {
                 Ok(verified) => {
                     let list = &verified.list.predicate;
-                    if let Err(err) = require_source_repository(
-                        self.source_repository.as_deref(),
-                        &text,
-                        &list.project,
-                        &verified.key_id,
-                        verified.issuer.as_deref(),
-                    ) {
-                        eprintln!("verification failed: {err}");
-                        std::process::exit(1)
-                    }
-                    if let Some(want) = &want_fingerprint {
-                        let source = sigstore::source_repository(&text)?;
-                        if let Err(err) = match_fingerprint(
-                            want,
+                    // The list verified, so its certificate's record of the
+                    // repository is the one Fulcio issued.
+                    let source = sigstore::source_repository(&text)?;
+                    if keyless
+                        && let Err(err) = self.check_signer(
                             &list.project,
                             &verified.key_id,
                             verified.issuer.as_deref(),
                             source.as_ref(),
-                        ) {
-                            eprintln!("verification failed: {err}");
-                            std::process::exit(1)
-                        }
+                            want_fingerprint.as_ref(),
+                        )
+                    {
+                        eprintln!("verification failed: {err}");
+                        std::process::exit(1)
                     }
                     if self.json {
                         println!("{}", serde_json::to_string_pretty(&verified.list)?);
@@ -1646,8 +1676,8 @@ impl RunWith<BinInfo> for Verify {
                                 String::new()
                             }
                         );
-                        if let Some(source) = sigstore::source_repository(&text)? {
-                            println!("  repository {}", describe_source(&source));
+                        if let Some(source) = &source {
+                            println!("  repository {}", describe_source(source));
                         }
                     }
                     Ok(())
@@ -1663,23 +1693,13 @@ impl RunWith<BinInfo> for Verify {
                 // The bundle verified, so its certificate's record of the
                 // repository is the one Fulcio issued.
                 let source = sigstore::source_repository(&text)?;
-                if let Err(err) = require_source_repository(
-                    self.source_repository.as_deref(),
-                    &text,
-                    &verified.project,
-                    &verified.key_id,
-                    verified.issuer.as_deref(),
-                ) {
-                    eprintln!("verification failed: {err}");
-                    std::process::exit(1)
-                }
-                if let Some(want) = &want_fingerprint
-                    && let Err(err) = match_fingerprint(
-                        want,
+                if keyless
+                    && let Err(err) = self.check_signer(
                         &verified.project,
                         &verified.key_id,
                         verified.issuer.as_deref(),
                         source.as_ref(),
+                        want_fingerprint.as_ref(),
                     )
                 {
                     eprintln!("verification failed: {err}");
@@ -1757,36 +1777,115 @@ impl RunWith<BinInfo> for Verify {
     }
 }
 
-/// Whether a verified bundle's certificate records `want` as its source
-/// repository, and that repository is the project the statement names.
+impl Verify {
+    /// What a verified keyless signer must still satisfy: the
+    /// --source-repository and --pin the user passed, and, unless
+    /// --allow-other-repository was passed, the repository a GitHub or
+    /// GitLab project names. The identity flags only narrow that
+    /// requirement, so --issuer alone cannot accept another repository's
+    /// signature for the project.
+    fn check_signer(
+        &self,
+        project: &str,
+        signer: &str,
+        issuer: Option<&str>,
+        source: Option<&sigstore::SourceRepository>,
+        want_fingerprint: Option<&Fingerprint>,
+    ) -> std::result::Result<(), String> {
+        if let Some(want) = self.source_repository.as_deref() {
+            require_source_repository(want, source)?;
+        }
+        if !self.allow_other_repository {
+            signed_from_project(project, signer, issuer, source, &self.narrowing_flags())?;
+        }
+        if let Some(want) = want_fingerprint {
+            want.verify(issuer, source).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// The trust flags passed that narrow a keyless signer's policy, for a
+    /// refusal to name.
+    fn narrowing_flags(&self) -> Vec<&'static str> {
+        [
+            ("--identity", self.identity.is_some()),
+            ("--identity-prefix", self.identity_prefix.is_some()),
+            ("--issuer", self.issuer.is_some()),
+            ("--source-repository", self.source_repository.is_some()),
+            ("--pin", self.pin.is_some()),
+        ]
+        .into_iter()
+        .filter_map(|(flag, passed)| passed.then_some(flag))
+        .collect()
+    }
+}
+
+/// Whether a verified certificate records `want` as its source repository.
 /// Fulcio derives the record from the forge's token, so it names the
-/// repository whose run signed, whichever workflow that was. A project that
-/// is not on a forge has no repository to compare, so only `want` is
-/// checked.
+/// repository whose run signed, whichever workflow that was.
 fn require_source_repository(
-    want: Option<&str>,
-    bundle: &str,
+    want: &str,
+    source: Option<&sigstore::SourceRepository>,
+) -> std::result::Result<(), String> {
+    match source {
+        Some(source) if source.uri == want.trim_end_matches('/') => Ok(()),
+        Some(source) => Err(format!(
+            "the certificate's source repository is {}, expected {want}",
+            source.uri
+        )),
+        None => Err(format!(
+            "the certificate records no source repository, expected {want}"
+        )),
+    }
+}
+
+/// Whether a verified keyless signer belongs to the repository a GitHub or
+/// GitLab project names, as [`bound_to_project`] decides, with a refusal
+/// that says what was expected, what signed, and how to accept a signer
+/// outside the repository on purpose. `flags` are the trust flags passed.
+/// A project on any other host names no repository, so nothing is checked.
+fn signed_from_project(
     project: &str,
     signer: &str,
     issuer: Option<&str>,
+    source: Option<&sigstore::SourceRepository>,
+    flags: &[&str],
 ) -> std::result::Result<(), String> {
-    let Some(want) = want else { return Ok(()) };
-    let source = sigstore::source_repository(bundle).map_err(|e| e.to_string())?;
-    match &source {
-        Some(source) if source.uri == want.trim_end_matches('/') => {}
-        Some(source) => {
+    use packslip::forge::IdentityError;
+    let reason = match bound_to_project(project, signer, issuer, source) {
+        Ok(()) => return Ok(()),
+        Err(IdentityError::SourceMismatch {
+            certificate,
+            repository,
+        }) => format!(
+            "{project} must be signed from its repository {repository}, but {signer} signed it from {certificate}"
+        ),
+        Err(IdentityError::SignerOutsideRepository { repository, .. }) => format!(
+            "{project} must be signed from its repository {repository}, but {signer} is not one of its workflows"
+        ),
+        Err(IdentityError::Issuer {
+            expected, actual, ..
+        }) => format!(
+            "{project} must be signed from its repository through {expected}, but {signer} signed it through {}",
+            actual.as_deref().unwrap_or("no issuer")
+        ),
+        Err(err) => err.to_string(),
+    };
+    // The refusal names the flags passed, which do not lift the requirement.
+    let remedy = "accept a signer outside that repository, name it with --issuer and --identity, --identity-prefix, or --source-repository, and add --allow-other-repository";
+    let named = match flags {
+        [] => return Err(format!("{reason}. To {remedy}")),
+        [flag] => {
             return Err(format!(
-                "the certificate's source repository is {}, expected {want}",
-                source.uri
+                "{reason}. {flag} narrows what the project's name requires and does not replace it; to {remedy}"
             ));
         }
-        None => {
-            return Err(format!(
-                "the certificate records no source repository, expected {want}"
-            ));
-        }
-    }
-    bound_to_project(project, signer, issuer, source.as_ref())
+        [first, last] => format!("{first} and {last}"),
+        [init @ .., last] => format!("{}, and {last}", init.join(", ")),
+    };
+    Err(format!(
+        "{reason}. {named} narrow what the project's name requires and do not replace it; to {remedy}"
+    ))
 }
 
 /// The certificate policy for `project`: the identity flags, or else the
@@ -1832,7 +1931,7 @@ fn bound_to_project(
     signer: &str,
     issuer: Option<&str>,
     source: Option<&sigstore::SourceRepository>,
-) -> std::result::Result<(), String> {
+) -> std::result::Result<(), packslip::forge::IdentityError> {
     match packslip::forge::check_source(
         &packslip::forge::Expected::new(project),
         project,
@@ -1841,7 +1940,7 @@ fn bound_to_project(
         source,
     ) {
         Ok(_) | Err(packslip::forge::IdentityError::NotForge(_)) => Ok(()),
-        Err(err) => Err(err.to_string()),
+        Err(err) => Err(err),
     }
 }
 
@@ -1857,24 +1956,12 @@ fn signer_fingerprint(
             "{project} is signed with a key, which has no signer fingerprint; pin it with --pubkey"
         ));
     }
-    bound_to_project(project, signer, issuer, source)?;
+    bound_to_project(project, signer, issuer, source).map_err(|e| e.to_string())?;
     Fingerprint::of_signer(issuer, source).ok_or_else(|| {
         format!(
             "{project}'s certificate records no repository ID, so it has no signer fingerprint; pin it with --identity-prefix and --issuer instead"
         )
     })
-}
-
-/// Check a verified release's signer against a fingerprint.
-fn match_fingerprint(
-    want: &Fingerprint,
-    project: &str,
-    signer: &str,
-    issuer: Option<&str>,
-    source: Option<&sigstore::SourceRepository>,
-) -> std::result::Result<(), String> {
-    bound_to_project(project, signer, issuer, source)?;
-    want.verify(issuer, source).map_err(|e| e.to_string())
 }
 
 /// Print the signer fingerprint of a project's keyless releases
@@ -1894,9 +1981,11 @@ fn match_fingerprint(
 /// certificate records a repository ID have one; for a key-signed release,
 /// pin the key with `packslip verify --pubkey`.
 ///
-/// Verification works as in `packslip verify`: the policy is the one the
-/// project's name implies unless --identity, --identity-prefix, or --issuer
-/// replace it. See https://packslip.dev/docs/verifying/.
+/// Verification works as in `packslip verify` without
+/// --allow-other-repository: the policy is the one the project's name
+/// implies, and --identity, --identity-prefix, and --issuer narrow it
+/// without replacing it, so a GitHub or GitLab project's release must still
+/// be signed from its repository. See https://packslip.dev/docs/verifying/.
 #[derive(Debug, usage_rs::Args)]
 #[usage(
     exit_code(0, "Printed the signer fingerprint"),
@@ -1924,8 +2013,8 @@ struct Pin {
     #[usage(long, help_heading = "Trust")]
     identity_prefix: Option<String>,
     /// The OIDC issuer a keyless signer must have; pass it with --identity
-    /// or --identity-prefix, since alone it accepts any signer from that
-    /// issuer
+    /// or --identity-prefix, since for a project not on GitHub or GitLab it
+    /// alone accepts any signer from that issuer
     #[usage(long, help_heading = "Trust")]
     issuer: Option<String>,
     /// Accept a bundle without a transparency log entry
@@ -2204,5 +2293,249 @@ mod tests {
         );
         assert!(parse_duration("3x").is_err());
         assert!(parse_duration("").is_err());
+    }
+}
+
+/// What `verify` asks of a keyless signer once its signature checks out.
+/// A bundle signed from another repository needs a live Fulcio certificate,
+/// so these cases take hk 2.3.0's real certificate and put it to a statement
+/// naming another project, or describe a certificate without one.
+#[cfg(test)]
+mod signer_tests {
+    use super::*;
+    use packslip::sigstore::{GITHUB_ISSUER, SourceRepository};
+
+    const HK: &str = include_str!("../tests/fixtures/hk-v2.3.0.sigstore.json");
+    const HK_SIGNER: &str =
+        "https://github.com/jdx/hk/.github/workflows/release.yml@refs/tags/v2.3.0";
+    const HK_PIN: &str = "ps1_snirenkjwr7m5ozgcufameodnm";
+
+    /// `packslip verify BUNDLE --issuer GITHUB_ISSUER` with the given
+    /// --source-repository and --allow-other-repository.
+    fn issuer_alone(source_repository: Option<&str>, allow_other_repository: bool) -> Verify {
+        Verify {
+            bundle: PathBuf::from("packslip.sigstore.json"),
+            pubkey: None,
+            identity: None,
+            identity_prefix: None,
+            issuer: Some(GITHUB_ISSUER.into()),
+            source_repository: source_repository.map(str::to_string),
+            pin: None,
+            allow_other_repository,
+            allow_unlogged: false,
+            trusted_root: None,
+            artifact: Vec::new(),
+            json: false,
+        }
+    }
+
+    /// `packslip verify BUNDLE` with no trust flags.
+    fn no_flags() -> Verify {
+        Verify {
+            issuer: None,
+            ..issuer_alone(None, false)
+        }
+    }
+
+    /// The end of a refusal: how to accept a signer outside the repository.
+    const REMEDY: &str = "accept a signer outside that repository, name it with --issuer and --identity, --identity-prefix, or --source-repository, and add --allow-other-repository";
+
+    /// hk 2.3.0 verified under the policy --issuer alone builds, which pins
+    /// no workflow: its signer, issuer, and source repository.
+    fn hk_under_issuer_alone() -> (String, Option<String>, Option<SourceRepository>) {
+        let policy = identity_policy(
+            &None,
+            &None,
+            &Some(GITHUB_ISSUER.into()),
+            "github.com/jdx/hk",
+            sigstore::Error::NoPolicy,
+        )
+        .unwrap();
+        assert_eq!(policy.identity_prefix, None);
+        let root = sigstore::trusted_root(None).unwrap();
+        let options = Options {
+            require_log: true,
+            trusted_root: &root,
+        };
+        let verified = packslip::verify(HK, &Trust::Identity(&policy), options, &[]).unwrap();
+        assert_eq!(verified.key_id, HK_SIGNER);
+        let source = sigstore::source_repository(HK).unwrap();
+        (verified.key_id, verified.issuer, source)
+    }
+
+    #[test]
+    fn issuer_alone_accepts_only_the_forge_projects_repository() {
+        let (signer, issuer, source) = hk_under_issuer_alone();
+        let check = |project: &str| {
+            issuer_alone(None, false).check_signer(
+                project,
+                &signer,
+                issuer.as_deref(),
+                source.as_ref(),
+                None,
+            )
+        };
+        check("github.com/jdx/hk").unwrap();
+        check("github.com/jdx/hk/tool").unwrap();
+
+        // The same signature on a statement that names another project, as
+        // any GitHub repository's workflow can sign one.
+        let err = check("github.com/jdx/mise").unwrap_err();
+        assert_eq!(
+            err,
+            format!(
+                "github.com/jdx/mise must be signed from its repository https://github.com/jdx/mise, but {HK_SIGNER} signed it from https://github.com/jdx/hk. --issuer narrows what the project's name requires and does not replace it; to {REMEDY}"
+            )
+        );
+
+        // A project on the other forge has another issuer as well.
+        let err = check("gitlab.com/jdx/hk").unwrap_err();
+        assert!(
+            err.starts_with(&format!(
+                "gitlab.com/jdx/hk must be signed from its repository through https://gitlab.com, but {HK_SIGNER} signed it through {GITHUB_ISSUER}. "
+            )),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn allow_other_repository_lifts_only_the_projects_repository() {
+        let (signer, issuer, source) = hk_under_issuer_alone();
+        let check = |verify: Verify, pin: Option<&str>| {
+            let pin: Option<Fingerprint> = pin.map(|p| p.parse().unwrap());
+            verify.check_signer(
+                "github.com/jdx/mise",
+                &signer,
+                issuer.as_deref(),
+                source.as_ref(),
+                pin.as_ref(),
+            )
+        };
+        check(issuer_alone(None, true), None).unwrap();
+        check(issuer_alone(Some("https://github.com/jdx/hk"), true), None).unwrap();
+        check(issuer_alone(None, true), Some(HK_PIN)).unwrap();
+
+        // The flags that name the signer still apply.
+        let err = check(
+            issuer_alone(Some("https://github.com/jdx/mise"), true),
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            "the certificate's source repository is https://github.com/jdx/hk, expected https://github.com/jdx/mise"
+        );
+        let err = check(
+            issuer_alone(None, true),
+            Some("ps1_kwhjac5qpc45qetfh6ppwisi6a"),
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("but the pin is ps1_kwhjac5qpc45qetfh6ppwisi6a"),
+            "{err}"
+        );
+
+        // Without the opt-out, neither flag accepts another repository, and
+        // the refusal names the flags that were passed.
+        let err = check(issuer_alone(Some("https://github.com/jdx/hk"), false), None).unwrap_err();
+        assert!(
+            err.ends_with(&format!(
+                ". --issuer and --source-repository narrow what the project's name requires and do not replace it; to {REMEDY}"
+            )),
+            "{err}"
+        );
+        let pinned = |source_repository| Verify {
+            pin: Some(HK_PIN.into()),
+            ..issuer_alone(source_repository, false)
+        };
+        let err = check(pinned(None), Some(HK_PIN)).unwrap_err();
+        assert!(
+            err.ends_with(&format!(
+                ". --issuer and --pin narrow what the project's name requires and do not replace it; to {REMEDY}"
+            )),
+            "{err}"
+        );
+        let err = check(pinned(Some("https://github.com/jdx/hk")), Some(HK_PIN)).unwrap_err();
+        assert!(
+            err.ends_with(&format!(
+                ". --issuer, --source-repository, and --pin narrow what the project's name requires and do not replace it; to {REMEDY}"
+            )),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_reusable_workflow_signs_for_the_repository_whose_run_called_it() {
+        let shared = "https://github.com/suzuki-shunsuke/go-release-workflow/.github/workflows/release.yaml@refs/heads/main";
+        let caller = SourceRepository::new("https://github.com/suzuki-shunsuke/mkghtag");
+        let check = |project: &str, signer: &str, source: Option<&SourceRepository>| {
+            issuer_alone(None, false).check_signer(
+                project,
+                signer,
+                Some(GITHUB_ISSUER),
+                source,
+                None,
+            )
+        };
+        check("github.com/suzuki-shunsuke/mkghtag", shared, Some(&caller)).unwrap();
+        // --source-repository names the same repository.
+        issuer_alone(Some("https://github.com/suzuki-shunsuke/mkghtag"), false)
+            .check_signer(
+                "github.com/suzuki-shunsuke/mkghtag",
+                shared,
+                Some(GITHUB_ISSUER),
+                Some(&caller),
+                None,
+            )
+            .unwrap();
+
+        // Another repository's run is refused, even through a workflow of
+        // the project's own.
+        let own = "https://github.com/jdx/hk/.github/workflows/release.yml@refs/heads/main";
+        let elsewhere = SourceRepository::new("https://github.com/someone/else");
+        let err = check("github.com/jdx/hk", own, Some(&elsewhere)).unwrap_err();
+        assert!(
+            err.starts_with(&format!(
+                "github.com/jdx/hk must be signed from its repository https://github.com/jdx/hk, but {own} signed it from https://github.com/someone/else. "
+            )),
+            "{err}"
+        );
+        // So is verify without flags, whose derived prefix the signer
+        // matches; the refusal then names no flags.
+        let err = no_flags()
+            .check_signer(
+                "github.com/jdx/hk",
+                own,
+                Some(GITHUB_ISSUER),
+                Some(&elsewhere),
+                None,
+            )
+            .unwrap_err();
+        assert_eq!(
+            err,
+            format!(
+                "github.com/jdx/hk must be signed from its repository https://github.com/jdx/hk, but {own} signed it from https://github.com/someone/else. To {REMEDY}"
+            )
+        );
+
+        // A certificate that records no repository leaves only the signer,
+        // which must then be a workflow of the project.
+        let err = check("github.com/suzuki-shunsuke/mkghtag", shared, None).unwrap_err();
+        assert!(
+            err.starts_with(&format!(
+                "github.com/suzuki-shunsuke/mkghtag must be signed from its repository https://github.com/suzuki-shunsuke/mkghtag, but {shared} is not one of its workflows. "
+            )),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_project_on_another_host_is_held_to_the_flags_alone() {
+        let (signer, issuer, source) = hk_under_issuer_alone();
+        for project in ["hk.jdx.dev", "example.com/tools/hk"] {
+            issuer_alone(None, false)
+                .check_signer(project, &signer, issuer.as_deref(), source.as_ref(), None)
+                .unwrap();
+        }
     }
 }

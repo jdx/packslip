@@ -53,10 +53,16 @@ your request. For a project on any other host there is nothing to derive,
 and `verify` stops with `no identity to verify against`; pass `--pubkey`
 or identity flags.
 
-The identity flags replace that derived policy, and each one checks only
-what it names. Pass `--issuer` together with `--identity-prefix` or
-`--identity`: `--issuer` alone accepts a workflow of any repository on
-that forge.
+For a GitHub or GitLab project, the identity flags narrow what the
+project's name requires and never replace it: the release must match them
+and still be signed from the project's repository. A document signed
+outside it, such as a repackager's, is refused unless you name its signer
+with `--issuer` and `--identity-prefix`, `--identity`, or
+`--source-repository`, and add `--allow-other-repository`. For a project on
+any other host, the flags are the whole policy and each one checks only
+what it names, so pass `--issuer` together with `--identity-prefix` or
+`--identity`: `--issuer` alone accepts a workflow of any repository on that
+forge.
 
 For a release signed through a reusable workflow of another repository,
 the signing identity names that workflow, not the project's repository.
@@ -120,11 +126,10 @@ For the `github.com/jdx/hk` 2.3.0 release, it prints:
 ps1_snirenkjwr7m5ozgcufameodnm
 ```
 
-`packslip pin` verifies the bundle as `packslip verify` does, under the
-policy the project name implies or the identity flags you pass, then
-prints the fingerprint of the repository that signed it. It cannot tell
-the genuine repository from one that took its name, so run it only on a
-release you already trust.
+`packslip pin` verifies the bundle as `packslip verify` does without
+`--allow-other-repository`, then prints the fingerprint of the repository
+that signed it. It cannot tell the genuine repository from one that took
+its name, so run it only on a release you already trust.
 
 A consumer then passes the fingerprint it recorded to `verify`:
 
@@ -297,7 +302,7 @@ ok: github.com/jdx/hk 2.3.0 published 2026-09-26T19:59:21.295096144Z signed by h
 | A successful verification establishes… | It does not establish… |
 | --- | --- |
 | The statement was signed by an identity or key allowed by the policy. | The signer or its build environment was uncompromised. |
-| The signer belongs to the project the statement names, or matches your flags. | The project and version are the ones you asked for. |
+| The signer matches your flags, or the signature matches your `--pubkey` key. For a keyless signature, unless you passed `--allow-other-repository`, the signer also belongs to the GitHub or GitLab project the statement names. | The project and version are the ones you asked for. |
 | Supplied files match the signed digests. | The software is safe or free of vulnerabilities. |
 | A logged signature has verified transparency-log evidence. | This is the newest release or the vendor's recommended version. |
 | The statement contains provenance links, if reported. | The linked provenance has been fetched or verified. |
@@ -315,6 +320,7 @@ for inspection, not as evidence of authenticity.
 | --- | --- |
 | `expected an identity starting with` or `identity mismatch: expected` | The release was signed outside the repository or identity you pinned. `--identity` is exact, including the tag ref, so a standing pin needs `--identity-prefix`. Do not loosen the pin just to make the command pass. If the repository was renamed or moved, see the next row. |
 | The repository was renamed or moved to another owner | With `--pin`, or a pin the library stored, nothing changes: the repository ID is the same, so releases from before and after the move verify, and the `ok:` and `repository` lines show the name each release was signed under. An `--identity-prefix` pin names the old location, so releases signed after the move fail with `expected an identity starting with`. Before you update the prefix, confirm the move: check that `packslip pin` prints the same fingerprint for a new release as for one you accepted before the move, or ask the project. |
+| `must be signed from its repository` | The statement names a GitHub or GitLab project, but a run in another repository signed it. Identity flags cannot accept that signer on their own. If you expected it, such as a repackager you trust, name it with `--issuer` and `--identity`, `--identity-prefix`, or `--source-repository`, and add `--allow-other-repository`; otherwise do not use the release. |
 | `issuer mismatch: expected` | `--issuer` names a different OIDC issuer from the one that signed the release. Pass the issuer of the CI system that ran the release: `https://token.actions.githubusercontent.com` for GitHub Actions, `https://gitlab.com` for GitLab CI. |
 | `the release is signed by ps1_…, but the pin is ps1_…` | A different repository signed the release, often one that took a renamed or deleted repository's name. Find where the project went, and do not replace your pin with the fingerprint the message prints. |
 | `records no repository ID` | The certificate predates Fulcio's repository extensions or comes from another CI system. Pin the release with `--identity-prefix` and `--issuer` instead of `--pin`. |

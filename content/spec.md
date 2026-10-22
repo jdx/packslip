@@ -529,14 +529,26 @@ maintain trust history across invocations. For a release list, it also
 does not enforce expiry or compare its sequence with a previously accepted
 list.
 
-Without `--pubkey`, `--identity`, `--identity-prefix`, or `--issuer`, the
-command derives its signer policy from the GitHub or GitLab project the
-statement claims. As [Project names](#project-names) explains, that default
-does not check the user's intended identity. Supply the expected public
-key with `--pubkey`, or the expected identity or identity prefix together
-with `--issuer`. Only supplied identity flags are checked: `--issuer`
-alone accepts any signer from that issuer. A supplied `--pin` adds the
-repository-fingerprint check to the identity policy.
+Without `--pubkey`, `--identity`, `--identity-prefix`, `--issuer`, or
+`--source-repository`, the command derives its signer policy from the
+GitHub or GitLab project the statement claims. As
+[Project names](#project-names) explains, that default does not check the
+user's intended identity. Supply the expected public key with `--pubkey`,
+or the expected identity or identity prefix together with `--issuer`. For
+a release signed through another repository's reusable workflow,
+`--source-repository` with `--issuer` requires the certificate to record
+the expected repository as its source. For a GitHub or GitLab project,
+supplied identity flags narrow the policy rather than replace it: the
+signer must match them and still belong to the project's repository, as
+[Repository identity and renames](#repository-identity-and-renames)
+describes, so `--issuer` alone accepts only that repository's signers.
+`--allow-other-repository` lifts that requirement for a document signed
+outside the project's repository, such as a repackager's, and needs
+`--issuer` with `--identity`, `--identity-prefix`, or `--source-repository`
+to name its signer. For any other project, only supplied identity flags
+are checked: `--issuer` alone accepts any signer from that issuer. A
+supplied `--pin` adds the repository-fingerprint check to the identity
+policy.
 
 With any policy, compare the reported project and version with the request.
 A signer can sign other projects and older versions; `packslip verify`

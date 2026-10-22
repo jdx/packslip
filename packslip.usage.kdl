@@ -248,7 +248,7 @@ Verify a release bundle and print the signer fingerprint of the repository that 
 
 The fingerprint is derived from the forge's issuer and repository ID only. It stays the same when the repository is renamed, moves to another owner, or signs from another workflow, and a repository that later takes over the old name gets a different one. Only keyless releases whose certificate records a repository ID have one; for a key-signed release, pin the key with `packslip verify --pubkey`.
 
-Verification works as in `packslip verify`: the policy is the one the project's name implies unless --identity, --identity-prefix, or --issuer replace it. See https://packslip.dev/docs/verifying/.
+Verification works as in `packslip verify` without --allow-other-repository: the policy is the one the project's name implies, and --identity, --identity-prefix, and --issuer narrow it without replacing it, so a GitHub or GitLab project's release must still be signed from its repository. See https://packslip.dev/docs/verifying/.
 """#
     flag --identity help="The exact certificate identity a keyless signer must have, including its ref, such as https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3" help_heading=Trust {
         arg <IDENTITY>
@@ -256,7 +256,7 @@ Verification works as in `packslip verify`: the policy is the one the project's 
     flag --identity-prefix help="A prefix the certificate identity must start with, such as https://github.com/owner/repo/" help_heading=Trust {
         arg <IDENTITY_PREFIX>
     }
-    flag --issuer help="The OIDC issuer a keyless signer must have; pass it with --identity or --identity-prefix, since alone it accepts any signer from that issuer" help_heading=Trust {
+    flag --issuer help="The OIDC issuer a keyless signer must have; pass it with --identity or --identity-prefix, since for a project not on GitHub or GitLab it alone accepts any signer from that issuer" help_heading=Trust {
         arg <ISSUER>
     }
     flag --allow-unlogged help="Accept a bundle without a transparency log entry" help_heading=Trust
@@ -360,7 +360,9 @@ Verify a packslip, or a release list, against a pinned identity or key
 
 Check the signature, log evidence, and statement structure. With --artifact, also check local files against signed digests and artifact sizes. Without it, only the bundle is checked. Nothing is downloaded: remote artifacts and linked provenance are not fetched.
 
-Choose what to trust. By default, the identity policy comes from the project the document claims, if it is on github.com or gitlab.com: that forge's issuer and any workflow of that repository. Any other project needs --pubkey or an identity flag. For a keyless release, --issuer with --identity-prefix (any workflow of a repository, such as https://github.com/owner/repo/) or --identity (one exact certificate identity, including its ref) replaces the derived policy, and only the flags you pass are checked: --issuer alone accepts any signer from that issuer. For a release signed through another repository's reusable workflow, --issuer with --source-repository requires the certificate to record that repository as its source, whichever workflow signed. For a key-signed release, pass --pubkey. --pin adds a check on top of the identity policy: the signing repository must have that signer fingerprint.
+Choose what to trust. By default, the identity policy comes from the project the document claims, if it is on github.com or gitlab.com: that forge's issuer and any workflow of that repository. Any other project needs --pubkey or an identity flag. For a keyless release, --issuer with --identity-prefix (any workflow of a repository, such as https://github.com/owner/repo/) or --identity (one exact certificate identity, including its ref) pins the signer. For a release signed through another repository's reusable workflow, --issuer with --source-repository requires the certificate to record that repository as its source, whichever workflow signed. For a key-signed release, pass --pubkey. --pin adds a check on top of the identity policy: the signing repository must have that signer fingerprint.
+
+For a GitHub or GitLab project, the identity flags narrow what the project's name requires and never replace it: the run that signed must match the flags and still belong to the project's repository, so --issuer alone accepts only that repository's workflows and the reusable workflows it calls. To verify a document signed outside the project's repository, such as a repackager's, name its signer with --issuer and --identity, --identity-prefix, or --source-repository, and add --allow-other-repository. For any other project, the flags you pass are the whole policy: there, --issuer alone accepts any signer from that issuer.
 
 Then match the verified project and version to what you meant to install. For a release list, the command does not check the expiry or compare the sequence with an earlier list. See https://packslip.dev/docs/verifying/.
 """#
@@ -373,7 +375,7 @@ Then match the verified project and version to what you meant to install. For a 
     flag --identity-prefix help="A prefix the certificate identity must start with, such as https://github.com/owner/repo/" help_heading=Trust {
         arg <IDENTITY_PREFIX>
     }
-    flag --issuer help="The OIDC issuer a keyless signer must have; pass it with --identity or --identity-prefix, since alone it accepts any signer from that issuer" help_heading=Trust {
+    flag --issuer help="The OIDC issuer a keyless signer must have; pass it with --identity or --identity-prefix, since for a project not on GitHub or GitLab it alone accepts any signer from that issuer" help_heading=Trust {
         arg <ISSUER>
     }
     flag --source-repository help="The repository the signing certificate must record as its source, such as https://github.com/owner/repo, whichever workflow signed; for a release signed through another repository's reusable workflow. Needs --issuer, and replaces --identity and --identity-prefix" help_heading=Trust {
@@ -382,6 +384,7 @@ Then match the verified project and version to what you meant to install. For a 
     flag --pin help="The signer fingerprint (ps1_...) the certificate's repository must have, as `packslip pin` prints it" help_heading=Trust {
         arg <PIN>
     }
+    flag --allow-other-repository help="Accept a keyless signer outside the repository a GitHub or GitLab project names, such as a repackager's; needs --issuer, and --identity, --identity-prefix, or --source-repository to name that signer" help_heading=Trust
     flag --allow-unlogged help="Accept a bundle without a transparency log entry" help_heading=Trust
     flag --trusted-root help="A sigstore trusted_root.json to use instead of the embedded one" help_heading=Trust {
         arg <TRUSTED_ROOT>
