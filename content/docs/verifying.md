@@ -1,132 +1,147 @@
 ---
 title: Verify a release
-weight: 50
+description: Check a release bundle and downloaded files against a project's repository, a signer fingerprint, or a public key, and see what that proves.
 group: consume
-description: Check a release bundle and the files you downloaded against a repository, signer fingerprint, or public key you trust, and see what a successful result proves.
+weight: 52
 ---
 # Verify a release
 
-Use `packslip verify` to check downloaded release files before unpacking
-or running them. You need the signed bundle, the files you want to check,
-and a signer policy you trust. [Install packslip](/docs/getting-started/#install-packslip)
-first if the command is not available.
+Check downloaded release files before you unpack or run them, and learn
+what a passing result proves. To find, verify, and install a tool in one
+command, see [Bootstrap a tool](/docs/bootstrap/); to verify keyless
+releases without packslip, see
+[Commit a verifier into your project](/docs/verify-script/).
 
-Choose the policy from the publisher's documentation or an earlier
-release you already trust:
+You need packslip ([Install packslip](/docs/install/)), the release bundle
+(`packslip.sigstore.json`), the downloaded files, and a signer policy from
+the publisher's documentation or an earlier release you trust. What you
+know about the signer picks the section:
 
-| Publisher supplies | Use |
-| --- | --- |
-| A GitHub or GitLab repository | [An identity prefix and issuer](#verify-against-the-expected-repository) |
-| A `ps1_…` signer fingerprint | [`--pin`](#pin-a-signer-with-its-fingerprint), which identifies the repository across renames |
-| An Ed25519 public key | [`--pubkey`](#verify-against-a-public-key) |
-
-Pass every downloaded file with `--artifact`. If you have not chosen a
-file yet, verify the bundle alone, inspect it with `packslip show`, then
-verify the selected download under the same policy. For a command that
-does discovery, verification, and installation together, see
-[Install a tool](/docs/bootstrap/). To verify keyless releases in a project that cannot
-install packslip, [commit a verifier](/docs/verify-script/) into it.
+- Only a forge project's name (`github.com/…` or `gitlab.com/…`):
+  [no trust flags](#verify-against-the-expected-repository). A domain
+  project such as `mytool.example.com` needs identity flags or `--pubkey`.
+- The workflow or repository that signs: [identity flags](#narrow-the-policy-with-identity-flags).
+- A `ps1_…` signer fingerprint: [`--pin`](#pin-a-signer-with-its-fingerprint).
+- An Ed25519 public key: [`--pubkey`](#verify-against-a-public-key).
+- A repackager that re-signed the vendor's files: [`--allow-other-repository`](#verify-a-repackagers-release).
 
 ## Verify against the expected repository
 
-For a release signed in GitHub Actions, pin the repository you meant to
-download:
+For a forge project, run `verify` without trust flags. This downloads and
+checks hk 2.3.0's bundle and Linux x86_64 archive:
 
 ```sh
-packslip verify packslip.sigstore.json \
-  --identity-prefix https://github.com/owner/repo/ \
-  --issuer https://token.actions.githubusercontent.com \
-  --artifact mytool-1.2.3-linux-x64.tar.gz
+curl -fsSLO https://github.com/jdx/hk/releases/download/v2.3.0/packslip.sigstore.json
+curl -fsSLO https://github.com/jdx/hk/releases/download/v2.3.0/hk-x86_64-unknown-linux-gnu.tar.gz
+packslip verify packslip.sigstore.json --artifact hk-x86_64-unknown-linux-gnu.tar.gz
 ```
 
-Keep the trailing slash: without it, the prefix
-`https://github.com/owner/repo` also matches workflows of
-`https://github.com/owner/repo-fork`.
+`verify` derives the policy from the statement's project: here, the release
+must be signed by a GitHub Actions run whose certificate records
+`https://github.com/jdx/hk` as its source repository, whichever workflow ran
+([What a project name says about the signer](/docs/trust/#what-a-project-name-says-about-the-signer)).
+On success, `verify` prints an `ok:` line
+([Understand the result](#understand-the-result)) and exits 0.
 
-Without identity flags, `verify` derives the policy from the project the
-bundle claims: for `github.com/owner/repo`, a workflow under
-`https://github.com/owner/repo/` through GitHub's issuer, and the
-equivalent for a `gitlab.com` project. That shows only that the signer
-belongs to the project the document names. It does **not** show that this
-is the project or version you intended to install, so compare both with
-your request. For a project on any other host there is nothing to derive,
-and `verify` stops with `no identity to verify against`; pass `--pubkey`
-or identity flags.
+**Warning:** This shows only that the signer belongs to the project the
+statement names, not that it is the project or version you meant. Compare
+both with your request. In a monorepo, the derived policy, an identity
+prefix, and a `--pin` accept every tool in the repository.
 
-The identity flags replace that derived policy, and each one checks only
-what it names. Pass `--issuer` together with `--identity-prefix` or
-`--identity`: `--issuer` alone accepts a workflow of any repository on
-that forge.
+## Narrow the policy with identity flags
 
-For a release signed through a reusable workflow of another repository,
-the signing identity names that workflow, not the project's repository.
-Pass `--source-repository https://github.com/owner/repo` with `--issuer`
-instead of an identity flag: the certificate must record that repository
-as its source, whichever workflow signed.
+Identity flags name the issuer and workflow that must sign. What they do
+depends on the project:
 
-To pin one workflow file, extend the prefix through its `@`:
-`--identity-prefix https://github.com/owner/repo/.github/workflows/release.yml@`.
-`--identity` takes one exact certificate identity, which includes the
-workflow's ref, such as
-`https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3`,
-so it accepts only releases signed from that tag. Use it to check a single
-release, not as a standing pin.
+| Project | Identity flags | `--issuer` alone accepts |
+| --- | --- | --- |
+| Forge project | Narrow the derived policy: the signer must still belong to the project's repository. | The repository's workflows and the reusable workflows they call. |
+| Domain project | Are the whole policy, required unless you pass `--pubkey`. Each checks only what it names. | Any repository on that forge, so add `--identity-prefix`, `--identity`, or `--pin`. |
 
-For a GitLab project, the prefix ends in `//`, which separates the project
-path from the pipeline's configuration file, and the issuer is
-`https://gitlab.com`:
+This accepts any GitHub Actions workflow of `owner/mytool`:
 
 ```sh
 packslip verify packslip.sigstore.json \
-  --identity-prefix https://gitlab.com/group/tool// \
+  --identity-prefix https://github.com/owner/mytool/ \
+  --issuer https://token.actions.githubusercontent.com \
+  --artifact mytool-X.Y.Z-linux-x64.tar.gz
+```
+
+- `--identity-prefix` is a prefix the certificate identity must start with.
+  Keep the trailing `/`: `https://github.com/owner/mytool` also matches
+  `https://github.com/owner/mytool-fork`. To accept one workflow file,
+  extend the prefix through its `@`:
+  `https://github.com/owner/mytool/.github/workflows/release.yml@`.
+- `--identity` is one exact identity, including the workflow's ref
+  (`…/release.yml@refs/tags/vX.Y.Z`), so it accepts only releases signed
+  from that tag. Use it to check one release, not as a standing policy.
+- `--issuer` is `https://token.actions.githubusercontent.com` for GitHub
+  Actions, or `https://gitlab.com` for GitLab CI.
+
+Repository names match in any letter case; workflow paths and refs match
+exactly. For GitLab, the prefix ends in `//`, which separates the project
+path from the pipeline configuration file:
+
+```sh
+packslip verify packslip.sigstore.json \
+  --identity-prefix https://gitlab.com/owner/mytool// \
   --issuer https://gitlab.com \
-  --artifact mytool-1.2.3-linux-x64.tar.gz
+  --artifact mytool-X.Y.Z-linux-x64.tar.gz
 ```
 
 The [`packslip verify`](/cli/verify/) and [`packslip pin`](/cli/pin/)
-references list every flag, including `--trusted-root` for a sigstore
-deployment other than the public one.
+references list every flag.
+
+### Require the source repository
+
+An identity prefix checks where the signing workflow lives, not which
+repository's run called it. To require the repository the run came from,
+whichever workflow signed:
+
+```sh
+packslip verify packslip.sigstore.json \
+  --source-repository https://github.com/owner/mytool \
+  --issuer https://token.actions.githubusercontent.com \
+  --artifact mytool-X.Y.Z-linux-x64.tar.gz
+```
+
+- `--source-repository` requires the certificate to record that repository
+  as its source. It replaces, and refuses, `--identity` and
+  `--identity-prefix`.
+- `--issuer` is required with it, because the repository is only as good as
+  the issuer that vouches for it.
+
+For a domain project, only `--source-repository` or `--pin` checks the
+certificate's source repository. With an identity prefix alone, a run of
+any repository that calls a workflow under the prefix passes. A forge
+project's derived policy already requires its repository. When another
+repository's reusable workflow signs its releases, a prefix of the project
+refuses them, so use `--source-repository` or no trust flags.
 
 ## Pin a signer with its fingerprint
 
-An identity prefix names a repository by its current name. Once a
-repository is renamed or deleted, someone else can create a new one under
-the old name, and its workflows match the same prefix. `packslip verify`
-remembers nothing between runs, so it accepts the newcomer. An installer
-that remembers the repository ID of the first release it accepts refuses
-the newcomer later, but it still has to trust that first release. A
-signer fingerprint closes the gap. It is `ps1_` followed by 26 characters
-derived from the forge's issuer and the repository's numeric ID, so it
-names one repository whatever that repository is called.
-
-A vendor publishes its fingerprint on its website or in its README.
-Record it in your Dockerfile, CI workflow, or lockfile. Obtain it before
-the repository name changes hands: a fingerprint copied from the new
-repository, or calculated from its release, identifies the new owner’s
-repository.
-
-A vendor gets its fingerprint by running `packslip pin` on a release its
-own workflow just published, as
-[Publish with GitHub Actions](/docs/publishing/#publish-your-signer-fingerprint)
-shows. A consumer can do the same with a release it already trusts:
+A signer fingerprint (`ps1_` and 26 characters) names the signing
+repository by its forge ID, which an identity prefix cannot; see
+[First use and signer fingerprints](/docs/trust/#first-use-and-signer-fingerprints).
+Vendors publish it on their website or README
+([Publish your signer fingerprint](/docs/publishing/#publish-your-signer-fingerprint));
+record it in your Dockerfile, CI workflow, or lockfile. To compute it:
 
 ```sh
 packslip pin packslip.sigstore.json
 ```
 
-For the `github.com/jdx/hk` 2.3.0 release, it prints:
+For `github.com/jdx/hk` 2.3.0, this prints `ps1_snirenkjwr7m5ozgcufameodnm`.
+`packslip pin` verifies as `verify` does without `--allow-other-repository`,
+taking the same identity flags (a domain project needs them), then prints
+the signing repository's fingerprint.
 
-```text
-ps1_snirenkjwr7m5ozgcufameodnm
-```
+**Warning:** `packslip pin` cannot tell the genuine repository from one
+that took its name. Run it only on a release you already trust, and obtain
+the fingerprint before the name changes hands: one copied or computed from
+the new repository identifies the new owner's.
 
-`packslip pin` verifies the bundle as `packslip verify` does, under the
-policy the project name implies or the identity flags you pass, then
-prints the fingerprint of the repository that signed it. It cannot tell
-the genuine repository from one that took its name, so run it only on a
-release you already trust.
-
-A consumer then passes the fingerprint it recorded to `verify`:
+Then pass the fingerprint to `verify`:
 
 ```sh
 packslip verify packslip.sigstore.json \
@@ -134,207 +149,266 @@ packslip verify packslip.sigstore.json \
   --artifact hk-x86_64-unknown-linux-gnu.tar.gz
 ```
 
-A release signed from any other repository, including one that took over
-the old name, is refused, and the message names both fingerprints.
-Checking the same hk release against another repository's fingerprint
-prints:
+- `--pin` adds a check on top of the policy, here the one hk's GitHub name
+  implies: the certificate must record a repository ID that produces the
+  fingerprint. A domain project needs `--issuer` with it, and optionally an
+  identity prefix.
+- A certificate without a repository ID, such as an older one, cannot pass
+  `--pin`; use an identity prefix and issuer.
+- A key-signed release has no fingerprint; pin its key with
+  [`--pubkey`](#verify-against-a-public-key).
+
+A release from any other repository, including one that took over the old
+name, is refused. Checking hk 2.3.0 against another repository's
+fingerprint names the signer, then the pin:
 
 ```text
 verification failed: the release is signed by ps1_snirenkjwr7m5ozgcufameodnm, but the pin is ps1_kwhjac5qpc45qetfh6ppwisi6a
 ```
 
-`--pin` adds a repository check to the identity policy. The example uses
-the policy derived from the signed project's GitHub name. The keyless
-signature must pass that policy, its certificate must contain a
-repository ID, and that ID must produce the fingerprint you pinned.
-packslip also checks that the signing repository is the one the statement
-names. Older certificates without repository IDs cannot pass `--pin`;
-use an identity prefix and issuer for those releases.
-
-The fingerprint stays the same when the repository is renamed, moves to
-another owner, or changes its release workflow. Every tool in a monorepo
-shares it, so still check that the verified project is the tool you asked
-for. A key-signed project has no fingerprint; pin its key with `--pubkey`.
-See [Signer fingerprint](/release/v1/#signer-fingerprints) for how it is
-derived.
+After a rename or transfer, `--pin` keeps passing while an
+`--identity-prefix` of the old name fails with
+`expected an identity starting with`. Before updating the prefix, confirm
+that `packslip pin` prints the same fingerprint for a new release as for
+one from before the move, or ask the project. See
+[Repository identity, renames, and transfers](/docs/trust/#repository-identity-renames-and-transfers);
+[Signer fingerprints](/release/v1/#signer-fingerprints) defines the value.
 
 ## Verify against a public key
 
-For a key-signed release, pass the vendor's public key: the `.pub` file
-its `packslip keygen` wrote. Get it independently of the release, such as
-from the vendor's website, or reuse a key you pinned earlier:
+For a key-signed release, pass the vendor's Ed25519 public key: the
+minisign `.pub` file its `packslip keygen` wrote, or its base64 line. Get
+it independently of the release, such as from the vendor's website, or
+reuse one you pinned earlier:
 
 ```sh
 packslip verify packslip.sigstore.json \
   --pubkey release.pub \
-  --artifact mytool-1.2.3-linux-x64.tar.gz
+  --artifact mytool-X.Y.Z-linux-x64.tar.gz
 ```
 
-`--pubkey` also accepts the public key's base64 line. The bundle's key
-hint is an unverified label for the signing key: packslip never trusts
-it, and your own tooling should not either. Use `--allow-unlogged` only
-when you have chosen to accept unlogged signatures for this vendor.
+The key is the whole policy and names no repository, so `verify` refuses
+`--pubkey` with the identity flags, `--source-repository`, `--pin`, or
+`--allow-other-repository`.
+
+**Warning:** Never take a new key from the same download to make
+verification pass. The bundle's key hint is an unverified label: packslip
+never trusts it, and your tooling should not either.
+
+## Verify a repackager's release
+
+A repackager re-signs another vendor's files: its bundle names the vendor's
+project but is signed from the repackager's repository. For a forge
+project, the default policy refuses it with
+`must be signed from its repository`, even with identity flags. To accept
+a repackager you trust:
+
+```sh
+packslip verify packslip.sigstore.json \
+  --identity-prefix https://github.com/repackager/builds/ \
+  --issuer https://token.actions.githubusercontent.com \
+  --allow-other-repository \
+  --artifact mytool-X.Y.Z-linux-x64.tar.gz
+```
+
+- `--allow-other-repository` lifts the requirement that the signer belong
+  to the project's repository. It needs `--issuer`, plus `--identity`,
+  `--identity-prefix`, or `--source-repository`.
+- `--pin` still applies, with the repackager's fingerprint.
+
+`verify` takes no expected project, so this accepts every project the
+repackager signs. [Repackager attestation](/release/v1/#repackager-attestation)
+defines the `"attested_by": "repackager"` claim behind `repackager-attested`
+in the `ok:` line.
 
 ## Check every file you use
 
-Repeat `--artifact` to check multiple files, including separate resource
-assets:
+Repeat `--artifact` (`-a`) for every file you downloaded, including
+resource assets such as completion scripts. Deployment tooling can copy
+the bundle and files to the host and check a whole release in one call.
+Files are matched by name, so keep the published names: a renamed file
+fails with `not listed in the document`. Each file's SHA-256 must match
+the signed digest, and an artifact's size too.
+
+This adds hk's Linux arm64 archive and bash completion script to the first
+download:
 
 ```sh
+curl -fsSLO https://github.com/jdx/hk/releases/download/v2.3.0/hk-aarch64-unknown-linux-gnu.tar.gz
+curl -fsSLO https://github.com/jdx/hk/releases/download/v2.3.0/hk.bash
 packslip verify packslip.sigstore.json \
-  --pubkey release.pub \
-  --artifact mytool-1.2.3-linux-x64.tar.gz \
-  --artifact mytool.cdx.json \
-  --json
+  --artifact hk-x86_64-unknown-linux-gnu.tar.gz \
+  --artifact hk-aarch64-unknown-linux-gnu.tar.gz \
+  --artifact hk.bash
 ```
 
-The command checks the signature, the certificate chain of a keyless
-bundle, the transparency-log entry (a bundle without one fails unless you
-pass `--allow-unlogged`), and the statement's structure. It then looks up
-each supplied file in the statement by file name and compares its SHA-256
-with the signed digest, and for an artifact, also its size. Keep the
-original file names: a renamed file fails with
-`not listed in the document`.
+The `ok:` line ends with
+`(2 of 7 artifact(s) and 1 of 5 asset(s) checked, provenance linked, 7 resource(s))`.
+Each pair counts the files you passed against those the release lists.
+Equal numbers mean every file of that kind was supplied and matched, if you
+passed each file once. A release with no assets omits their count:
+`(2 of 3 artifact(s) checked)`. In `--json`, `checked_artifacts` and
+`checked_assets` list the names of the files checked, and `artifact_count`
+and `asset_count` give how many the release lists. An asset you pass
+appears only in `checked_assets`.
 
-The success line counts artifacts and resource assets separately, so you
-can see whether every file you meant to check was supplied:
-
-```text
-ok: example.com/mytool 1.2.3 published 2026-10-02T19:32:44Z signed by 5CA6E9FAFB1F4098 (sigstore-key) unlogged (1 of 1 artifact(s) and 1 of 1 asset(s) checked, 1 resource(s))
-```
-
-A release that lists no assets omits the asset count: `(2 of 3
-artifact(s) checked)`. With `--json`, `checked_artifacts` and
-`artifact_count` cover artifacts, and `checked_assets` and `asset_count`
-cover assets. An asset you supply is reported only in `checked_assets`.
-
-Without `--artifact`, success verifies the bundle alone. No remote
-artifact is downloaded, hashed, or installed. `--json` prints a report
-to standard output for scripts; on failure that stream is empty and the
-reason goes to standard error. Exit status is 0 for success, 1 for failed
-verification or unusable input, and 2 for a usage error.
+Without `--artifact`, success covers the bundle alone. `verify` downloads
+nothing, so it never hashes or installs remote artifacts.
 
 ## Read the verified artifacts from a script
 
-Build and deployment tooling often needs the verified metadata, not an
-install: which file to fetch for a platform, its digest, and the commands
-it provides. `--json` includes every artifact the signed statement lists,
-whether or not you passed `--artifact`, so one command verifies the bundle
-and returns what to stage:
+For tooling that needs verified metadata rather than an install (which
+file to fetch, its digest, the commands it provides), `--json` prints a
+report on standard output. On failure, standard output stays empty and the
+reason goes to standard error;
+[`packslip verify`](/cli/verify/#exit-status) lists the exit codes.
+
+The report lists every artifact in the statement, whether or not you passed
+`--artifact`. To choose a file before downloading it, read this list, not
+`packslip show`, which prints the statement without verifying it:
 
 ```sh
 packslip verify packslip.sigstore.json --pin ps1_snirenkjwr7m5ozgcufameodnm --json \
   | jq -r '.artifacts[] | select(.os == "linux" and .arch == "x86_64") | "\(.name) \(.sha256)"'
 ```
 
-For the hk 2.3.0 release, this prints each matching artifact's name and
-signed SHA-256. Each entry in `artifacts` has the statement's fields for
-that artifact (`name`, `size`, `url`, `format`, `os`, `arch`, `libc`,
-`variant`, `bin`, `requires`, `provenance`, `extensions`; absent ones are
-omitted) and the signed `sha256`. Download the file yourself, from the
-signed `url` or a mirror that keeps the file name, then confirm it by
-running `verify` again with `--artifact`, or compare its SHA-256 with the
-signed digest. Where the release lists several builds for a platform, the
-[artifact selection rules](/release/v1/#selecting-an-artifact) decide
-which one a consumer takes; the Rust library's `packslip::select_artifact`
-implements them.
+For hk 2.3.0, this prints each match's name and signed SHA-256:
 
-The report follows [`verify-report-v1.json`](/schema/verify-report-v1.json),
-which `packslip schema --report` prints. Within version 1, packslip adds
-report fields but never removes, renames, or changes the meaning of one, so
-ignore fields you do not know.
+```text
+hk-x86_64-unknown-linux-gnu.tar.gz 79cabdccba39e1eef4e443e11713c923381f697b03c00ef4a12dfcd1ca5380b0
+hk-x86_64-unknown-linux-musl.tar.gz 307f760266af8a393c47a8039e2c966c78361eae33949865e9ab4cc163f517b4
+```
+
+Each `artifacts` entry has the signed `sha256` and the statement's fields
+(`name`, `size`, `url`, `format`, `os`, `arch`, `libc`, `variant`, `bin`,
+`requires`, `provenance`, `extensions`), omitting absent ones. When several
+builds fit a platform, like gnu and musl here, the
+[artifact selection rules](/release/v1/#selecting-an-artifact) pick one;
+the Rust crate implements them as `packslip::select_artifact`
+([Select an artifact and its resources](/docs/rust/#select-an-artifact-and-its-resources)).
+Download the file from its signed `url`, or from a mirror that keeps the
+file name. Then confirm it with `verify --artifact` under the same policy,
+or compare its SHA-256 with the signed digest.
+
+The report has `"pin_workflow": false` when the release opts out of
+workflow pinning, and omits the field otherwise
+([Workflow pinning](/release/v1/#workflow-pinning)).
+It follows [`verify-report-v1.json`](/schema/verify-report-v1.json), which
+`packslip schema --report` prints. Within version 1, fields are added but
+never removed, renamed, or given a new meaning, so ignore unknown fields.
 
 ## Verify a release list
 
-The same command accepts a signed release list:
+`verify` also accepts a signed release list. The one packslip.dev serves
+at `.well-known/packslip.json` belongs to a domain project and is signed
+keylessly by a `jdx/packslip` workflow, so trust flags are the whole
+policy. `--pin` holds it to that repository, which a prefix alone does not
+([Require the source repository](#require-the-source-repository)):
 
 ```sh
-packslip verify packslip.json --pubkey release.pub
+curl -fsSLO https://packslip.dev/.well-known/packslip.json
+packslip verify packslip.json \
+  --identity-prefix https://github.com/jdx/packslip/ \
+  --issuer https://token.actions.githubusercontent.com \
+  --pin ps1_mcx64bcghek2t4vljgb3lho3ti
 ```
 
-This checks the list's signature and structure; `--pin` and the identity
-flags apply as they do to a release. The CLI does not compare the expiry
-with the current time or the sequence with lists you accepted before. The
-`ok:` line and `--json` report the list's `expires_at` and `sequence`,
-and a consumer must enforce both, as
-[consumer rule 5](/release/v1/#consumer-rules) says. The CLI also does
-not fetch or verify the release bundles the list references, and it does
-not accept `--artifact` for a release list.
+For the list generated on 2026-10-21, it prints:
+
+```text
+ok: release list for packslip.dev sequence 1792590322 expires 2026-11-20T13:45:22.437645283Z signed by https://github.com/jdx/packslip/.github/workflows/packslip-releases.yml@refs/tags/v1.10.1 (sigstore-oidc) listing 14 release(s)
+  repository https://github.com/jdx/packslip (id 1356006409), owner https://github.com/jdx (id 216188)
+```
+
+This checks the list's signature and structure. Trust flags work as for a
+release, so a forge project's list needs none and a key-signed list takes
+`--pubkey release.pub`. The `ok:` line ends with `, N yanked` when the
+list withdraws releases. `--json` prints the verified list statement.
+
+`verify` reports `expires_at` and `sequence` but does not compare them
+with the current time or a list you accepted before; a consumer must
+([consumer rule 5](/release/v1/#consumer-rules)). It also fetches neither
+the list nor the release bundles it references, and refuses `--artifact`
+for a list. To publish a list, see
+[Manage release lists](/docs/release-lists/).
 
 ## Understand the result
 
-This example verifies the `github.com/jdx/hk` 2.3.0 bundle without
-`--artifact`:
-
-```sh
-packslip verify packslip.sigstore.json
-```
-
-The command prints a summary line, the signing repository, and one
-`requires` line for each artifact that declares requirements. The output
-below is trimmed to one of its seven `requires` lines:
+The hk 2.3.0 check from
+[Verify against the expected repository](#verify-against-the-expected-repository)
+prints this, trimmed to one of its seven `requires` lines (one per artifact
+that declares requirements):
 
 ```text
-ok: github.com/jdx/hk 2.3.0 published 2026-09-26T19:59:21.295096144Z signed by https://github.com/jdx/hk/.github/workflows/release.yml@refs/tags/v2.3.0 (sigstore-oidc) logged 2026-09-26T19:59:21Z (0 of 7 artifact(s) and 0 of 5 asset(s) checked, provenance linked, 7 resource(s))
+ok: github.com/jdx/hk 2.3.0 published 2026-09-26T19:59:21.295096144Z signed by https://github.com/jdx/hk/.github/workflows/release.yml@refs/tags/v2.3.0 (sigstore-oidc) logged 2026-09-26T19:59:21Z (1 of 7 artifact(s) and 0 of 5 asset(s) checked, provenance linked, 7 resource(s))
   repository https://github.com/jdx/hk (id 922514152), owner https://github.com/jdx (id 216188)
   requires hk-x86_64-pc-windows-msvc.zip: libs combase.dll vcruntime140.dll
 ```
 
-- In `0 of 7 artifact(s) and 0 of 5 asset(s) checked`, each first number
-  counts the files you passed with `--artifact` and each second number how
-  many the release lists. Here nothing was hashed; see
-  [Check every file you use](#check-every-file-you-use).
-- The `repository` line appears for a keyless bundle from GitHub Actions
-  or GitLab CI. It names the repository the signing run was based on,
-  with the forge's immutable IDs for it and its owner, and `--json`
-  reports them as `source_repository`. A repository keeps its ID when it
-  is renamed or transferred to another owner, so a consumer pins the ID
-  rather than the name or the owner; see
-  [Repository identity and renames](/release/v1/#repository-identity-and-renames).
-- Each `requires` line repeats what one artifact declares. `verify` does
-  not check it against this host.
+The summary line's parts:
 
-| A successful verification establishes… | It does not establish… |
+| Part | Meaning |
 | --- | --- |
-| The statement was signed by an identity or key allowed by the policy. | The signer or its build environment was uncompromised. |
-| The signer belongs to the project the statement names, or matches your flags. | The project and version are the ones you asked for. |
-| Supplied files match the signed digests. | The software is safe or free of vulnerabilities. |
-| A logged signature has verified transparency-log evidence. | This is the newest release or the vendor's recommended version. |
-| The statement contains provenance links, if reported. | The linked provenance has been fetched or verified. |
-| Each artifact's declared host requirements are reported. | This host meets them. |
+| `github.com/jdx/hk 2.3.0` | The statement's project and version. A prerelease adds `(prerelease)`, or `(beta prerelease)` when its prerelease part names a channel. |
+| `published …` | The publish time. |
+| `signed by … (sigstore-oidc)` | The certificate identity, or a key ID and `(sigstore-key)`, then `repackager-attested` if the statement declares a repackager made it. |
+| `logged …` or `unlogged` | When the transparency log recorded the signature, or `unlogged` for a bundle accepted with `--allow-unlogged`. |
+| `1 of 7 artifact(s) and 0 of 5 asset(s) checked` | Files passed with `--artifact`, of those listed; see [Check every file you use](#check-every-file-you-use). |
+| `provenance linked` | Every artifact links build provenance. |
+| `7 resource(s)` | Resources declared, such as completions and skills. |
 
-For the full account, see
+The `repository` line appears when the certificate records a source
+repository, as Fulcio's do for GitHub Actions and GitLab CI. It names the
+repository the signing run was based on, with the forge's immutable IDs
+for it and its owner (`source_repository` in `--json`).
+
+`verify` checks the signature, a keyless bundle's certificate chain, the
+transparency-log entry, and the statement's structure, including that its
+`identity` block names the actual signer. `--trusted-root` replaces the
+embedded Sigstore trust root behind the chain and log checks, for another
+deployment or a newer root; see
+[Trust-root lifetime and freshness](/docs/compatibility/#trust-root-lifetime-and-freshness).
+A bundle without a log entry fails unless you pass `--allow-unlogged`; see
+[Transparency log and unlogged bundles](/docs/trust/#transparency-log-and-unlogged-bundles).
+
+Success establishes what
+[What a verified release proves](/docs/trust/#what-a-verified-release-proves)
+lists. It does not establish that linked provenance was fetched or
+verified, or that this host meets the reported requirements. The
+specification's full account is
 [What a verified packslip proves](/release/v1/#what-a-verified-packslip-proves).
 
-`packslip show BUNDLE` prints the statement without verifying it. Use it
-for inspection, not as evidence of authenticity.
+`packslip verify` checks one bundle or list per run and keeps no state.
+An installer adds discovery, artifact selection, and remembered trust
+([Build an installer or mirror](/docs/installers/),
+[consumer rules](/release/v1/#consumer-rules)).
+The Rust crate offers the same verifier and selection rules
+([Use the Rust crate](/docs/rust/)).
 
 ## Troubleshoot a failure
 
-| Symptom | What to check |
+A failed verification prints `verification failed:` and the reason to
+standard error; a trust-flag conflict or unusable input prints `Error:`
+and the reason. Both exit 1; an invalid command line exits 2.
+`packslip pin` prints only the reason when it cannot fingerprint a
+verified release. Compare the expected identity, repository,
+file name, and digest with what the command reports, and never loosen your
+flags just to pass.
+
+| Error | What to check |
 | --- | --- |
-| `expected an identity starting with` or `identity mismatch: expected` | The release was signed outside the repository or identity you pinned. `--identity` is exact, including the tag ref, so a standing pin needs `--identity-prefix`. Do not loosen the pin just to make the command pass. If the repository was renamed or moved, see the next row. |
-| The repository was renamed or moved to another owner | With `--pin`, or a pin the library stored, nothing changes: the repository ID is the same, so releases from before and after the move verify, and the `ok:` and `repository` lines show the name each release was signed under. An `--identity-prefix` pin names the old location, so releases signed after the move fail with `expected an identity starting with`. Before you update the prefix, confirm the move: check that `packslip pin` prints the same fingerprint for a new release as for one you accepted before the move, or ask the project. |
-| `issuer mismatch: expected` | `--issuer` names a different OIDC issuer from the one that signed the release. Pass the issuer of the CI system that ran the release: `https://token.actions.githubusercontent.com` for GitHub Actions, `https://gitlab.com` for GitLab CI. |
-| `the release is signed by ps1_…, but the pin is ps1_…` | A different repository signed the release, often one that took a renamed or deleted repository's name. Find where the project went, and do not replace your pin with the fingerprint the message prints. |
-| `records no repository ID` | The certificate predates Fulcio's repository extensions or comes from another CI system. Pin the release with `--identity-prefix` and `--issuer` instead of `--pin`. |
-| `no identity to verify against` | The project is not named on GitHub or GitLab, so `verify` has no policy to derive. Pass `--pubkey` for a key-signed release, or identity flags for a keyless one. |
-| `an identity was pinned; pin the key instead` | The release is key-signed. Pass the vendor's public key with `--pubkey`. |
-| `a key was pinned; pin an identity instead` | The release is keyless. Pin its identity or its signer fingerprint instead of a key. |
-| `no transparency log entry` | Confirm with the vendor that it omitted logging on purpose before you pass `--allow-unlogged`. |
+| `expected an identity starting with` or `identity mismatch: expected` | The signer does not match the prefix or identity you named. A standing policy needs `--identity-prefix`, since `--identity` includes the tag ref. If another repository's reusable workflow signed, use no trust flags or `--source-repository` ([Require the source repository](#require-the-source-repository)). After a rename, see [Pin a signer with its fingerprint](#pin-a-signer-with-its-fingerprint). |
+| `must be signed from its repository`; from `packslip pin`, `the certificate's source repository is …, not`, `which is not a workflow of`, or `is signed through issuer` | Another repository or another CI issuer signed this forge project's release. Accept it only from a [repackager you trust](#verify-a-repackagers-release). |
+| `issuer mismatch: expected` | A different OIDC issuer signed. Pass the issuer of the CI system that ran the release. With no trust flags, the release came from outside its forge's CI; do not use it. |
+| `the certificate's source repository is …, expected` or `the certificate records no source repository` | Another repository signed, or the certificate does not say which. Check your `--source-repository` URL. |
+| `the release is signed by ps1_…, but the pin is ps1_…` | Another repository signed, often one that took a renamed or deleted repository's name. Find where the project went; never replace your pin with the printed fingerprint. |
+| `records no repository ID` | The certificate predates Fulcio's repository extensions or comes from another CI system. Use `--identity-prefix` and `--issuer`, not `--pin`. |
+| `no identity to verify against` | A domain project: pass identity flags, or `--pubkey` for a key-signed release, which `packslip pin` cannot fingerprint. |
+| `an identity was pinned; pin the key instead` or `a key was pinned; pin an identity instead` | `an identity was pinned`: the release is key-signed; pass `--pubkey` (`packslip pin` cannot fingerprint it). `a key was pinned`: it is keyless; use identity flags or `--pin`. |
+| `signature does not verify with the pinned key` | Another key signed, or the bundle changed after signing. Get the vendor's current key from its own channel. |
+| `no transparency log entry` | Pass `--allow-unlogged` only for a vendor that confirms it skipped logging on purpose. |
+| `statement declares` | The statement's `identity` block names a signer other than the actual one. Do not use the release. |
 | `not listed in the document` | Restore the file's original name. |
-| `sha256 is` or `size is`, followed by `document says` | Confirm the original file name and release version, then download it again from the vendor's URL. |
-| An installer reports an expired, rolled-back, or missing signed list | Obtain a current list and retain existing trust state while investigating. `verify` checks the list's signature and structure; the installer enforces freshness and remembered sequence. |
-
-## Build an installer or mirror
-
-`packslip verify` checks one document at a time and keeps no state between
-runs. If you are implementing an installer, add discovery, artifact
-selection, and remembered trust; see
-[Build an installer or mirror](/docs/installers/) and the
-[consumer rules](/release/v1/#consumer-rules).
-
-### Take the crate as a library
-
-The `packslip` crate's verifier, selection rules, and feature flags are
-covered in [Use the Rust library](/docs/installers/#use-the-rust-library).
+| `sha256 is` or `size is`, then `document says` | Check the file name and release version, then download again from the vendor's URL. |
+| `needs --issuer`, `pins the repository, not a workflow`, `accepts a signer outside the project's repository`, `pins a key`, or `a key has none` | The trust flags conflict or are incomplete; each flag's section above says what it needs and refuses. |
+| `a release list has no artifacts to check` or `a release list is not a release` | `verify --artifact` and `packslip pin` need a release's bundle. Verify the list without `--artifact`, then each release's bundle. |

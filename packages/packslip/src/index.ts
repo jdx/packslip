@@ -1,14 +1,10 @@
 import { createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { verify as sigstoreVerify, type Bundle, type VerifyOptions } from 'sigstore';
-import {
-  ArtifactNotFoundError,
-  BundleError,
-  DigestMismatchError,
-  IdentityError,
-  SignatureError,
-} from './errors.ts';
-import { readStatement, type ArtifactDigest, type VerifiedStatement } from './statement.ts';
+import { ArtifactNotFoundError, BundleError, DigestMismatchError, SignatureError } from './errors.ts';
+import { checkOptions, checkSigned } from './policy.ts';
+import { certificateSigner } from './signer.ts';
+import type { ArtifactDigest, VerifiedStatement } from './statement.ts';
 
 export * from './errors.ts';
 export {
@@ -21,12 +17,33 @@ export {
 } from './statement.ts';
 
 export interface VerifyReleaseOptions {
-  /** The exact certificate SAN URI, or a predicate that accepts it. */
+  /**
+   * The certificate SAN URI, or a predicate that accepts it. A github.com or
+   * gitlab.com repository's name in the URI matches in any case, as the forge
+   * resolves it; the rest, such as the workflow's path and ref, matches exactly.
+   */
   identity: string | ((identity: string) => boolean);
   /** The exact OIDC issuer of the certificate. */
   issuer: string;
-  /** Require the statement to name this project, such as `github.com/jdx/mise`. */
+  /**
+   * Require the statement to name this project, such as `github.com/jdx/mise`.
+   * For a `github.com` or `gitlab.com` project, also require the certificate to
+   * belong to that repository: issued through the forge's OIDC issuer, and
+   * recording the repository as its source repository (a reusable workflow of
+   * another repository may sign) or, when it records none, signed by a workflow
+   * of the repository. A github.com or gitlab.com repository's name matches in
+   * any case, as the forge resolves it.
+   */
   project?: string;
+  /**
+   * Accept a signer outside the repository a `github.com` or `gitlab.com`
+   * `project` names, such as a repackager's, as `packslip verify
+   * --allow-other-repository` does. The statement must still name `project`,
+   * which this option needs. `identity` and `issuer` alone then decide which
+   * signer is accepted, so name that signer there: a predicate that accepts
+   * any identity accepts any signer from the issuer.
+   */
+  allowOtherRepository?: boolean;
   /** Require the statement's `source.tag`, such as `v2026.10.11`. */
   tag?: string;
   /** Passed to sigstore: a TUF mirror, root, or cache, and retry or timeout settings. */
@@ -67,22 +84,24 @@ function parseBundle(bundleJson: string | Uint8Array | object): Bundle & {
   return value as never;
 }
 
-/** The certificate's SAN URI, from the leaf the bundle carries. */
-function signerFromSigstore(signer: { identity?: { subjectAlternativeName?: string; extensions?: { issuer?: string } } }) {
-  return { identity: signer.identity?.subjectAlternativeName, issuer: signer.identity?.extensions?.issuer };
-}
-
 /**
  * Verify a release bundle (the contents of `packslip.sigstore.json`) against a
  * signer the caller already trusts, and return its statement.
  *
  * The bundle must carry a Fulcio certificate and a transparency log entry that
- * sigstore's public-good instance accepts. Key-signed bundles are refused.
+ * sigstore's public-good instance accepts. Key-signed bundles are refused. Once
+ * the signature and the caller's identity and issuer check out, the statement
+ * must follow the release/v1 structural rules, and its `predicate.identity`
+ * must name the certificate's identity and issuer. Then come the optional
+ * `project` and `tag` checks, and, unless `allowOtherRepository` is set, the
+ * check that a GitHub or GitLab `project` was signed from its repository.
+ * Options that need another option throw a `TypeError` before verification.
  */
 export async function verifyRelease(
   bundleJson: string | Uint8Array | object,
   options: VerifyReleaseOptions,
 ): Promise<VerifiedStatement> {
+  checkOptions(options);
   const bundle = parseBundle(bundleJson);
 
   let signer;
@@ -93,25 +112,7 @@ export async function verifyRelease(
     throw new SignatureError(`sigstore refused the bundle: ${message}`, { cause });
   }
 
-  const { identity, issuer } = signerFromSigstore(signer);
-  if (identity === undefined || issuer === undefined) {
-    throw new IdentityError('the bundle is not signed with a certificate that names an identity and issuer');
-  }
-  const identityOk =
-    typeof options.identity === 'string' ? identity === options.identity : options.identity(identity);
-  if (!identityOk) {
-    throw new IdentityError(`the signing identity ${identity} is not the expected one`, { identity, issuer });
-  }
-  if (issuer !== options.issuer) {
-    throw new IdentityError(`the certificate issuer ${issuer} is not the expected ${options.issuer}`, {
-      identity,
-      issuer,
-    });
-  }
-
-  const statement = readStatement(bundle.dsseEnvelope.payload, options);
-
-  return { ...statement, signer: { identity, issuer } };
+  return checkSigned(certificateSigner(signer), bundle.dsseEnvelope.payload, options);
 }
 
 /** Look up an asset in a verified statement by file name. */

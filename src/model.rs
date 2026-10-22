@@ -27,7 +27,7 @@ pub const VERIFY_REPORT_SCHEMA_URL: &str = "https://packslip.dev/schema/verify-r
 pub type Extensions = serde_json::Map<String, serde_json::Value>;
 
 /// An in-toto statement carrying predicate `P`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct Envelope<P> {
     #[serde(rename = "_type")]
@@ -37,6 +37,112 @@ pub struct Envelope<P> {
     #[serde(rename = "predicateType")]
     pub predicate_type: String,
     pub predicate: P,
+}
+
+impl<'de, P: Deserialize<'de>> Deserialize<'de> for Envelope<P> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // The statement's own fields, read like every other object in it:
+        // see `object`.
+        #[derive(Deserialize)]
+        #[serde(bound = "P: Deserialize<'de>")]
+        struct Fields<P> {
+            #[serde(rename = "_type")]
+            kind: String,
+            #[serde(deserialize_with = "object::list")]
+            subject: Vec<Subject>,
+            #[serde(rename = "predicateType")]
+            predicate_type: String,
+            #[serde(deserialize_with = "object::one")]
+            predicate: P,
+        }
+        let Fields {
+            kind,
+            subject,
+            predicate_type,
+            predicate,
+        } = object::one(deserializer)?;
+        Ok(Envelope {
+            kind,
+            subject,
+            predicate_type,
+            predicate,
+        })
+    }
+}
+
+/// Reading a struct only from a JSON object. serde's derived
+/// `Deserialize` also accepts a struct's fields as an array in
+/// declaration order, so `"requires": []` would read as an empty
+/// `requires` and `"identity": ["sigstore-oidc", ...]` as an identity.
+/// The schemas type these fields as objects and no producer writes
+/// anything else, so every struct-typed field reads through here.
+mod object {
+    use serde::de::{Deserialize, Deserializer, Visitor};
+
+    /// Hands a struct's visitor to `deserialize_map`, which takes only an
+    /// object, where `deserialize_struct` also takes an array.
+    struct AsMap<D>(D);
+
+    impl<'de, D: Deserializer<'de>> Deserializer<'de> for AsMap<D> {
+        type Error = D::Error;
+
+        fn deserialize_struct<V: Visitor<'de>>(
+            self,
+            _name: &'static str,
+            _fields: &'static [&'static str],
+            visitor: V,
+        ) -> Result<V::Value, D::Error> {
+            self.0.deserialize_map(visitor)
+        }
+
+        fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, D::Error> {
+            self.0.deserialize_any(visitor)
+        }
+
+        fn is_human_readable(&self) -> bool {
+            self.0.is_human_readable()
+        }
+
+        serde::forward_to_deserialize_any! {
+            bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+            bytes byte_buf option unit unit_struct newtype_struct seq tuple
+            tuple_struct map enum identifier ignored_any
+        }
+    }
+
+    /// A struct `T` read only from an object.
+    struct Object<T>(T);
+
+    impl<'de, T: Deserialize<'de>> Deserialize<'de> for Object<T> {
+        fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            T::deserialize(AsMap(deserializer)).map(Object)
+        }
+    }
+
+    pub(super) fn one<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+    where
+        D: Deserializer<'de>,
+        T: Deserialize<'de>,
+    {
+        Object::deserialize(deserializer).map(|o| o.0)
+    }
+
+    pub(super) fn optional<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+    where
+        D: Deserializer<'de>,
+        T: Deserialize<'de>,
+    {
+        Ok(Option::<Object<T>>::deserialize(deserializer)?.map(|o| o.0))
+    }
+
+    pub(super) fn list<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+    where
+        D: Deserializer<'de>,
+        T: Deserialize<'de>,
+    {
+        let objects = Vec::<Object<T>>::deserialize(deserializer)?;
+        Ok(objects.into_iter().map(|o| o.0).collect())
+    }
 }
 
 /// A release: the packslip proper.
@@ -49,6 +155,7 @@ pub type ReleaseListStatement = Envelope<ReleaseList>;
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct Subject {
     pub name: String,
+    #[serde(deserialize_with = "object::one")]
     pub digest: Digest,
 }
 
@@ -153,24 +260,38 @@ pub struct Predicate {
     /// tag names this version: see [`tag_version`].
     #[cfg_attr(feature = "schema", schemars(regex(pattern = SEMVER_PATTERN)))]
     pub version: String,
-    /// RFC 3339 UTC.
+    /// RFC 3339. Publishers write UTC with `Z`; consumers accept any offset.
     #[cfg_attr(feature = "schema", schemars(extend("format" = "date-time")))]
     pub published_at: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "object::optional"
+    )]
     pub source: Option<Source>,
+    #[serde(deserialize_with = "object::list")]
     pub artifacts: Vec<Artifact>,
     /// What ships beyond the executables: completions, man pages, CLI
     /// specs, skills, desktop entries, icons, app bundles. Each names its
     /// kind and one source. See [`Resource`].
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "object::list"
+    )]
     pub resources: Vec<Resource>,
+    #[serde(deserialize_with = "identity")]
     pub identity: Identity,
     /// Who is making the claim: the vendor itself, or a repackager that
     /// checked the vendor's evidence and signed a document about it.
     #[serde(default, skip_serializing_if = "Attestor::is_vendor")]
     pub attested_by: Attestor,
     /// What a repackager checked before signing.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "object::list"
+    )]
     pub evidence: Vec<Evidence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes_url: Option<String>,
@@ -232,7 +353,15 @@ pub fn channel(version: &semver::Version) -> Option<&str> {
 /// followed by `/`, `-`, `_`, or `@`. `v1.2.3` names `1.2.3`;
 /// `oxlint_v1.0.0` names `1.0.0` for `github.com/oxc-project/oxc/oxlint`;
 /// `jq-1.7.1` names `1.7.1` for `github.com/jqlang/jq`; `cli/v1.9.4`
-/// names `1.9.4` for `github.com/biomejs/biome/crates/cli`.
+/// names `1.9.4` for `github.com/biomejs/biome/crates/cli`. The repository
+/// name matches in any ASCII case, as GitHub resolves it, so `jq-1.7.1`
+/// names `1.7.1` for `github.com/jqlang/JQ` too; a subpath matches exactly.
+///
+/// Each allowed prefix is tried in that order, then no prefix, and the
+/// first that leaves a version wins. A prefix that begins the tag without
+/// leaving one does not end the search: `tool-suite-1.2.0` names `1.2.0`
+/// for `github.com/acme/tool-suite/tool` through the repository name,
+/// though `tool-` begins it too.
 ///
 /// This is how a consumer lists a forge project's versions without
 /// downloading a bundle per release. The packslip inside the release is
@@ -240,32 +369,38 @@ pub fn channel(version: &semver::Version) -> Option<&str> {
 /// consumer refuses it. A tag that names no version is skipped, and the
 /// release is reachable only through a signed release list.
 pub fn tag_version(tag: &str, project: &str) -> Option<String> {
-    let mut rest = tag;
-    let mut prefixes: Vec<&str> = Vec::new();
+    // Each prefix, and whether it matches in any ASCII case.
+    let mut prefixes: Vec<(&str, bool)> = Vec::new();
     if let Some(sub) = repository_subpath(project) {
-        prefixes.push(sub);
+        prefixes.push((sub, false));
         if let Some(last) = sub.rsplit('/').next()
             && last != sub
         {
-            prefixes.push(last);
+            prefixes.push((last, false));
         }
     }
     if let Some((_, _, repo)) = repository(project) {
-        prefixes.push(repo);
+        prefixes.push((repo, true));
     }
-    'strip: for prefix in prefixes {
-        for sep in ['/', '-', '_', '@'] {
-            if let Some(after) = rest.strip_prefix(prefix)
-                && let Some(after) = after.strip_prefix(sep)
-            {
-                rest = after;
-                break 'strip;
-            }
-        }
+    fn strip<'a>(tag: &'a str, prefix: &str, any_case: bool) -> Option<&'a str> {
+        let head = tag.get(..prefix.len())?;
+        let same = if any_case {
+            head.eq_ignore_ascii_case(prefix)
+        } else {
+            head == prefix
+        };
+        same.then(|| &tag[prefix.len()..])
     }
-    let version = normalize_version(rest.strip_prefix('v').unwrap_or(rest))?;
-    parse_version(&version).ok()?;
-    Some(version)
+    let after_prefixes = prefixes.into_iter().flat_map(|(prefix, any_case)| {
+        ['/', '-', '_', '@']
+            .into_iter()
+            .filter_map(move |sep| strip(tag, prefix, any_case)?.strip_prefix(sep))
+    });
+    after_prefixes.chain([tag]).find_map(|rest| {
+        let version = normalize_version(rest.strip_prefix('v').unwrap_or(rest))?;
+        parse_version(&version).ok()?;
+        Some(version)
+    })
 }
 
 /// The semver spelling of a version a vendor writes loosely: a missing
@@ -551,7 +686,11 @@ pub struct Artifact {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bin: Vec<Bin>,
     /// What the artifact needs from the host.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "object::optional"
+    )]
     pub requires: Option<Requires>,
     /// URLs of build provenance statements (SLSA) for this artifact.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -598,6 +737,18 @@ impl Bin {
 
 fn file_name(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
+}
+
+/// The size directory of a path in the hicolor icon theme's layout,
+/// whose last four segments are `hicolor/SIZE/CONTEXT/FILE`: `48x48` for
+/// `share/icons/hicolor/48x48/apps/tool.png`. hicolor repeats an icon's
+/// file name in every size directory, so this is what tells the sizes
+/// apart.
+fn hicolor_size(path: &str) -> Option<&str> {
+    let mut parts = path.rsplit('/');
+    let (_file, _context, size, theme) =
+        (parts.next()?, parts.next()?, parts.next()?, parts.next()?);
+    (theme == "hicolor" && !size.is_empty()).then_some(size)
 }
 
 /// A command's name in the form the specification writes it: as typed at
@@ -669,7 +820,11 @@ pub struct Requires {
     /// Commands the executables run and cannot work without, by the bare
     /// name on PATH, with an optional minimum version. Declared by the
     /// vendor.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "object::list"
+    )]
     pub bin: Vec<RequiredBin>,
 }
 
@@ -712,9 +867,13 @@ pub struct RequiredBin {
     /// The name as the executable invokes it, bare: `java`, `python3`,
     /// `git`. No directory and no `.exe`.
     pub name: String,
-    /// The lowest version that works, compared numerically by dot-separated
-    /// components with missing components padded with zero: `17` means
-    /// 17.0.0 and later, including 21. Unrecognized spellings are unchecked.
+    /// The lowest version that works: an ASCII digit followed by ASCII
+    /// letters, digits, `.`, `-`, and `+`, such as `17` or `3.12`. A
+    /// document with any other spelling is invalid. Compared numerically by
+    /// dot-separated components with missing components padded with zero:
+    /// `17` means 17.0.0 and later, including 21. A valid minimum that is
+    /// not dot-separated numbers, such as `17-ea`, cannot be compared, so
+    /// the check is unknown and consumers warn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min: Option<String>,
 }
@@ -919,16 +1078,19 @@ impl Resource {
     /// completion (one per shell an `exec` entry generates), `format` and
     /// `bin` of a cli-spec, the name of a skill, the format of an SBOM,
     /// and for every other kind `bin`, if any, and the file name of the
-    /// source, or nothing for an `exec` source. A completion or man page
-    /// that leaves `bin` out is for the release's only executable; see
+    /// source, or nothing for an `exec` source. An icon whose source path
+    /// ends in the segments `hicolor/SIZE/CONTEXT/FILE` also has that
+    /// `SIZE`, so one icon at several sizes is several things.
+    /// An entry whose identity includes `bin` and that leaves it out is
+    /// for the release's only executable; see
     /// [`Resource::identities_for`], which [`select_resources`] uses.
     pub fn identities(&self) -> Vec<ResourceIdentity> {
         self.identities_for(None)
     }
 
     /// [`Resource::identities`] in a release whose only executable is
-    /// `sole_bin`: a completion or man page that leaves `bin` out is for
-    /// that one, and competes with an entry that names it.
+    /// `sole_bin`: an entry whose identity includes `bin` and that leaves
+    /// it out is for that one, and competes with an entry that names it.
     pub fn identities_for(&self, sole_bin: Option<&str>) -> Vec<ResourceIdentity> {
         // The bare name, as `sole_bin` and validation compare it, so an
         // entry naming the Windows form is for the same executable.
@@ -966,10 +1128,11 @@ impl Resource {
                     .as_deref()
                     .or(self.asset.as_deref())
                     .or(self.repo.as_deref());
-                match path {
-                    Some(path) => vec![id(vec![file_name(path)])],
-                    None => vec![id(vec![])],
-                }
+                let size = match self.kind.as_str() {
+                    "icon" => path.and_then(hicolor_size),
+                    _ => None,
+                };
+                vec![id(size.into_iter().chain(path.map(file_name)).collect())]
             }
         }
     }
@@ -1048,6 +1211,29 @@ impl Identity {
     }
 }
 
+/// Reads an `identity` object. A `sigstore-oidc` identity names both the
+/// certificate's subject and its issuer, as `packslip create` always
+/// writes them. Checked while reading rather than in `validate`, where it
+/// would need a new [`InvalidDocument`] variant and so a breaking change
+/// to the library's API.
+fn identity<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Identity, D::Error> {
+    use serde::de::Error as _;
+    let identity: Identity = object::one(deserializer)?;
+    if identity.scheme == Scheme::SigstoreOidc {
+        if identity.key_id.is_empty() {
+            return Err(D::Error::custom(
+                "a sigstore-oidc identity needs a key_id: the certificate's subject identity",
+            ));
+        }
+        if identity.issuer.as_deref().is_none_or(str::is_empty) {
+            return Err(D::Error::custom(
+                "a sigstore-oidc identity needs an issuer: the certificate's OIDC issuer",
+            ));
+        }
+    }
+    Ok(identity)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "kebab-case")]
@@ -1076,20 +1262,24 @@ impl std::fmt::Display for Scheme {
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct ReleaseList {
     pub project: String,
-    /// When the list was produced, RFC 3339 UTC.
+    /// When the list was produced, RFC 3339, written in UTC.
     pub generated_at: String,
-    /// After this the list is stale and a consumer refuses it, RFC 3339 UTC.
+    /// After this the list is stale and a consumer refuses it, RFC 3339,
+    /// written in UTC.
     pub expires_at: String,
     /// Increases with every list published; a consumer refuses a lower one
     /// than it has seen.
     pub sequence: u64,
+    #[serde(deserialize_with = "identity")]
     pub identity: Identity,
     /// The vendor's recommended default: an exact version in `releases`.
     /// Consumers still apply all eligibility checks before selecting it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "schema", schemars(regex(pattern = SEMVER_PATTERN)))]
     pub latest: Option<String>,
-    /// In any order; consumers rank by semver precedence.
+    /// In any order, and possibly empty; consumers rank by semver
+    /// precedence.
+    #[serde(deserialize_with = "object::list")]
     pub releases: Vec<ReleaseRef>,
     /// Vendor- or consumer-defined data about the list. See
     /// [`Extensions`].
@@ -1106,7 +1296,7 @@ pub struct ReleaseRef {
     /// `source.tag`, so a consumer can accept a request in either form.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tag: Option<String>,
-    /// RFC 3339 UTC, copied from the release's packslip.
+    /// RFC 3339, copied from the release's packslip and written in UTC.
     #[cfg_attr(feature = "schema", schemars(extend("format" = "date-time")))]
     pub published_at: String,
     /// URL of the release's `packslip.sigstore.json`. The statement's
@@ -1129,7 +1319,11 @@ pub struct ReleaseRef {
     /// What the list's publisher checked about this release beyond the
     /// vendor's own document: a scan, verified provenance. Empty for a
     /// vendor's own list.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "object::list"
+    )]
     pub evidence: Vec<Evidence>,
 }
 
@@ -1182,7 +1376,9 @@ pub enum InvalidDocument {
     Sha512(String),
     #[error("artifact {0:?} has an executable with an empty path")]
     BinPath(String),
-    #[error("artifact {0:?} has an executable name containing a slash: {1:?}")]
+    /// The artifact, and the executable's name, or its path when the name
+    /// is empty, since then the path is what identifies the entry.
+    #[error("artifact {0:?} has an executable {1:?} whose name is empty or contains a slash")]
     BinName(String, String),
     #[error(
         "artifact {0:?} has an executable name ending in .exe: {1:?}; a name is the command as typed, and the path carries the extension"
@@ -1274,6 +1470,8 @@ pub enum InvalidDocument {
     AppSource(String),
     #[error("sbom {0:?} needs a format (cyclonedx or spdx) and a static source, not exec")]
     Sbom(String),
+    /// Never returned: a release list may have no releases.
+    #[deprecated(note = "a release list may be empty, so validation never returns this")]
     #[error("at least one release is required")]
     NoReleases,
     #[error("release {0:?} appears more than once")]
@@ -1296,6 +1494,9 @@ fn check_extensions(owner: &str, extensions: &Extensions) -> Result<(), InvalidD
     Ok(())
 }
 
+/// A timestamp with any offset, read as an instant. jiff also reads some
+/// spellings outside RFC 3339, such as `20260901T120000Z`; accepting them
+/// is this implementation's leniency, not a rule other consumers follow.
 fn check_timestamp(field: &'static str, value: &str) -> Result<jiff::Timestamp, InvalidDocument> {
     value.parse().map_err(|_| InvalidDocument::Timestamp {
         field,
@@ -1415,6 +1616,15 @@ impl Statement {
             for bin in &artifact.bin {
                 if bin.path.is_empty() {
                     return Err(InvalidDocument::BinPath(artifact.name.clone()));
+                }
+                // Read without `.exe`, so a name that is only `.exe` and a
+                // path ending in `/` have no name either: nothing to put on
+                // PATH. The path then identifies the entry.
+                if bin.name.is_empty() {
+                    return Err(InvalidDocument::BinName(
+                        artifact.name.clone(),
+                        bin.path.clone(),
+                    ));
                 }
                 if bin.name.contains('/') {
                     return Err(InvalidDocument::BinName(
@@ -1722,9 +1932,6 @@ impl ReleaseListStatement {
         if expires <= generated {
             return Err(InvalidDocument::Expiry);
         }
-        if p.releases.is_empty() {
-            return Err(InvalidDocument::NoReleases);
-        }
         check_extensions("the release list", &p.extensions)?;
         let mut seen = std::collections::BTreeSet::new();
         for release in &p.releases {
@@ -1764,6 +1971,15 @@ impl ReleaseListStatement {
     pub fn schema() -> serde_json::Value {
         let mut schema = serde_json::to_value(schemars::schema_for!(ReleaseListStatement))
             .expect("schema serialises");
+        // A list always carries a subject, even with no releases, because
+        // sigstore binds the signature to a subject digest. `Envelope` is
+        // shared with release statements, so say so here.
+        if let Some(subject) = schema
+            .pointer_mut("/properties/subject")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            subject.insert("minItems".into(), 1.into());
+        }
         set_schema_id(&mut schema, RELEASES_SCHEMA_URL);
         schema
     }
@@ -1869,9 +2085,12 @@ pub fn github_list_path(project: &str) -> Option<String> {
     })
 }
 
-/// A project name is a lowercase DNS host, optionally followed by path
-/// segments: `github.com/jdx/mise`, `mise.jdx.dev`. No scheme, no empty
-/// or dot segments, no trailing slash, and the host has at least one dot.
+/// Whether `project` follows the specification's project-name grammar: a
+/// host of dot-separated labels, at least two, each of lowercase ASCII
+/// letters, digits, and `-` that neither starts nor ends with `-`, and no
+/// port; then optional `/`-separated path segments of ASCII letters,
+/// digits, `.`, `_`, `~`, and `-`, none empty, `.`, or `..`.
+/// `github.com/jdx/mise` and `mise.jdx.dev` are project names.
 pub fn valid_project(project: &str) -> bool {
     let mut parts = project.split('/');
     let Some(host) = parts.next() else {
@@ -2128,6 +2347,152 @@ mod tests {
         assert!(matches!(s.validate(), Err(InvalidDocument::BinName(_, _))));
         s.predicate.artifacts[0].bin = vec![Bin::named("", "a")];
         assert!(matches!(s.validate(), Err(InvalidDocument::BinPath(_))));
+        // A name with nothing to put on PATH: given empty, only `.exe`, or
+        // taken from a path that ends in a directory. The error names the
+        // entry by its path.
+        for bin in [
+            Bin::named("bin/tool", ""),
+            Bin::named("bin/tool", ".exe"),
+            Bin::new("bin/"),
+        ] {
+            s.predicate.artifacts[0].bin = vec![bin.clone()];
+            assert_eq!(
+                s.validate(),
+                Err(InvalidDocument::BinName(
+                    s.predicate.artifacts[0].name.clone(),
+                    bin.path.clone()
+                )),
+                "{bin:?}"
+            );
+        }
+        // An empty path is reported first, as the npm port reports it.
+        s.predicate.artifacts[0].bin = vec![Bin::named("", "")];
+        assert!(matches!(s.validate(), Err(InvalidDocument::BinPath(_))));
+    }
+
+    #[test]
+    fn objects_are_not_read_from_arrays() {
+        // serde's derive would read each of these from an array of the
+        // struct's field values; the specification types them as objects.
+        let mut full = sample();
+        full.predicate.artifacts[0].requires = Some(Requires {
+            bin: vec![RequiredBin::new("git")],
+            ..Requires::default()
+        });
+        full.predicate.resources = vec![Resource {
+            archive: Some("mise/man/man1/mise.1".into()),
+            ..Resource::new("man")
+        }];
+        full.predicate.evidence = vec![Evidence {
+            kind: "scan".into(),
+            detail: None,
+        }];
+        let doc = serde_json::to_value(&full).unwrap();
+        serde_json::from_value::<Statement>(doc.clone())
+            .unwrap()
+            .validate()
+            .unwrap();
+        let fields = |v: &serde_json::Value| match v {
+            serde_json::Value::Object(map) => {
+                serde_json::Value::Array(map.values().cloned().collect())
+            }
+            other => panic!("{other} is not an object"),
+        };
+        for pointer in [
+            "",
+            "/subject/0",
+            "/subject/0/digest",
+            "/predicate",
+            "/predicate/source",
+            "/predicate/artifacts/0",
+            "/predicate/artifacts/0/requires",
+            "/predicate/artifacts/0/requires/bin/0",
+            "/predicate/resources/0",
+            "/predicate/identity",
+            "/predicate/evidence/0",
+        ] {
+            let mut doc = doc.clone();
+            let target = doc.pointer_mut(pointer).unwrap();
+            *target = fields(target);
+            let err = serde_json::from_value::<Statement>(doc).unwrap_err();
+            assert!(
+                err.to_string().contains("invalid type: sequence"),
+                "{pointer}: {err}"
+            );
+        }
+        let mut doc = doc.clone();
+        doc["predicate"]["artifacts"][0]["requires"] = serde_json::json!([]);
+        assert!(serde_json::from_value::<Statement>(doc).is_err());
+
+        let mut list = sample_list();
+        list.predicate.releases[0].evidence = vec![Evidence {
+            kind: "scan".into(),
+            detail: None,
+        }];
+        let doc = serde_json::to_value(&list).unwrap();
+        serde_json::from_value::<ReleaseListStatement>(doc.clone())
+            .unwrap()
+            .validate()
+            .unwrap();
+        for pointer in [
+            "",
+            "/subject/0/digest",
+            "/predicate",
+            "/predicate/identity",
+            "/predicate/releases/0",
+            "/predicate/releases/0/evidence/0",
+        ] {
+            let mut doc = doc.clone();
+            let target = doc.pointer_mut(pointer).unwrap();
+            *target = fields(target);
+            let err = serde_json::from_value::<ReleaseListStatement>(doc).unwrap_err();
+            assert!(
+                err.to_string().contains("invalid type: sequence"),
+                "{pointer}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_keyless_identity_names_its_subject_and_issuer() {
+        let keyless = serde_json::json!({
+            "scheme": "sigstore-oidc",
+            "key_id": "https://github.com/jdx/mise/.github/workflows/release.yml@refs/tags/v2026.9.1",
+            "issuer": crate::sigstore::GITHUB_ISSUER,
+        });
+        let release = |identity: &serde_json::Value| {
+            let mut doc = serde_json::to_value(sample()).unwrap();
+            doc["predicate"]["identity"] = identity.clone();
+            serde_json::from_value::<Statement>(doc).map_err(|e| e.to_string())
+        };
+        let list = |identity: &serde_json::Value| {
+            let mut doc = serde_json::to_value(sample_list()).unwrap();
+            doc["predicate"]["identity"] = identity.clone();
+            serde_json::from_value::<ReleaseListStatement>(doc).map_err(|e| e.to_string())
+        };
+        release(&keyless).unwrap().validate().unwrap();
+        list(&keyless).unwrap().validate().unwrap();
+        for (field, value, error) in [
+            ("issuer", serde_json::Value::Null, "needs an issuer"),
+            ("issuer", serde_json::json!(""), "needs an issuer"),
+            ("key_id", serde_json::json!(""), "needs a key_id"),
+        ] {
+            let mut identity = keyless.clone();
+            identity[field] = value;
+            for got in [
+                release(&identity).unwrap_err(),
+                list(&identity).unwrap_err(),
+            ] {
+                assert!(got.contains(error), "{identity}: {got}");
+            }
+        }
+        let mut identity = keyless.clone();
+        identity.as_object_mut().unwrap().remove("issuer");
+        assert!(release(&identity).unwrap_err().contains("needs an issuer"));
+        // A key has no issuer.
+        let keyed = serde_json::json!({ "scheme": "sigstore-key", "key_id": "5A0A0B8B9C6D7E1F" });
+        release(&keyed).unwrap().validate().unwrap();
+        list(&keyed).unwrap().validate().unwrap();
     }
 
     #[test]
@@ -2556,6 +2921,16 @@ mod tests {
         let mut bad = sample_list();
         bad.predicate.expires_at = bad.predicate.generated_at.clone();
         assert_eq!(bad.validate(), Err(InvalidDocument::Expiry));
+        // Any offset is read, and timestamps compare as instants.
+        let mut offset = sample_list();
+        offset.predicate.expires_at = "2026-10-01T14:00:00+02:00".into();
+        offset.predicate.releases[0].published_at = "2026-09-01T08:00:00-04:00".into();
+        offset.validate().unwrap();
+        assert!(offset.is_current("2026-10-01T11:59:59Z".parse().unwrap()));
+        assert!(!offset.is_current("2026-10-01T12:00:00Z".parse().unwrap()));
+        // 13:00 at +02:00 is an hour before the list's 12:00 UTC.
+        offset.predicate.expires_at = "2026-09-01T13:00:00+02:00".into();
+        assert_eq!(offset.validate(), Err(InvalidDocument::Expiry));
         let mut bad = sample_list();
         bad.subject.clear();
         assert!(matches!(
@@ -2570,13 +2945,25 @@ mod tests {
             bad.validate(),
             Err(InvalidDocument::DuplicateRelease(_))
         ));
-        let mut bad = sample_list();
-        bad.predicate.releases.clear();
-        assert_eq!(bad.validate(), Err(InvalidDocument::NoReleases));
+        // A list may have no releases, and may carry a subject no entry
+        // names: every listed packslip needs a subject, not the reverse.
+        let mut empty = sample_list();
+        empty.predicate.releases.clear();
+        empty.validate().unwrap();
+        let mut extra = sample_list();
+        extra.subject.push(Subject {
+            name: "https://dl.example/extra.json".into(),
+            digest: Digest {
+                sha256: "d".repeat(64),
+                sha512: None,
+            },
+        });
+        extra.validate().unwrap();
         #[cfg(feature = "schema")]
         {
             let schema = ReleaseListStatement::schema();
             assert!(schema["properties"]["predicate"].is_object());
+            assert_eq!(schema["properties"]["subject"]["minItems"], 1);
         }
     }
 
@@ -2605,6 +2992,13 @@ mod tests {
             "github.com/../mise",
             ".github.com/x",
             "git hub.com/x",
+            "exa_mple.com/x",
+            "-example.com/x",
+            "example-.com/x",
+            "example.com:8443/x",
+            "github.com/jdx/a+b",
+            "github.com/jdx/tool@v1",
+            "example.com/@scope/pkg",
         ] {
             assert!(!valid_project(bad), "{bad}");
         }
@@ -2620,6 +3014,7 @@ mod tests {
         assert!(parsed.predicate.identity.pins_workflow());
 
         doc["predicate"]["identity"]["scheme"] = serde_json::json!("sigstore-oidc");
+        doc["predicate"]["identity"]["issuer"] = serde_json::json!(crate::sigstore::GITHUB_ISSUER);
         doc["predicate"]["identity"]["pin_workflow"] = serde_json::json!(false);
         let parsed: Statement = serde_json::from_value(doc.clone()).unwrap();
         parsed.validate().unwrap();
@@ -2731,6 +3126,11 @@ mod tests {
             ("v1.2.3-rc.1", "github.com/o/r", Some("1.2.3-rc.1")),
             ("jq-1.7.1", "github.com/jqlang/jq", Some("1.7.1")),
             ("jq@1.7.1", "github.com/jqlang/jq", Some("1.7.1")),
+            // The repository name matches in any case, as GitHub resolves
+            // it; a subpath matches exactly.
+            ("jq-1.7.1", "github.com/jqlang/JQ", Some("1.7.1")),
+            ("JQ-1.7.1", "github.com/jqlang/jq", Some("1.7.1")),
+            ("OXLINT_v1.0.0", "github.com/oxc-project/oxc/oxlint", None),
             (
                 "oxlint_v1.0.0",
                 "github.com/oxc-project/oxc/oxlint",
@@ -2745,6 +3145,24 @@ mod tests {
                 "crates/cli@1.9.4",
                 "github.com/biomejs/biome/crates/cli",
                 Some("1.9.4"),
+            ),
+            // A prefix that begins the tag but leaves no version does not
+            // end the search: the repository name is still tried.
+            (
+                "tool-suite-1.2.0",
+                "github.com/acme/tool-suite/tool",
+                Some("1.2.0"),
+            ),
+            (
+                "tool-v1.3.0",
+                "github.com/acme/tool-suite/tool",
+                Some("1.3.0"),
+            ),
+            ("x-y-1.0.0", "github.com/acme/x-y/x", Some("1.0.0")),
+            (
+                "tool-suite-nightly",
+                "github.com/acme/tool-suite/tool",
+                None,
             ),
             // Loose spellings normalize.
             ("v4.1", "github.com/Genymobile/scrcpy", Some("4.1.0")),
@@ -3184,6 +3602,74 @@ mod tests {
                 .archive
                 .as_deref(),
             Some("second")
+        );
+    }
+
+    #[test]
+    fn icons_at_different_hicolor_sizes_are_different_things() {
+        let icon = |path: &str| Resource {
+            archive: Some(path.into()),
+            ..Resource::new("icon")
+        };
+        let mut doc = sample();
+        doc.predicate.resources = vec![
+            Resource {
+                os: Some("linux".into()),
+                ..icon("share/icons/hicolor/512x512/apps/mise.png")
+            },
+            icon("share/icons/hicolor/48x48@2/apps/mise.png"),
+            icon("mise-v2026.9.1/share/icons/hicolor/scalable/apps/mise.png"),
+        ];
+        let artifact = &doc.predicate.artifacts[0];
+        assert_eq!(
+            select_resources(&doc, artifact),
+            doc.predicate.resources.iter().collect::<Vec<_>>(),
+            "each size is its own icon, so the Linux-scoped one hides neither of the others"
+        );
+        let sole_bin = doc.sole_bin().map(str::to_string);
+        let ids = |r: &Resource| -> Vec<String> {
+            r.identities_for(sole_bin.as_deref())
+                .iter()
+                .map(ToString::to_string)
+                .collect()
+        };
+        assert_eq!(
+            ids(&doc.predicate.resources[1]),
+            ["icon/mise/48x48@2/mise.png"]
+        );
+        assert_eq!(
+            ids(&doc.predicate.resources[2]),
+            ["icon/mise/scalable/mise.png"]
+        );
+
+        // Outside a hicolor size directory the identity is the file name
+        // alone, as it always was: the most specific entry hides the rest.
+        doc.predicate.resources = vec![
+            Resource {
+                os: Some("linux".into()),
+                ..icon("share/pixmaps/mise.png")
+            },
+            icon("icons/mise.png"),
+            icon("hicolor/mise.png"),
+            icon("share/icons/Adwaita/48x48/apps/mise.png"),
+            icon("share/icons/myhicolor/48x48/apps/mise.png"),
+        ];
+        let artifact = &doc.predicate.artifacts[0];
+        assert_eq!(
+            select_resources(&doc, artifact),
+            [&doc.predicate.resources[0]]
+        );
+        for resource in &doc.predicate.resources {
+            assert_eq!(ids(resource), ["icon/mise/mise.png"]);
+        }
+
+        // Only an icon's hicolor path counts toward its identity.
+        assert_eq!(
+            ids(&Resource {
+                archive: Some("share/icons/hicolor/48x48/apps/mise.png".into()),
+                ..Resource::new("desktop")
+            }),
+            ["desktop/mise/mise.png"]
         );
     }
 

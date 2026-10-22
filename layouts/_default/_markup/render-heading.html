@@ -1,0 +1,17 @@
+{{- /* Render a heading as Hugo does, plus an empty anchor for each old id
+     that data/legacy_anchors.toml moves to this heading on this page, so
+     links published with the old fragment still land here. */ -}}
+{{- $anchor := .Anchor -}}
+{{- $legacy := slice -}}
+{{- with index hugo.Data.legacy_anchors .Page.RelPermalink -}}
+  {{- range $old, $new := . -}}
+    {{- if eq $new $anchor }}{{ $legacy = $legacy | append $old }}{{ end -}}
+  {{- end -}}
+{{- end -}}
+<h{{ .Level }} id="{{ $anchor }}"
+  {{- range $name, $value := .Attributes }}
+    {{- if ne $name "id" }}{{ printf " %s=%q" $name (string $value) | safeHTMLAttr }}{{ end }}
+  {{- end }}>
+  {{- range $legacy }}<span id="{{ . }}" class="legacy-anchor"></span>{{ end -}}
+  {{- .Text -}}
+</h{{ .Level }}>

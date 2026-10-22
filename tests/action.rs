@@ -500,3 +500,200 @@ fn default_rejects_missing_lock_and_tampered_bytes_before_attesting() {
     assert!(!String::from_utf8_lossy(&tampered.stdout).contains("attested"));
     assert!(!String::from_utf8_lossy(&tampered.stdout).contains("invoked"));
 }
+
+/// Run the releases action's bundle and self-check steps for `project` in
+/// `repository`, with `inputs` set beyond the required ones and a mock CLI
+/// whose `verify --help` names --allow-other-repository when
+/// `knows_opt_out` is set. Return the arguments of each `packslip verify`
+/// they ran, or the stderr of the step that failed.
+fn run_releases_verify(
+    project: &str,
+    repository: &str,
+    inputs: &[(&str, &str)],
+    knows_opt_out: bool,
+) -> Result<Vec<Vec<String>>, String> {
+    let action: Value = serde_yaml_bw::from_str(include_str!("../releases/action.yml")).unwrap();
+    let steps = action["runs"]["steps"].as_sequence().unwrap();
+    let step = |name: &str| {
+        steps
+            .iter()
+            .find(|step| step["name"].as_str() == Some(name))
+            .unwrap()
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("lists/v1.0.0")).unwrap();
+    fs::write(root.join("lists/v1.0.0/packslip.sigstore.json"), "").unwrap();
+    let cli = root.join("packslip");
+    fs::write(
+        &cli,
+        r#"#!/usr/bin/env bash
+set -eu
+case "$1" in
+  verify)
+    if [ "${2:-}" = --help ]; then printf '%s\n' "$VERIFY_HELP"; exit 0; fi
+    printf '%s\0' "$@" >> "$CALL_LOG"
+    printf '\n' >> "$CALL_LOG"
+    ;;
+  show) printf '{"predicate":{"project":"%s"}}\n' "$STATEMENT_PROJECT" ;;
+  *) exit 88 ;;
+esac
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&cli, fs::Permissions::from_mode(0o755)).unwrap();
+    let help = if knows_opt_out {
+        "--pin <PIN>\n--allow-other-repository\n--allow-unlogged"
+    } else {
+        "--pin <PIN>\n--allow-unlogged"
+    };
+
+    for name in ["Verify the published bundles", "Verify what was written"] {
+        let step = step(name);
+        let mut command = Command::new("bash");
+        command
+            .args(["-eu", "-c", step["run"].as_str().unwrap()])
+            .current_dir(root)
+            .env_clear()
+            .env("RUNNER_TEMP", root)
+            .env("GITHUB_OUTPUT", root.join("outputs"))
+            .env("CALL_LOG", root.join("calls"))
+            .env("VERIFY_HELP", help)
+            .env("STATEMENT_PROJECT", project);
+        let mut paths = vec![root.to_path_buf()];
+        paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+        command.env("PATH", std::env::join_paths(paths).unwrap());
+        for (name, expression) in step["env"].as_mapping().unwrap() {
+            let expression = expression.as_str().unwrap();
+            let value = if let Some(input) = expression
+                .strip_prefix("${{ inputs.")
+                .and_then(|s| s.strip_suffix(" }}"))
+            {
+                match input {
+                    "project" => project.to_owned(),
+                    "dir" => "lists".to_owned(),
+                    "url-base" => "https://lists.example.com".to_owned(),
+                    _ => inputs
+                        .iter()
+                        .find(|(name, _)| *name == input)
+                        .map(|(_, value)| *value)
+                        .unwrap_or_else(|| {
+                            action["inputs"][input]["default"].as_str().unwrap_or("")
+                        })
+                        .to_owned(),
+                }
+            } else {
+                match expression {
+                    "${{ github.repository }}" => repository.to_owned(),
+                    "${{ github.server_url }}" => "https://github.com".to_owned(),
+                    "${{ steps.build.outputs.list }}" => "list.sigstore.json".to_owned(),
+                    other => panic!("unhandled action expression: {other}"),
+                }
+            };
+            command.env(name.as_str().unwrap(), value);
+        }
+        let output = command.output().unwrap();
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+        }
+    }
+    Ok(fs::read_to_string(root.join("calls"))
+        .unwrap()
+        .lines()
+        .map(|call| {
+            call.trim_end_matches('\0')
+                .split('\0')
+                .map(str::to_owned)
+                .collect()
+        })
+        .collect())
+}
+
+#[test]
+fn releases_action_passes_allow_other_repository_when_needed() {
+    let issuer = "https://token.actions.githubusercontent.com";
+    let pin = |prefix: &str, opt_out: bool| {
+        let mut pin = vec![
+            "--issuer".to_owned(),
+            issuer.to_owned(),
+            "--identity-prefix".to_owned(),
+            prefix.to_owned(),
+        ];
+        if opt_out {
+            pin.push("--allow-other-repository".to_owned());
+        }
+        pin
+    };
+    let calls = |pin: Vec<String>| {
+        ["lists/v1.0.0/packslip.sigstore.json", "list.sigstore.json"]
+            .map(|doc| [vec!["verify".to_owned(), doc.to_owned()], pin.clone()].concat())
+            .to_vec()
+    };
+    for (project, repository, opt_out) in [
+        // The project's own repository, or a tool in it: verify holds the
+        // signer to that repository as well as to the pin.
+        ("github.com/owner/tool", "owner/tool", false),
+        ("github.com/owner/tool/cli", "owner/tool", false),
+        // GitHub resolves the repository's name in any case.
+        ("github.com/Owner/Tool", "owner/tool", false),
+        // A project on its own domain names no repository.
+        ("tool.example.com", "owner/tool", false),
+        // A registry's or repackager's list for another repository's
+        // project: the pin alone says who signed.
+        ("github.com/vendor/tool", "registry/lists", true),
+        ("github.com/vendor/tool/cli", "registry/lists", true),
+        ("gitlab.com/group/sub/tool", "registry/lists", true),
+    ] {
+        assert_eq!(
+            run_releases_verify(project, repository, &[], true).unwrap(),
+            calls(pin(&format!("https://github.com/{repository}/"), opt_out)),
+            "{project} in {repository}"
+        );
+    }
+
+    // The project's own repository listing bundles another repository of
+    // its owner signed opts out with the input.
+    let owner_wide = [
+        ("identity-prefix", "https://github.com/owner/"),
+        ("allow-other-repository", "true"),
+    ];
+    assert_eq!(
+        run_releases_verify("github.com/owner/tool", "owner/tool", &owner_wide, true).unwrap(),
+        calls(pin("https://github.com/owner/", true))
+    );
+    assert_eq!(
+        run_releases_verify(
+            "github.com/owner/tool",
+            "owner/tool",
+            &owner_wide[..1],
+            true
+        )
+        .unwrap(),
+        calls(pin("https://github.com/owner/", false))
+    );
+    let err = run_releases_verify(
+        "github.com/owner/tool",
+        "owner/tool",
+        &[("allow-other-repository", "yes")],
+        true,
+    )
+    .unwrap_err();
+    assert!(
+        err.contains("allow-other-repository must be true or false, not \"yes\""),
+        "{err}"
+    );
+
+    // A packslip from before the flag takes the pin as the whole policy
+    // already, and would refuse a flag it does not know.
+    for (repository, inputs) in [("registry/lists", &[][..]), ("owner/tool", &owner_wide[..])] {
+        let calls =
+            run_releases_verify("github.com/owner/tool", repository, inputs, false).unwrap();
+        assert_eq!(calls.len(), 2);
+        for call in calls {
+            assert!(
+                !call.contains(&"--allow-other-repository".to_owned()),
+                "{call:?}"
+            );
+        }
+    }
+}

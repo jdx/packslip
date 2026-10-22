@@ -53,8 +53,9 @@ inputs:
     description: >
       Recommend this exact listed version for unconstrained latest
       requests. Give the version, such as 1.2.3, not the tag that yank and
-      security take. Empty leaves consumers to take the highest eligible
-      version.
+      security take. Empty leaves consumers to take GitHub's latest
+      release for a GitHub project, and the highest eligible version for
+      any other.
     required: false
     default: ""
   yank:
@@ -79,8 +80,9 @@ inputs:
     default: ""
   identity:
     description: >
-      An exact certificate identity, ref included, that every input bundle
-      and the output list must have, instead of identity-prefix. GitHub
+      A certificate identity, ref included, that every input bundle and
+      the output list must have, instead of identity-prefix; a GitHub or
+      GitLab repository name in it matches in any case. GitHub
       identities name the ref the workflow ran on
       (.../release.yml@refs/tags/v1.2.3), so bundles signed on different
       tags never share one. This suits only bundles and a list all signed
@@ -91,6 +93,18 @@ inputs:
     description: The OIDC issuer of that identity
     required: false
     default: https://token.actions.githubusercontent.com
+  allow-other-repository:
+    description: >
+      Set to true to accept bundles that match identity-prefix or identity
+      but were signed from a repository other than the project's, such as
+      an owner's shared build repository. Otherwise packslip verify also
+      requires a github.com or gitlab.com project's bundles to be signed
+      from the repository its name gives. The action lifts that on its own
+      when project names a repository other than the one running it, as a
+      registry's or repackager's list does, so set this only for the
+      project's own repository.
+    required: false
+    default: "false"
   out:
     description: >
       Where to write the list. Publish it at the project's well-known URL:
@@ -164,10 +178,15 @@ runs:
         IN_IDENTITY_PREFIX: ${{ inputs.identity-prefix }}
         IN_IDENTITY: ${{ inputs.identity }}
         IN_ISSUER: ${{ inputs.issuer }}
+        IN_ALLOW_OTHER_REPOSITORY: ${{ inputs.allow-other-repository }}
         REPO: ${{ github.repository }}
         SERVER: ${{ github.server_url }}
       run: |
         set -euo pipefail
+        case "$IN_ALLOW_OTHER_REPOSITORY" in
+          true | false) ;;
+          *) echo "allow-other-repository must be true or false, not \"$IN_ALLOW_OTHER_REPOSITORY\"" >&2; exit 1 ;;
+        esac
         dir="${IN_DIR%/}"
         base="${IN_URL_BASE%/}"
         name="${IN_BUNDLE:-packslip.sigstore.json}"
@@ -177,6 +196,30 @@ runs:
         else
           pin+=(--identity-prefix "${IN_IDENTITY_PREFIX:-${SERVER}/${REPO}/}")
         fi
+        # verify also requires a GitHub or GitLab project to be signed from
+        # the repository its name gives. A registry or repackager signs a
+        # list for another repository's project, and the bundles it names,
+        # from its own repository, so there the pin is the whole policy, as
+        # it is when allow-other-repository is set. A packslip from before
+        # --allow-other-repository treats it so anyway. GitHub resolves a
+        # repository's name in any case, so the names compare in lowercase.
+        lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+        case "$IN_PROJECT" in
+          github.com/*/*)
+            repo_path="${IN_PROJECT#github.com/}"
+            rest="${repo_path#*/}"
+            project_repo="https://github.com/${repo_path%%/*}/${rest%%/*}"
+            ;;
+          gitlab.com/*) project_repo="https://${IN_PROJECT}" ;;
+          *) project_repo="" ;;
+        esac
+        if [ "$IN_ALLOW_OTHER_REPOSITORY" = true ] ||
+          { [ -n "$project_repo" ] && [ "$(lower "$project_repo")" != "$(lower "${SERVER}/${REPO}")" ]; }; then
+          help="$(packslip verify --help 2>&1 || true)"
+          if [[ "$help" == *--allow-other-repository* ]]; then
+            pin+=(--allow-other-repository)
+          fi
+        fi
         printf '%s\n' "${pin[@]}" > "${RUNNER_TEMP}/packslip-pin"
         shopt -s nullglob
         releases=()
@@ -184,11 +227,8 @@ runs:
           tag="$(basename "$(dirname "$bundle")")"
           packslip verify "$bundle" "${pin[@]}"
           statement="$(packslip show "$bundle")"
-          project="$(jq -r .predicate.project <<< "$statement")"
-          if [ "$project" != "$IN_PROJECT" ]; then
-            echo "$bundle is for $project, not $IN_PROJECT" >&2
-            exit 1
-          fi
+          # packslip releases refuses a bundle for another project, with a
+          # GitHub or GitLab repository name matching in any case.
           # The directory names the URL, so it has to be the release's tag.
           source_tag="$(jq -r '.predicate.source.tag // empty' <<< "$statement")"
           if [ -n "$source_tag" ] && [ "$source_tag" != "$tag" ]; then
@@ -198,7 +238,7 @@ runs:
           releases+=("$base/$tag/$name=$bundle")
         done
         if [ "${#releases[@]}" -eq 0 ]; then
-          echo "no $name under $dir/<tag>/; a release list cannot be empty" >&2
+          echo "no $name under $dir/<tag>/; the action does not build an empty list" >&2
           exit 1
         fi
         printf '%s\n' "${releases[@]}" > "${RUNNER_TEMP}/packslip-releases"

@@ -12,7 +12,13 @@ keywords = ["sigstore", "in-toto", "release", "supply-chain", "minisign"]
 categories = ["command-line-utilities", "cryptography"]
 # Keep the actions and the scripts they run in the package so action-only
 # changes trigger a shared release; the site's Worker is not the crate's.
-exclude = ["content/", "data/", "layouts/", "static/", "hugo.toml", "cloudflare/", "go/", "packages/", "verifier/", "wrangler.jsonc", ".github/", "CHANGELOG.md", "RELEASING.md", "cliff.toml", "release-plz.toml", "action/release.json"]
+# Contributor and agent instructions and the site's social-image assets
+# are not the crate's either, so a change to them alone gets no changelog
+# line. README.md, docs/, and skills/ stay in. The patterns for those
+# files, from "/CONTRIBUTING.md" on, start with a slash that anchors each
+# at the package root, so "/assets/" leaves a nested skills/*/assets/
+# packaged.
+exclude = ["content/", "data/", "layouts/", "static/", "hugo.toml", "cloudflare/", "go/", "packages/", "verifier/", "wrangler.jsonc", ".github/", "CHANGELOG.md", "RELEASING.md", "cliff.toml", "release-plz.toml", "action/release.json", "/CONTRIBUTING.md", "/AGENTS.md", "/CLAUDE.md", "/.agents/", "/.claude/", "/.codex/", "/.entire/", "/assets/"]
 
 [package.metadata.docs.rs]
 all-features = true

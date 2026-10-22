@@ -111,8 +111,8 @@ impl Fingerprint {
     ///
     /// Read both only from a bundle that verified: the pin says which
     /// repository to expect, and the certificate is what proves it. This
-    /// does not check that the signer is a workflow of the repository the
-    /// statement names; [`crate::forge::check`] does.
+    /// does not check that the certificate's source repository is the one
+    /// the statement names; [`crate::forge::check_source`] does.
     pub fn verify(
         &self,
         issuer: Option<&str>,

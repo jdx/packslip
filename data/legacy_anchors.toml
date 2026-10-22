@@ -1,0 +1,148 @@
+# Fragment ids that pages published and later moved. Shipped binaries, the
+# man page, install scripts, vectors, and other sites keep linking the old
+# ids, so each one stays resolvable.
+#
+# Each table is a page URL. In it, write old-id = "new-id" when the section
+# moved on the same page: the heading with new-id also gets old-id. Write
+# old-id = "/docs/other/#new-id" when it moved to another page: static/docs.js
+# sends a reader who arrives with old-id to that URL. Moves to another page
+# need JavaScript; prefer a same-page entry when a heading on the old page
+# still covers the topic.
+#
+# scripts/check-docs.py fails when a page, a target, or a heading named here
+# does not exist, when an old id is still a real id on its page, or when a
+# link in the site uses an old id instead of its current location.
+
+# Renamed by #192 (b3134ff); 1.5.x binaries, conformance vectors, and the
+# older agent skill link them.
+["/release/v1/"]
+forge-identity = "repository-identity-and-renames"
+goal = "purpose-and-scope"
+names = "project-names"
+reusable-workflows = "workflow-pinning"
+scope-and-identity = "resource-scope"
+signer-fingerprint = "signer-fingerprints"
+the-file = "bundle-format"
+# Renamed or merged by the specification prose rewrite.
+resource-coverage = "source-types"
+schema-and-validation = "json-schemas"
+supplementary-signed-lists = "supplementary-release-lists"
+the-signed-list = "the-release-list"
+tooling = "reference-implementation"
+
+# The documentation rewrite renamed, merged, and moved the sections below.
+# Same-page entries keep a section's old id; cross-page entries follow the
+# material to the page that now explains it.
+["/"]
+what-a-packslip-does = "add-a-packslip-to-your-release-job"
+use-release-metadata-in-installers = "replace-your-install-script"
+what-verification-proves = "replace-your-install-script"
+
+["/docs/"]
+start-here = "start"
+publish-software = "publish"
+install-software-or-build-a-consumer = "install-and-verify"
+published-examples = "/docs/who-is-using-packslip/"
+terms-used-in-these-docs = "/docs/glossary/"
+
+["/docs/release-workflow/"]
+how-packslip-fits-a-release = "how-packslip-works"
+three-documents-with-different-jobs = "three-files-with-different-jobs"
+
+["/docs/getting-started/"]
+getting-started = "try-packslip-locally"
+
+["/docs/publishing/"]
+build-provenance = "/docs/actions/#build-provenance"
+what-the-action-does = "/docs/actions/#publish-action"
+
+# The agent skill through 1.5.x also linked manifest-keys here before #192
+# renamed that section.
+["/docs/describing-releases/"]
+artifact-configuration = "describe-your-artifacts"
+choose-flags-or-a-toml-manifest = "choose-flags-or-releasetoml"
+how-packslip-create-reads-file-names = "/docs/release-toml/#how-packslip-create-reads-file-names"
+how-releasetoml-and-flags-combine = "/docs/release-toml/#how-releasetoml-and-flags-combine"
+keys-in-releasetoml = "/docs/release-toml/#keys-in-releasetoml"
+manifest-keys = "/docs/release-toml/#keys-in-releasetoml"
+next-steps = "use-a-toml-manifest"
+paths-in-the-input-and-output = "/docs/release-toml/#how-paths-are-resolved"
+
+["/docs/resources/"]
+resources = "ship-resources"
+completions-and-cli-specifications = "ship-completions-and-cli-specifications"
+man-pages-and-sboms = "ship-man-pages-and-sboms"
+agent-skills-and-desktop-files = "ship-an-agent-skill"
+how-consumers-choose-among-entries = "offer-fallback-sources"
+
+["/docs/host-requirements/"]
+host-requirements = "declare-host-requirements"
+what-consumers-do-when-a-requirement-is-not-met = "plan-for-hosts-that-miss-a-requirement"
+
+["/docs/recipes/"]
+use-a-recipe-with-github-actions = "/docs/publishing/#use-releasetoml-with-the-action"
+add-build-provenance = "/docs/other-ci/#link-build-provenance"
+
+["/docs/release-lists/"]
+where-consumers-look-for-the-list = "decide-whether-you-need-a-list"
+a-supplementary-list-adds-to-github-discovery = "decide-whether-you-need-a-list"
+publish-or-trust-a-third-party-list = "publish-a-list-as-a-stamping-host"
+
+["/docs/self-hosting/"]
+sign-as-the-repository = "publish-the-signer"
+action-inputs = "/docs/actions/#release-list-action-inputs"
+move-a-github-project = "/docs/move-to-domain/"
+
+["/docs/bootstrap/"]
+install-a-tool-with-packslip = "bootstrap-a-tool"
+pin-the-bootstrapper-and-let-mise-float = "pin-the-bootstrapper-and-let-the-tool-float"
+trust-replacement-and-recovery = "require-signers-with-pin-files"
+bootstrap-mise-in-docker = "/docs/mise/#bootstrap-mise-in-docker"
+build-for-a-distribution = "/docs/distributions/#choose-a-build"
+publisher-adoption = "/docs/compatibility/#check-a-tools-handoff"
+
+["/docs/verifying/"]
+build-an-installer-or-mirror = "/docs/installers/"
+take-the-crate-as-a-library = "/docs/rust/"
+
+["/docs/mise/"]
+use-mises-packslip-backend = "install-a-tool"
+
+["/docs/installers/"]
+use-the-rust-library = "/docs/rust/"
+
+["/docs/verify-js/"]
+verify-a-release-from-javascript = "verify-from-javascript"
+what-it-refuses = "handle-a-failure"
+
+["/docs/libraries/"]
+use-the-go-and-npm-libraries = "choose-a-library"
+versions-and-releases = "match-versions-across-packages"
+publish-from-go = "/docs/go/"
+verify-from-nodejs = "/docs/verify-js/#install-the-package"
+
+["/docs/distributions/"]
+distribution-packages = "package-packslip-for-a-distribution"
+configure-ppa-and-copr-publication = "build-unsigned-source-packages"
+maintain-the-direct-repositories = "/docs/install/#install-with-apt-or-dnf"
+signed-apt-and-rpm-repositories = "/docs/install/#install-with-apt-or-dnf"
+
+["/docs/compatibility/"]
+installation-platforms-and-tool-handoff = "check-a-tools-handoff"
+
+["/docs/who-is-using-packslip/"]
+independent-publishers = "repackagers-and-third-party-builds"
+about-this-snapshot = "how-the-list-was-checked"
+
+# Ids the /cli/ page had before its rewrite: its title, the installation
+# section and task table that the homepage and the docs index linked, and the
+# headings of the generated overview of the top-level command, whose help and
+# version flags "Get help" now describes. Installation moved to its own page.
+["/cli/"]
+choose-a-task = "publish-a-release"
+flags = "get-help"
+get-help-and-completions = "set-up-shell-completions"
+install-the-cli = "/docs/install/"
+packslip = "get-help"
+packslip-cli = "cli-reference"
+subcommands = "publish-a-release"

@@ -9,12 +9,18 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tarfile
 import tempfile
 from urllib.parse import unquote, urljoin, urlsplit
 import zipfile
 
+# Keep scripts/__pycache__ out of the tree: CI fails on untracked files.
+sys.dont_write_bytecode = True
+import minitoml  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
+LEGACY_ANCHORS = "data/legacy_anchors.toml"
 
 
 class Page(HTMLParser):
@@ -22,6 +28,11 @@ class Page(HTMLParser):
         super().__init__()
         html = path.read_text()
         self.ids = set()
+        # Empty anchors the render-heading hook adds for old ids, and the
+        # cross-page moves layouts/partials/legacy-anchors.html embeds.
+        self.legacy = set()
+        self.moved = {}
+        self._moved = None
         self.references = []
         self.duplicates = []
         self.headings = 0
@@ -40,11 +51,76 @@ class Page(HTMLParser):
             if attrs["id"] in self.ids:
                 self.duplicates.append(attrs["id"])
             self.ids.add(attrs["id"])
+            if "legacy-anchor" in (attrs.get("class") or "").split():
+                self.legacy.add(attrs["id"])
+        if tag == "script" and "data-legacy-anchors" in attrs:
+            self._moved = []
         if tag == "h1":
             self.headings += 1
         for attr in ("href", "src"):
             if attrs.get(attr):
                 self.references.append(attrs[attr])
+
+    def handle_data(self, data):
+        if self._moved is not None:
+            self._moved.append(data)
+
+    def handle_endtag(self, tag):
+        if tag == "script" and self._moved is not None:
+            self.moved = json.loads("".join(self._moved))
+            self._moved = None
+
+
+def check_legacy_anchors(site, pages):
+    """Check data/legacy_anchors.toml against the built pages.
+
+    Returns each page's old ids, mapped to their current location so that
+    check_links can reject a link that still uses one, and the problems
+    found: a page, target, or heading that does not exist, an old id that is
+    still a real id, or a page whose embedded moves differ from the data file.
+    """
+    def page_at(url):
+        if not url.startswith("/") or url.startswith("//") or not url.endswith("/"):
+            return None, None
+        path = (site / url.lstrip("/") / "index.html").resolve()
+        return path, pages.get(path)
+
+    errors = []
+    moved = {}
+    legacy = {}
+    for url, entries in minitoml.load(ROOT / LEGACY_ANCHORS).items():
+        path, page = page_at(url)
+        if page is None or not isinstance(entries, dict):
+            errors.append(f"{LEGACY_ANCHORS}: [\"{url}\"] is not a page of the built site")
+            continue
+        real = page.ids - page.legacy
+        expected = {}
+        for old, new in entries.items():
+            where = f"{LEGACY_ANCHORS}: [\"{url}\"] {old}"
+            if not isinstance(new, str):
+                errors.append(f"{where}: expected a string")
+                continue
+            if new.startswith("/"):
+                expected[old] = new
+            legacy.setdefault(path, {})[old] = new if new.startswith("/") else f"{url}#{new}"
+            if old in real:
+                errors.append(f"{where}: {url} still has an element with id {old}")
+            elif new.startswith("/"):
+                target_url, _, fragment = new.partition("#")
+                _, target = page_at(target_url)
+                if target is None or (fragment and fragment not in target.ids - target.legacy):
+                    errors.append(f"{where}: target {new} does not exist")
+            elif new not in real:
+                errors.append(f"{where}: {url} has no id {new}")
+            elif old not in page.legacy:
+                errors.append(f"{where}: id {new} is not a heading, so it cannot carry {old}")
+        if page.moved != expected:
+            errors.append(f"{url}: embedded legacy anchors {page.moved} differ from {LEGACY_ANCHORS} {expected}")
+        moved[path] = expected
+    for path, page in pages.items():
+        if page.moved and path not in moved:
+            errors.append(f"{path}: embeds legacy anchors that {LEGACY_ANCHORS} does not list")
+    return legacy, errors
 
 
 def check_links(site):
@@ -55,10 +131,16 @@ def check_links(site):
     required = ["index.html", "release/v1/index.html", "releases/v1/index.html",
                 "docs/index.html", "cli/index.html"]
     required += [f"docs/{name}/index.html" for name in (
-        "release-workflow", "getting-started", "describing-releases", "resources", "host-requirements",
-        "recipes", "publishing", "verifying", "installers", "release-lists", "self-hosting", "mise", "verify-js", "verify-script", "libraries",
+        "release-workflow", "install", "getting-started", "trust", "comparison",
+        "publishing", "other-ci", "describing-releases", "resources", "host-requirements", "recipes",
+        "release-lists", "self-hosting", "move-to-domain", "go",
+        "bootstrap", "verifying", "verify-script", "mise",
+        "installers", "rust", "verify-js", "libraries", "distributions", "compatibility",
+        "actions", "release-toml", "glossary", "who-is-using-packslip",
     )]
     errors = [f"missing page: {name}" for name in required if not (site / name).is_file()]
+    legacy, legacy_errors = check_legacy_anchors(site, pages)
+    errors += legacy_errors
     count = 0
     for path, page in pages.items():
         if page.headings != 1 and not page.redirect:
@@ -79,8 +161,16 @@ def check_links(site):
             count += 1
             if not target.is_file():
                 errors.append(f"{path.relative_to(site)}: missing target {ref}")
-            elif url.fragment and target in pages and unquote(url.fragment) not in pages[target].ids:
-                errors.append(f"{path.relative_to(site)}: missing anchor {ref}")
+            elif url.fragment and target in pages:
+                # Old ids keep published links working; the site's own links
+                # use the current location.
+                fragment = unquote(url.fragment)
+                current = legacy.get(target, {}).get(fragment)
+                if current:
+                    errors.append(f"{path.relative_to(site)}: {ref} uses a legacy anchor; "
+                                  f"link to its current location {current}")
+                elif fragment not in pages[target].ids:
+                    errors.append(f"{path.relative_to(site)}: missing anchor {ref}")
     if errors:
         raise RuntimeError("\n".join(errors))
     print(f"Checked {len(pages)} pages and {count} local links, anchors, and assets.")

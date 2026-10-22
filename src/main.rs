@@ -43,10 +43,12 @@ pub fn bundle_name(project: &str) -> String {
 
 /// A signed release manifest: what shipped, and how to verify it
 ///
-/// A vendor runs `packslip create` in its release job to sign one document
-/// listing every artifact, then uploads it beside them. Consumers check that
-/// document, and the files they download, with `packslip verify` against a
-/// pinned identity, key, or signer fingerprint. See https://packslip.dev.
+/// A release job runs `packslip create` to sign a release bundle,
+/// packslip.sigstore.json, whose statement lists every artifact with its
+/// digest. Consumers check the bundle and the files they download with
+/// `packslip verify`, or install a tool from it with `packslip install`
+/// instead of running an installer script. Guides and the specification:
+/// https://packslip.dev
 #[derive(usage_rs::Cli)]
 #[usage(completion = true)]
 #[usage(
@@ -83,71 +85,161 @@ enum Commands {
     Version(Version),
 }
 
-/// Install an authenticated upstream release and export its declared commands
+/// Install a verified release and export its declared commands
 ///
-/// Keeps the complete installation tree. Does not run downloaded code, install
-/// dependencies, or edit shell configuration. Use --system for a shared install.
+/// Find the release a project's name leads to, and verify its release bundle
+/// and the artifact for this host. Unpack the archive into an installation
+/// tree and export the commands the release declares.
+///
+/// A github.com project must be signed from its repository. A keyless domain
+/// project's first install trusts the signer that its release list and
+/// release bundle declare, fetched over HTTPS from that host. A key-signed
+/// domain project needs --pubkey on its first install. Later installs hold
+/// the project to what was accepted, and a keyless domain project to the
+/// repository that signed it. A changed signer or signing repository,
+/// keyless signing replaced by a key, disabled workflow pinning, a
+/// repackager's bundle after the vendor's, or dropped provenance needs
+/// --accept-trust-change, and a github.com name that now resolves to a
+/// different repository ID is refused.
+/// --pin, --issuer, --identity, and --identity-prefix narrow what the
+/// project's name requires and never replace it. gitlab.com projects are
+/// refused.
+///
+/// The command runs no downloaded code, installs no dependencies, and edits
+/// no shell configuration. There is no uninstall, upgrade, or list. It prints
+/// the installed version and tree, `Signer fingerprint: ps1_...` for a
+/// github.com project, and each command. It warns when the project's release
+/// list withdraws the release it last installed. See
+/// https://packslip.dev/docs/bootstrap/
 #[cfg(feature = "install-cli")]
 #[derive(Debug, usage_rs::Args)]
+#[usage(
+    example(
+        "packslip install github.com/jdx/hk",
+        header = "Install the latest release of hk"
+    ),
+    example(
+        "packslip install github.com/jdx/hk \\\n        --version 2.8.0 \\\n        --pin ps1_snirenkjwr7m5ozgcufameodnm",
+        header = "Install hk 2.8.0 and require its signer fingerprint"
+    ),
+    example(
+        "packslip install mytool.example.com --pubkey release.pub",
+        header = "Install a key-signed domain project"
+    )
+)]
 struct Install {
-    /// Project name (owner/repo, github.com/owner/repo[/subpath], or host[/path])
+    /// The project: owner/repo, github.com/owner/repo[/TOOL], or a domain
+    /// project such as mytool.example.com[/PATH]
     #[usage(arg)]
     project: String,
-    /// Version, prefix, tag, or latest (the default)
+    /// Version, prefix, range, tag, or latest (the default)
+    ///
+    /// latest takes the vendor's recommended release, otherwise the highest
+    /// stable version. When that release carries no packslip for the project
+    /// or no artifact for this host, install tries the other stable releases
+    /// from the highest down. It warns about each release it skips. It examines
+    /// the first release in full, and stops before a later release would bring
+    /// the bundles it fetched past 32. A version (1.2.3 also matches
+    /// 1.2.3+build.5), prefix (1.2), or range (^1.2) skips only releases
+    /// without a packslip for the project; a tag tries only that release. Host
+    /// requirements never select a different release.
     #[usage(long)]
     version: Option<String>,
-    /// Install for all users; Unix root uses this scope by default
+    /// Install for all users
+    ///
+    /// The default for root on Unix. Conflicts with --user.
     #[usage(long)]
     system: bool,
-    /// Explicitly select the current user's installation scope
+    /// Install for the current user
+    ///
+    /// The default, except for root on Unix, which cannot select it. Conflicts
+    /// with --system.
     #[usage(long)]
     user: bool,
-    /// Replace conflicting command entries and unmarked installation directories
+    /// Replace conflicting command entries and installation directories
+    ///
+    /// An installation directory conflicts when it is unmarked or belongs to
+    /// another project. Verification and trust-change approval still apply.
     #[usage(long)]
     force: bool,
     /// Use only locally cached, authenticated metadata and artifacts
+    ///
+    /// Makes no network requests, and fails when something is not cached.
     #[usage(long)]
     offline: bool,
-    /// Override the installation tree without moving trust state
+    /// Install into this absolute directory instead of the scope's tree
+    ///
+    /// Trust state stays in the scope.
     #[usage(long, value_hint = usage_rs::ValueHint::DirPath)]
     install_dir: Option<PathBuf>,
-    /// Override the command directory without moving trust state
+    /// Export commands into this absolute directory instead of the scope's
+    ///
+    /// Trust state stays in the scope.
     #[usage(long, value_hint = usage_rs::ValueHint::DirPath)]
     bin_dir: Option<PathBuf>,
-    /// Select a publisher's named variant
+    /// Select the artifact the publisher marks with this variant name
     #[usage(long)]
     variant: Option<String>,
-    /// Allowed signer fingerprint (repeatable, alternatives within this option)
+    /// Require this signer fingerprint (ps1_...), as `packslip pin` prints it
+    /// (repeatable)
+    ///
+    /// A signer with any of the given fingerprints is accepted.
     #[usage(long)]
     pin: Vec<String>,
-    /// Ed25519 public key or path to its public-key file
+    /// Require this public key: a minisign .pub file, such as one from
+    /// `packslip keygen`, or its base64 line
+    ///
+    /// A key-signed domain project's first install needs it, and later
+    /// installs remember it. A github.com project refuses it, since it must
+    /// be signed keyless.
     #[usage(long)]
     pubkey: Option<String>,
-    /// Require this OIDC issuer as well as the project's default identity
+    /// Require this OIDC issuer
+    ///
+    /// It narrows what the project's name requires and never replaces it.
     #[usage(long)]
     issuer: Option<String>,
-    /// Require this exact certificate identity
+    /// Require this exact certificate identity, ref included, such as
+    /// https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3
+    ///
+    /// It narrows what the project's name requires and never replaces it. A
+    /// GitHub or GitLab repository name in it matches in any case; the rest
+    /// matches exactly.
     #[usage(long)]
     identity: Option<String>,
-    /// Require this certificate identity prefix
+    /// Require a certificate identity that starts with this prefix, such as
+    /// https://github.com/owner/repo/
+    ///
+    /// It narrows what the project's name requires and never replaces it. A
+    /// GitHub or GitLab repository name in it matches in any case; the rest
+    /// matches exactly.
     #[usage(long)]
     identity_prefix: Option<String>,
-    /// Approve one exact displayed trust-change proposal (repeatable)
+    /// Approve one trust change by the ID install printed for it (repeatable)
+    ///
+    /// The ID covers that exact release bundle or release list, the signer
+    /// accepted before, and the trust requirements in effect, so it approves
+    /// nothing else.
     #[usage(long)]
     accept_trust_change: Vec<String>,
-    /// Administrator-supplied Sigstore trusted_root.json instead of TUF refresh
+    /// Use this Sigstore trusted_root.json instead of refreshing the trust root
+    /// through TUF
     #[usage(long, value_hint = usage_rs::ValueHint::FilePath)]
     trusted_root: Option<PathBuf>,
-    /// Accept signatures without transparency-log entries for this attempt
+    /// Accept a bundle without a transparency log entry, such as one created
+    /// with --key --no-log
+    ///
+    /// Applies to this install only.
     #[usage(long)]
     allow_unlogged: bool,
-    /// Accept the selected artifact's incompatible host requirements
+    /// Install even when this host does not meet the selected artifact's host
+    /// requirements
     #[usage(long)]
     allow_incompatible_host: bool,
-    /// Local maximum expanded archive size in bytes
+    /// The most bytes an archive may expand to
     #[usage(long, default = "10737418240")]
     max_extracted_size: u64,
-    /// Local maximum archive entry count
+    /// The most entries an archive may hold
     #[usage(long, default = "100000")]
     max_archive_entries: u64,
 }
@@ -186,38 +278,57 @@ impl RunWith<BinInfo> for Install {
             .enable_all()
             .build()?;
         let report = runtime.block_on(packslip::install::run(request))?;
-        println!(
-            "Installed {} {} at {}",
-            report.project,
-            report.receipt.version,
-            report.receipt.tree.display()
-        );
-        if let Some(pin) = report.pin {
-            println!("Signer pin: {pin}");
-        }
-        for warning in report.warnings {
-            eprintln!("warning: {warning}");
-        }
-        for path in report.receipt.exports.keys() {
-            println!("Command: {}", path.display());
-        }
+        print_install_report(
+            report,
+            &mut std::io::stdout().lock(),
+            &mut std::io::stderr().lock(),
+        )?;
         Ok(())
     }
 }
 
+/// Print what `install` did: the release and its tree, the signer
+/// fingerprint of a keyless forge release, and each exported command, with
+/// any warnings on stderr.
+#[cfg(feature = "install-cli")]
+fn print_install_report(
+    report: packslip::install::Report,
+    out: &mut impl std::io::Write,
+    err: &mut impl std::io::Write,
+) -> std::io::Result<()> {
+    writeln!(
+        out,
+        "Installed {} {} at {}",
+        report.project,
+        report.receipt.version,
+        report.receipt.tree.display()
+    )?;
+    if let Some(fingerprint) = report.pin {
+        writeln!(out, "Signer fingerprint: {fingerprint}")?;
+    }
+    for warning in report.warnings {
+        writeln!(err, "warning: {warning}")?;
+    }
+    for path in report.receipt.exports.keys() {
+        writeln!(out, "Command: {}", path.display())?;
+    }
+    Ok(())
+}
+
 /// Generate a self-contained shell completion script
 ///
-/// Print the script to stdout. Redirect it to a file where your shell loads
-/// completions, as in the example. The script asks the installed packslip
-/// for candidates, so it needs no other tool and keeps working after
-/// upgrades.
+/// Print the script to stdout, and redirect it to a file your shell loads, as
+/// the example does for bash. The script asks the installed packslip for
+/// candidates, so it needs no other tool and keeps working after upgrades.
+/// The setup for each shell is at
+/// https://packslip.dev/cli/#set-up-shell-completions
 #[derive(Debug, usage_rs::Args)]
 #[usage(example(
     "mkdir -p ~/.local/share/bash-completion/completions && packslip completion bash > ~/.local/share/bash-completion/completions/packslip",
     header = "Install bash completions for your user"
 ))]
 struct Completion {
-    /// Shell to generate completions for
+    /// The shell to generate the script for
     #[usage(
         arg,
         choices("bash", "elvish", "zsh", "fish", "nu", "nushell", "powershell", "pwsh")
@@ -254,16 +365,18 @@ impl RunWith<BinInfo> for Usage {
     }
 }
 
-/// Generate an Ed25519 key pair for key-signed releases (sigstore-key)
+/// Generate an Ed25519 key pair for key-signed releases
 ///
-/// Write a new secret key to --out (a hex Ed25519 seed, mode 0600 on Unix)
-/// and its public key, in minisign format, to the same path with the
+/// Write a new secret key to --out, as a hex Ed25519 seed with mode 0600 on
+/// Unix, and its public key, in minisign format, to the same path with the
 /// extension replaced by .pub: --out release.key writes release.key and
-/// release.pub. Refuses to overwrite either file.
+/// release.pub. If either file exists, keygen writes nothing and fails.
 ///
-/// Sign with `packslip create --key release.key`, and give consumers
-/// release.pub for `packslip verify --pubkey`. Keep the secret key private.
-/// A CI job with an OIDC identity can sign keyless and needs no key.
+/// Sign with `packslip create --key release.key`, which uses the sigstore-key
+/// scheme. Give consumers release.pub for `packslip verify --pubkey` and
+/// `packslip install --pubkey`.
+/// Keep the secret key private. A CI job with an OIDC identity can sign
+/// keyless and needs no key. See https://packslip.dev/docs/other-ci/
 #[derive(Debug, usage_rs::Args)]
 #[usage(example(
     "packslip keygen --out release.key",
@@ -271,7 +384,10 @@ impl RunWith<BinInfo> for Usage {
 ))]
 #[cfg(feature = "sign")]
 struct Keygen {
-    /// Where to write the secret key
+    /// Where to write the secret key; the public key goes beside it, with a
+    /// .pub extension
+    ///
+    /// It must not end in .pub, since the public key takes that name.
     #[usage(short = 'o', long, default = "packslip.key")]
     out: PathBuf,
 }
@@ -329,20 +445,26 @@ impl RunWith<BinInfo> for Keygen {
 
 /// Print the JSON schema for a decoded release statement
 ///
-/// Use --releases for the release-list statement schema, or --report for the
-/// report `verify --json` prints for a release. The statement schemas describe
-/// the in-toto payload, not the enclosing sigstore bundle. All are published
-/// at https://packslip.dev/schema/release-v1.json,
+/// --releases prints the release list's statement schema instead, and
+/// --report the schema of the report `verify --json` prints for a release.
+/// The statement schemas describe the in-toto payload, not the Sigstore
+/// bundle around it.
+///
+/// The three schemas, in that order, are published at
+/// https://packslip.dev/schema/release-v1.json,
 /// https://packslip.dev/schema/releases-v1.json, and
 /// https://packslip.dev/schema/verify-report-v1.json.
+///
+/// See https://packslip.dev/release/v1/#json-schemas
 #[derive(Debug, usage_rs::Args)]
 #[cfg(feature = "schema")]
 struct Schema {
-    /// Print the releases/v1 list schema instead of the release/v1 statement
-    /// schema
+    /// Print the releases/v1 release list schema instead of the release/v1
+    /// statement schema
     #[usage(long)]
     releases: bool,
-    /// Print the schema of the report `verify --json` prints for a release
+    /// Print the schema of the report `verify --json` prints for a release;
+    /// wins over --releases
     #[usage(long)]
     report: bool,
 }
@@ -365,12 +487,25 @@ impl RunWith<BinInfo> for Schema {
 }
 
 /// Print the statement inside a bundle, without verifying it
+///
+/// Read a release bundle or release list and print its statement as indented
+/// JSON. Nothing is checked: the signer, the signature, and every field are
+/// unverified until `packslip verify` accepts the bundle.
+///
+/// A release bundle's fields are defined at
+/// https://packslip.dev/release/v1/#the-release-statement and a release
+/// list's at https://packslip.dev/release/v1/#the-release-list
 #[derive(Debug, usage_rs::Args)]
+#[usage(example(
+    "packslip show packslip.sigstore.json",
+    header = "Read the statement of a release bundle"
+))]
 struct Show {
     /// Release bundle or release list to read
     #[usage(value_hint = usage_rs::ValueHint::FilePath)]
     bundle: PathBuf,
-    /// Print the signed payload followed by a newline, without pretty-printing
+    /// Print the exact signed payload followed by a newline, without
+    /// pretty-printing
     #[usage(long)]
     raw: bool,
 }
@@ -468,24 +603,25 @@ fn signer(key: &Option<PathBuf>, sign: Option<SignWith>, no_log: bool) -> Result
     }
 }
 
-/// Create and sign a packslip for a release
+/// Create and sign the release bundle for a release
 ///
-/// Hash local artifacts, infer platforms and formats from file names, and
-/// write the signed bundle (packslip.sigstore.json, or a per-tool name for a
-/// GitHub monorepo tool; see --out) into the --out directory. Use --manifest
-/// for per-artifact paths, formats, requirements, and scoped resources. No
-/// files are uploaded.
+/// Hash local artifacts, infer each one's platform and format from its file
+/// name, and write the signed bundle into the --out directory. No files are
+/// uploaded. A release.toml passed with --manifest describes per-artifact
+/// executables, formats, requirements, and resources. Scalar flags, such as
+/// --project, --version, --url-base, and --source-repo, override its
+/// release-level values. --bin, --resource, --require, and --provenance add
+/// to its values. A file given as an argument that release.toml also lists
+/// keeps its release.toml entry.
 ///
-/// By default, create signs keyless with an OIDC token: the one in
-/// SIGSTORE_ID_TOKEN when it is set, or else the CI job's own identity,
-/// which on GitHub Actions needs the `id-token: write` permission. Pass --key
-/// to sign with a key from `packslip keygen` instead. Either way, the
-/// signature is recorded in the Rekor transparency log. With --key, --no-log
-/// skips the log entry, and consumers must then accept the release with
-/// --allow-unlogged.
+/// Signing is keyless by default, with the OIDC token in SIGSTORE_ID_TOKEN
+/// or else the CI job's own identity, which on GitHub Actions needs the
+/// `id-token: write` permission. --key signs with a key from `packslip
+/// keygen` instead. Every signature is recorded in the Rekor transparency
+/// log unless --no-log is passed with --key.
 ///
-/// The TOML manifest and more examples:
-/// https://packslip.dev/docs/describing-releases/
+/// See https://packslip.dev/docs/describing-releases/ for release.toml and
+/// more examples.
 #[derive(Debug, usage_rs::Args)]
 #[usage(
     example(
@@ -494,7 +630,7 @@ fn signer(key: &Option<PathBuf>, sign: Option<SignWith>, no_log: bool) -> Result
     ),
     example(
         "packslip create --manifest release.toml --out dist",
-        header = "Describe the artifacts in a TOML manifest"
+        header = "Describe the artifacts in release.toml"
     ),
     example(
         "packslip create \\\n        --project mytool.example.com \\\n        --version 1.2.3 \\\n        --bin mytool \\\n        --url-base https://mytool.example.com/v1.2.3 \\\n        --key release.key \\\n        --out dist \\\n        dist/mytool-1.2.3-linux-x64.tar.gz",
@@ -503,13 +639,17 @@ fn signer(key: &Option<PathBuf>, sign: Option<SignWith>, no_log: bool) -> Result
 )]
 #[cfg(all(feature = "create", feature = "manifest"))]
 struct Create {
-    /// The project's name: a host path such as github.com/owner/repo, or
-    /// github.com/owner/repo/tool for one tool of a monorepo. Required
-    /// unless the manifest sets it
+    /// The project's name, such as github.com/owner/repo; required unless
+    /// release.toml sets it
+    ///
+    /// Give github.com/owner/repo, github.com/owner/repo/TOOL for one tool of
+    /// a monorepo, gitlab.com/GROUP/PROJECT, or a domain project, one named
+    /// after a host, such as mytool.example.com[/PATH]. Consumers can verify a
+    /// gitlab.com project's releases, but `packslip install` refuses it.
     #[usage(long, help_heading = "Input")]
     project: Option<String>,
-    /// Semver release version, such as 1.2.3. Required unless the manifest
-    /// sets it
+    /// The release's semver version, such as 1.2.3; required unless
+    /// release.toml sets it
     #[usage(long, help_heading = "Input")]
     version: Option<String>,
     /// Files to describe, each as PATH, PATH:OS/ARCH[/LIBC], or PATH:any,
@@ -518,26 +658,35 @@ struct Create {
     /// Without a platform suffix, create infers the platform from the file
     /// name. Give any as ARCH or LIBC to leave that field out, for a build
     /// that runs on every architecture or C library; PATH:any leaves out OS,
-    /// ARCH, and LIBC. These files join the manifest's artifacts; a file the
-    /// manifest lists under the same file name keeps its manifest entry, and
-    /// its platform suffix and @VARIANT here are ignored.
+    /// ARCH, and LIBC. These files join release.toml's artifacts; a file it
+    /// lists under the same file name keeps its release.toml entry, and the
+    /// platform suffix and @VARIANT given here are ignored.
     artifacts: Vec<String>,
-    /// A TOML manifest giving per-artifact executables, formats,
-    /// requirements, platforms, and the release's resources; its artifact and
-    /// asset paths are relative to the working directory, not to the
-    /// manifest. See
+    /// A release.toml describing the artifacts and the release's resources
+    ///
+    /// It gives per-artifact executables, formats, requirements, and
+    /// platforms. Its artifact and asset paths are relative to the working
+    /// directory, not to the file. See
     /// https://packslip.dev/docs/describing-releases/#use-a-toml-manifest
+    /// and, for every key, https://packslip.dev/docs/release-toml/
     #[usage(short = 'm', long, value_hint = usage_rs::ValueHint::FilePath, help_heading = "Input")]
     manifest: Option<PathBuf>,
-    /// Sign with this secret key instead of a CI identity
+    /// Sign with this secret key, from `packslip keygen`, instead of signing
+    /// keyless
     #[usage(short = 'k', long, value_hint = usage_rs::ValueHint::FilePath, help_heading = "Signing")]
     key: Option<PathBuf>,
-    /// How to sign: oidc (keyless) or key (needs --key). Optional; inferred
-    /// from whether --key is given
+    /// How to sign: oidc (keyless, with the CI job's identity) or key (with
+    /// --key)
+    ///
+    /// Defaults to key when --key is given, else oidc. sigstore-oidc and
+    /// sigstore-key are other spellings. --sign key needs --key; --sign oidc
+    /// conflicts with --key.
     #[usage(long, help_heading = "Signing")]
     sign: Option<SignWith>,
-    /// With --key: do not record the signature in Rekor. Consumers must
-    /// then opt in with --allow-unlogged
+    /// Record no Rekor transparency log entry for a key signature
+    ///
+    /// Needs --key, since keyless signatures are always logged. Consumers
+    /// must then pass --allow-unlogged.
     #[usage(long, help_heading = "Signing")]
     no_log: bool,
     /// Directory to write the bundle into, created if missing
@@ -549,29 +698,37 @@ struct Create {
     #[usage(short = 'o', long, default = ".", help_heading = "Output")]
     out: PathBuf,
     /// Download URL prefix: each artifact and resource asset gets
-    /// PREFIX/FILENAME unless --url or the manifest gives its URL
+    /// PREFIX/FILENAME unless --url or release.toml gives its URL
     #[usage(long, help_heading = "Download URLs")]
     url_base: Option<String>,
-    /// Download URL for one artifact or resource asset, as FILENAME=URL (repeatable)
+    /// Download URL of one artifact or resource asset, as FILENAME=URL
+    /// (repeatable)
+    ///
+    /// A URL release.toml gives for an artifact wins.
     #[usage(long, help_heading = "Download URLs")]
     url: Vec<String>,
-    /// Format of one artifact whose name does not say, as FILENAME=FORMAT:
-    /// an archive (tar.xz, tar.gz, tar.zst, tar.bz2, tgz, tar, zip, 7z), a
-    /// single compressed executable (gz, xz, zst, bz2), an installer (deb,
-    /// rpm, dmg, pkg, msi, msix, exe, appimage), raw for a bare
-    /// executable, or a type of your own (repeatable)
+    /// Format of an artifact whose file name does not say, as FILENAME=FORMAT
+    /// (repeatable)
+    ///
+    /// FORMAT is an archive (tar.xz, tar.gz, tar.zst, tar.bz2, tgz, tar, zip,
+    /// 7z), a single compressed executable (gz, xz, zst, bz2), an installer
+    /// (deb, rpm, dmg, pkg, msi, msix, exe, appimage), raw for a bare
+    /// executable, or a type of your own. A format release.toml gives for an
+    /// artifact wins.
     #[usage(long, help_heading = "Artifacts")]
     format: Vec<String>,
     /// Source repository URL, such as https://github.com/owner/repo
     #[usage(long, help_heading = "Source")]
     source_repo: Option<String>,
-    /// Commit the release was built from; needs --source-repo or the
-    /// manifest's source.repo. A resource with a repo: source requires it,
-    /// and consumers read that file at this commit
+    /// Commit the release was built from; needs --source-repo or
+    /// release.toml's source.repo
+    ///
+    /// A resource with a repo: source requires it, and consumers read that
+    /// file at this commit.
     #[usage(long, help_heading = "Source")]
     commit: Option<String>,
-    /// Git tag of the release, such as v1.2.3; needs --source-repo or the
-    /// manifest's source.repo
+    /// Git tag of the release, such as v1.2.3; needs --source-repo or
+    /// release.toml's source.repo
     ///
     /// Consumers that list a GitHub project's versions from its tags do not
     /// see the release when the tag does not name the release's version,
@@ -580,23 +737,30 @@ struct Create {
     #[usage(long, help_heading = "Source")]
     tag: Option<String>,
     /// RFC 3339 publish time; defaults to now
+    ///
+    /// The statement records it in UTC: 2026-09-01T14:00:00+02:00 is written
+    /// as 2026-09-01T12:00:00Z.
     #[usage(long, help_heading = "Release metadata")]
     published_at: Option<String>,
     /// URL of the release notes
     #[usage(long, help_heading = "Release metadata")]
     notes_url: Option<String>,
-    /// Release-level extension as NAME=JSON, where NAME is who defines it
-    /// (a consumer such as mise, or a domain the vendor controls) and JSON
-    /// is its value. Example: 'example.com={"build_id":"20260901.3"}'
-    /// (repeatable)
+    /// Release-level extension as NAME=JSON (repeatable)
+    ///
+    /// NAME is who defines it, a consumer such as mise or a domain the vendor
+    /// controls, and JSON is its value, such as
+    /// 'example.com={"build_id":"20260901.3"}'. A flag replaces release.toml's
+    /// extension of the same NAME.
     #[usage(long, help_heading = "Release metadata")]
     extension: Vec<String>,
-    /// Executable in every artifact: a NAME to find inside each archive, a
-    /// PATH from the archive root, or NAME=PATH when the command's name
-    /// differs from the file's (repeatable)
+    /// Executable the artifacts hold, as NAME, PATH, or NAME=PATH (repeatable)
     ///
-    /// A PATH includes any top-level directory of the archive. For a bare
-    /// executable, give the command name it installs as.
+    /// A NAME is found inside each archive. A PATH starts at the archive root
+    /// and includes any top-level directory. NAME=PATH names the command when
+    /// it differs from the file's name. For a bare executable, give the
+    /// command name it installs as. These join release.toml's top-level bin;
+    /// an artifact that release.toml gives its own bin list keeps only that
+    /// list.
     #[usage(long, help_heading = "Artifacts")]
     bin: Vec<String>,
     /// Another file the release ships, such as a completion script, man
@@ -625,18 +789,23 @@ struct Create {
     /// the order of the ARTIFACTS arguments (repeatable)
     #[usage(long, help_heading = "Artifacts")]
     provenance: Vec<String>,
-    /// Who makes the claim: vendor (default) or repackager
+    /// Who makes the claim: vendor (the default) or repackager
     #[usage(long, help_heading = "Repackagers")]
     attested_by: Option<AttestorArg>,
-    /// What a repackager checked, as KIND or KIND=DETAIL (repeatable)
+    /// What a repackager checked, as KIND or KIND=DETAIL (repeatable); needs
+    /// --attested-by repackager
     #[usage(long, help_heading = "Repackagers")]
     evidence: Vec<String>,
-    /// Record only sha256, not sha512 as well
+    /// Record only sha256 digests; by default create records sha256 and
+    /// sha512
     #[usage(long, help_heading = "Artifacts")]
     no_sha512: bool,
     /// A command the executables need on PATH, as bin:NAME or bin:NAME@MIN
-    /// where MIN is the lowest version that works. Example: bin:java@17
     /// (repeatable)
+    ///
+    /// MIN is the lowest version that works, such as bin:java@17. Needs an
+    /// executable from --bin or release.toml. Each requirement is added to
+    /// every artifact that has an executable.
     #[usage(long, help_heading = "Artifacts")]
     require: Vec<String>,
     /// Do not read the executables for the shared libraries and C library
@@ -648,15 +817,16 @@ struct Create {
     /// give no C library is recorded as gnu, even a static build.
     #[usage(long, help_heading = "Artifacts")]
     no_libs: bool,
-    /// Keyless only: write identity.pin_workflow: false, so consumers hold
-    /// later releases to the signing repository instead of to the workflow
-    /// file that signs this one
+    /// Write identity.pin_workflow: false, so consumers do not hold later
+    /// releases to this release's workflow file
     ///
-    /// For a vendor whose releases are signed by more than one workflow of
-    /// its repository. The signer must still be a workflow of that
-    /// repository. A consumer that last accepted a release without the flag
-    /// refuses the first one with it until a person approves it. See
-    /// https://packslip.dev/release/v1/#workflow-pinning
+    /// Use it when more than one workflow of your repository signs releases;
+    /// consumers then hold later releases to the signing repository instead.
+    /// The signing certificate must still record that repository as its
+    /// source. A consumer that last accepted a release
+    /// without the flag refuses the first one with it until a person
+    /// approves it. Conflicts with --key, since only a keyless signer has a
+    /// workflow. See https://packslip.dev/release/v1/#workflow-pinning
     #[usage(long, help_heading = "Signing")]
     no_pin_workflow: bool,
 }
@@ -836,6 +1006,17 @@ fn parse_require(spec: &str) -> Result<RequiredBin> {
         Some(min) => RequiredBin::at_least(name, min),
         None => RequiredBin::new(name),
     })
+}
+
+/// A requirement minimum as the specification spells one: an ASCII digit,
+/// then ASCII letters, digits, `.`, `-`, and `+`. The library's validation
+/// holds `requires.bin[].min` to the same grammar.
+#[cfg(all(feature = "create", feature = "manifest"))]
+fn valid_minimum(value: &str) -> bool {
+    value.as_bytes().first().is_some_and(u8::is_ascii_digit)
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'+'))
 }
 
 /// `KIND` or `KIND=DETAIL`.
@@ -1036,6 +1217,28 @@ impl RunWith<BinInfo> for Create {
         }
         if artifacts.is_empty() {
             bail!("no artifacts: give files on the command line or list them in the manifest");
+        }
+        // Validation leaves a malformed os_min or glibc_min to the consumer
+        // as an unknown check, since packslips published before create
+        // checked them may carry one, but a new document holds both to the
+        // grammar of requires.bin[].min.
+        for artifact in &artifacts {
+            let Some(requires) = &artifact.requires else {
+                continue;
+            };
+            for (field, value) in [
+                ("os_min", &requires.os_min),
+                ("glibc_min", &requires.glibc_min),
+            ] {
+                if let Some(value) = value
+                    && !valid_minimum(value)
+                {
+                    bail!(
+                        "artifact {:?} requires {field} {value:?}; a minimum starts with a digit and holds only letters, digits, ., -, and +, as in 2.31 or 10.0.17763",
+                        file_name_of(artifact.path)
+                    );
+                }
+            }
         }
         for name in provenance.keys() {
             if !artifacts.iter().any(|a| file_name_of(a.path) == name) {
@@ -1243,48 +1446,52 @@ fn valid_platform(platform: &str) -> bool {
 /// Create and sign a project's release list
 ///
 /// Read local copies of released bundles and write a signed release list:
-/// each bundle's URL, digest, version, tag, and publish time, plus the
-/// list's sequence and expiry. The bundles are read, not verified, so give
-/// copies you trust. Repeat --release for every entry to keep; the command
-/// does not append to an earlier list or upload anything.
+/// each release's bundle URL, digest, version, tag, and publish time, plus
+/// the list's sequence and expiry. The bundles are read, not verified, so
+/// give copies you trust. The list holds exactly the --release entries
+/// given; the command does not append to an earlier list or upload
+/// anything. With no --release, the list is empty, which retires every entry
+/// an earlier list carried.
 ///
-/// Publish the list at https://HOST/.well-known/packslip/PATH.json for a
-/// project named HOST/PATH, or at https://HOST/.well-known/packslip.json for
-/// a project named after a bare host. github.com does not serve that path,
-/// so a github.com project commits the list to its default branch instead,
-/// as its supplementary list: .well-known/packslip.json, or
-/// .well-known/packslip/TOOL.json for a monorepo tool. See
-/// https://packslip.dev/docs/release-lists/.
+/// Publish it at https://HOST/.well-known/packslip/PATH.json for a project
+/// named HOST/PATH, or at https://HOST/.well-known/packslip.json for a bare
+/// host. A github.com project commits it to its default branch instead, as
+/// .well-known/packslip.json, or .well-known/packslip/TOOL.json for a
+/// monorepo tool. See https://packslip.dev/docs/release-lists/
 #[derive(Debug, usage_rs::Args)]
 #[usage(example(
-    "packslip releases \\\n        --project mytool.example.com \\\n        --sequence 1 --valid-for 30d \\\n        --latest 1.2.3 \\\n        --release https://mytool.example.com/v1.2.3/packslip.sigstore.json=releases/1.2.3/packslip.sigstore.json \\\n        --key release.key \\\n        --out site/.well-known/packslip.json",
-    header = "List one key-signed release of a self-hosted project"
+    "packslip releases \\\n        --project mytool.example.com \\\n        --sequence \"$(date +%s)\" --valid-for 30d \\\n        --latest 1.2.3 \\\n        --release https://mytool.example.com/v1.2.3/packslip.sigstore.json=releases/v1.2.3/packslip.sigstore.json \\\n        --key release.key \\\n        --out site/.well-known/packslip.json",
+    header = "List one key-signed release of a domain project"
 ))]
 #[cfg(all(feature = "create", feature = "manifest"))]
 struct Releases {
     /// The project's name, which every --release bundle must name
     #[usage(long)]
     project: String,
-    /// This list's sequence number, which increases with every list you
-    /// publish; consumers refuse a list whose sequence is lower than one
-    /// they have accepted
+    /// This list's sequence number; increase it with every list you publish
+    ///
+    /// Consumers refuse a list whose sequence is lower than one they accepted.
     #[usage(long)]
     sequence: u64,
-    /// Recommend this version for an unconstrained latest request, without
-    /// reordering versions; it must exactly match the version of a --release
-    /// entry
+    /// Recommend this version to consumers that ask for the latest release
+    ///
+    /// It must exactly match a --release entry's version. Versions are not
+    /// reordered.
     #[usage(long)]
     latest: Option<String>,
     /// How long until the list expires, as a number and a unit (s, m, h, d,
     /// or w), such as 30d
+    ///
+    /// Consumers refuse the list once it expires, so publish a new one, with
+    /// a higher --sequence, before then.
     #[usage(long, default = "30d")]
     valid_for: String,
-    /// RFC 3339 generation time; defaults to now
+    /// RFC 3339 generation time, written in UTC; defaults to now
     #[usage(long)]
     generated_at: Option<String>,
-    /// A released packslip as URL=PATH: where consumers fetch it, and the
-    /// local copy to read (repeatable)
-    #[usage(long, required = true)]
+    /// A released bundle as URL=PATH: where consumers fetch it, and the local
+    /// copy to read (repeatable; omit it for an empty list)
+    #[usage(long)]
     release: Vec<String>,
     /// Withdraw a listed release, as URL=REASON, with URL exactly as given
     /// to --release (repeatable)
@@ -1294,28 +1501,39 @@ struct Releases {
     /// (repeatable)
     #[usage(long)]
     security: Vec<String>,
-    /// What a publisher other than the vendor checked about a listed
-    /// release, as URL=KIND or URL=KIND=DETAIL (repeatable)
+    /// What a repackager checked about a listed release, as URL=KIND or
+    /// URL=KIND=DETAIL with URL as given to --release (repeatable)
     #[usage(long)]
     evidence: Vec<String>,
-    /// Sign with this secret key instead of a CI identity
+    /// Sign with this secret key, from `packslip keygen`, instead of signing
+    /// keyless
     #[usage(short = 'k', long, value_hint = usage_rs::ValueHint::FilePath, help_heading = "Signing")]
     key: Option<PathBuf>,
-    /// How to sign: oidc (keyless) or key (needs --key). Optional; inferred
-    /// from whether --key is given
+    /// How to sign: oidc (keyless, with the CI job's identity) or key (with
+    /// --key)
+    ///
+    /// Defaults to key when --key is given, else oidc. sigstore-oidc and
+    /// sigstore-key are other spellings. --sign key needs --key; --sign oidc
+    /// conflicts with --key.
     #[usage(long, help_heading = "Signing")]
     sign: Option<SignWith>,
-    /// With --key: do not record the signature in Rekor. Consumers must
-    /// then opt in with --allow-unlogged
+    /// Record no Rekor transparency log entry for a key signature
+    ///
+    /// Needs --key, since keyless signatures are always logged. Consumers
+    /// must then pass --allow-unlogged.
     #[usage(long, help_heading = "Signing")]
     no_log: bool,
-    /// Keyless only: write identity.pin_workflow: false into the list, as
-    /// `packslip create --no-pin-workflow` does for a release. See
+    /// Write identity.pin_workflow: false into the list, as `packslip create
+    /// --no-pin-workflow` does for a release
+    ///
+    /// Conflicts with --key, since only a keyless signer has a workflow. See
     /// https://packslip.dev/release/v1/#workflow-pinning
     #[usage(long, help_heading = "Signing")]
     no_pin_workflow: bool,
-    /// Where to write the list; consumers fetch it only from its .well-known
-    /// path, never under this default name
+    /// Where to write the list
+    ///
+    /// Consumers fetch a list only from its .well-known path, never under this
+    /// default name.
     #[usage(short = 'o', long, default = "packslip-releases.sigstore.json")]
     out: PathBuf,
 }
@@ -1415,32 +1633,27 @@ fn parse_duration(s: &str) -> Result<std::time::Duration> {
     Ok(std::time::Duration::from_secs(number * seconds))
 }
 
-/// Verify a packslip, or a release list, against a pinned identity or key
+/// Verify a release bundle or release list, and downloaded files
 ///
-/// Check the signature, log evidence, and statement structure. With
-/// --artifact, also check local files against signed digests and artifact
-/// sizes. Without it, only the bundle is checked. Nothing is downloaded:
-/// remote artifacts and linked provenance are not fetched.
+/// Check the signature, the transparency log entry, and the statement. Each
+/// --artifact file is checked against its signed digest, and an artifact
+/// also against its signed size. Nothing is downloaded.
 ///
-/// Choose what to trust. By default, the identity policy comes from the
-/// project the document claims, if it is on github.com or gitlab.com: that
-/// forge's issuer and any workflow of that repository. Any other project
-/// needs --pubkey or an identity flag. For a keyless release, --issuer with
-/// --identity-prefix (any workflow of a repository, such as
-/// https://github.com/owner/repo/) or --identity (one exact certificate
-/// identity, including its ref) replaces the derived policy, and only the
-/// flags you pass are checked: --issuer alone accepts any signer from that
-/// issuer. For a release signed through another repository's reusable
-/// workflow, --issuer with --source-repository requires the certificate to
-/// record that repository as its source, whichever workflow signed. For a
-/// key-signed release, pass --pubkey. --pin adds a check on top of the
-/// identity policy: the signing repository must have that signer
-/// fingerprint.
+/// A github.com or gitlab.com project's name sets the policy. It requires the
+/// forge's issuer and a certificate whose source repository is the project's,
+/// or, if the certificate records none, a signer that is a workflow of the
+/// project's repository. A reusable workflow the project calls may therefore
+/// sign. --issuer, --identity, and --identity-prefix narrow that policy and
+/// never replace it. A domain project, one named after a host such as
+/// mytool.example.com, has no such policy, so pass --issuer with --identity,
+/// --identity-prefix, --source-repository, or --pin. --pubkey verifies a
+/// key-signed release instead. --source-repository and --pin add checks, and
+/// --allow-other-repository accepts a signer outside the project's
+/// repository, such as a repackager's.
 ///
-/// Then match the verified project and version to what you meant to
-/// install. For a release list, the command does not check the expiry or
-/// compare the sequence with an earlier list. See
-/// https://packslip.dev/docs/verifying/.
+/// Then check that the verified project and version are the ones you meant.
+/// A release list's expiry and sequence are not checked. See
+/// https://packslip.dev/docs/verifying/
 #[derive(Debug, usage_rs::Args)]
 #[usage(
     exit_code(0, "The bundle verified, and every --artifact matched it"),
@@ -1450,12 +1663,16 @@ fn parse_duration(s: &str) -> Result<std::time::Duration> {
     ),
     exit_code(2, "The command line is invalid"),
     example(
-        "packslip verify packslip.sigstore.json \\\n        --identity-prefix https://github.com/owner/repo/ \\\n        --issuer https://token.actions.githubusercontent.com \\\n        --artifact mytool-1.2.3-linux-x64.tar.gz",
-        header = "Verify a GitHub release against its repository"
+        "packslip verify packslip.sigstore.json \\\n        --artifact mytool-1.2.3-linux-x64.tar.gz",
+        header = "Verify a GitHub release and a downloaded artifact"
     ),
     example(
         "packslip verify packslip.sigstore.json \\\n        --pin ps1_snirenkjwr7m5ozgcufameodnm \\\n        --artifact hk-x86_64-unknown-linux-gnu.tar.gz",
-        header = "Verify hk 2.3.0 against its signer fingerprint"
+        header = "Verify hk 2.8.0 against its signer fingerprint"
+    ),
+    example(
+        "packslip verify packslip.sigstore.json \\\n        --issuer https://token.actions.githubusercontent.com \\\n        --identity-prefix https://github.com/repackager/mytool/ \\\n        --allow-other-repository",
+        header = "Verify a release a repackager signed from its own repository"
     ),
     example(
         "packslip verify packslip.sigstore.json \\\n        --pubkey release.pub \\\n        --artifact mytool-1.2.3-linux-x64.tar.gz",
@@ -1466,49 +1683,73 @@ struct Verify {
     /// Local release bundle or signed release list to verify
     #[usage(value_hint = usage_rs::ValueHint::FilePath)]
     bundle: PathBuf,
-    /// The pinned public key file, or its base64 line
+    /// Require this public key: a minisign .pub file, such as one from
+    /// `packslip keygen`, or its base64 line
+    ///
+    /// Conflicts with every other trust flag except --allow-unlogged and
+    /// --trusted-root.
     #[usage(short = 'p', long, help_heading = "Trust")]
     pubkey: Option<String>,
-    /// The exact certificate identity a keyless signer must have, including
-    /// its ref, such as
+    /// Require this exact certificate identity, ref included, such as
     /// https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3
+    ///
+    /// A GitHub or GitLab repository name in it matches in any case; the rest
+    /// matches exactly. For a domain project, also pass --issuer, or a
+    /// certificate from any issuer is accepted.
     #[usage(long, help_heading = "Trust")]
     identity: Option<String>,
-    /// A prefix the certificate identity must start with, such as
+    /// Require a certificate identity that starts with this prefix, such as
     /// https://github.com/owner/repo/
+    ///
+    /// A GitHub or GitLab repository name in it matches in any case; the rest
+    /// matches exactly. For a domain project, also pass --issuer, or a
+    /// certificate from any issuer is accepted.
     #[usage(long, help_heading = "Trust")]
     identity_prefix: Option<String>,
-    /// The OIDC issuer a keyless signer must have; pass it with --identity
-    /// or --identity-prefix, since alone it accepts any signer from that
-    /// issuer
+    /// Require this OIDC issuer; for a domain project it alone accepts any
+    /// signer from that issuer, so pair it with --identity, --identity-prefix,
+    /// --source-repository, or --pin
     #[usage(long, help_heading = "Trust")]
     issuer: Option<String>,
-    /// The repository the signing certificate must record as its source,
-    /// such as https://github.com/owner/repo, whichever workflow signed;
-    /// for a release signed through another repository's reusable
-    /// workflow. Needs --issuer, and replaces --identity and
-    /// --identity-prefix
+    /// Require the certificate to record this source repository, such as
+    /// https://github.com/owner/repo, whichever workflow signed
+    ///
+    /// Unlike an identity prefix of the repository, it also matches a
+    /// reusable workflow of another repository that the repository's run
+    /// called. A GitHub or GitLab repository name in it matches in any case.
+    /// Needs --issuer. Conflicts with --identity and --identity-prefix.
     #[usage(long, help_heading = "Trust")]
     source_repository: Option<String>,
-    /// The signer fingerprint (ps1_...) the certificate's repository must
-    /// have, as `packslip pin` prints it
+    /// Require this signer fingerprint (ps1_...), as `packslip pin` prints it
     #[usage(long, help_heading = "Trust")]
     pin: Option<String>,
-    /// Accept a bundle without a transparency log entry
+    /// Accept a keyless signer outside the project's repository, such as a
+    /// repackager's
+    ///
+    /// For a github.com or gitlab.com project. Needs --issuer and one of
+    /// --identity, --identity-prefix, or --source-repository to name the
+    /// signer. Conflicts with --pubkey.
+    #[usage(long, help_heading = "Trust")]
+    allow_other_repository: bool,
+    /// Accept a bundle without a transparency log entry, such as one created
+    /// with --key --no-log
     #[usage(long, help_heading = "Trust")]
     allow_unlogged: bool,
-    /// A sigstore trusted_root.json to use instead of the embedded one
+    /// Use this Sigstore trusted_root.json instead of the embedded one
     #[usage(long, value_hint = usage_rs::ValueHint::FilePath, help_heading = "Trust")]
     trusted_root: Option<PathBuf>,
-    /// A downloaded artifact or resource asset to check against the bundle,
-    /// matched by file name, so keep the name it was published under
-    /// (repeatable)
+    /// A downloaded artifact or resource asset to check against its signed
+    /// digest, and an artifact also against its size (repeatable)
+    ///
+    /// Files are matched by name, so keep the name each was published under.
+    /// A release list has no artifacts to check.
     #[usage(short = 'a', long)]
     artifact: Vec<PathBuf>,
-    /// Print the verified report as JSON, including every listed artifact
-    /// with its signed digest and source_repository when the signing
-    /// certificate records one; for a release list, print the verified list
-    /// statement
+    /// Print the verified report as JSON
+    ///
+    /// The report lists every artifact with its signed digest, and
+    /// source_repository when the signing certificate records one. For a
+    /// release list, the verified list statement is printed instead.
     #[usage(short = 'J', long, help_heading = "Output")]
     json: bool,
 }
@@ -1543,6 +1784,21 @@ impl RunWith<BinInfo> for Verify {
             Some(pin) => Some(pin.parse().wrap_err("--pin")?),
             None => None,
         };
+        if self.allow_other_repository
+            && self.pubkey.is_none()
+            && self.identity.is_none()
+            && self.identity_prefix.is_none()
+            && self.source_repository.is_none()
+        {
+            bail!(
+                "--allow-other-repository accepts a signer outside the project's repository, so name that signer with --identity, --identity-prefix, or --source-repository"
+            );
+        }
+        if self.allow_other_repository && self.pubkey.is_none() && self.issuer.is_none() {
+            bail!(
+                "--allow-other-repository needs --issuer: a signer outside the project's repository is only as good as the issuer that vouches for it"
+            );
+        }
         let pin = match &self.pubkey {
             Some(text) => {
                 if self.identity.is_some()
@@ -1557,6 +1813,11 @@ impl RunWith<BinInfo> for Verify {
                 if want_fingerprint.is_some() {
                     bail!(
                         "--pin is the fingerprint of a certificate's repository; a key has none. Use --pubkey alone"
+                    );
+                }
+                if self.allow_other_repository {
+                    bail!(
+                        "--allow-other-repository is about a certificate's repository; a key has none. Use --pubkey alone"
                     );
                 }
                 let pubkey_text = if Path::new(text).is_file() {
@@ -1597,6 +1858,9 @@ impl RunWith<BinInfo> for Verify {
             trusted_root: &trusted_root,
         };
         let artifacts: Vec<&Path> = self.artifact.iter().map(PathBuf::as_path).collect();
+        // Only a certificate names a repository; a pinned key is the whole
+        // policy.
+        let keyless = matches!(pin, TrustPin::Identity(_));
 
         if is_list {
             if !artifacts.is_empty() {
@@ -1605,28 +1869,20 @@ impl RunWith<BinInfo> for Verify {
             return match packslip::verify_release_list(&text, &pin.as_trust(), options) {
                 Ok(verified) => {
                     let list = &verified.list.predicate;
-                    if let Err(err) = require_source_repository(
-                        self.source_repository.as_deref(),
-                        &text,
-                        &list.project,
-                        &verified.key_id,
-                        verified.issuer.as_deref(),
-                    ) {
-                        eprintln!("verification failed: {err}");
-                        std::process::exit(1)
-                    }
-                    if let Some(want) = &want_fingerprint {
-                        let source = sigstore::source_repository(&text)?;
-                        if let Err(err) = match_fingerprint(
-                            want,
+                    // The list verified, so its certificate's record of the
+                    // repository is the one Fulcio issued.
+                    let source = sigstore::source_repository(&text)?;
+                    if keyless
+                        && let Err(err) = self.check_signer(
                             &list.project,
                             &verified.key_id,
                             verified.issuer.as_deref(),
                             source.as_ref(),
-                        ) {
-                            eprintln!("verification failed: {err}");
-                            std::process::exit(1)
-                        }
+                            want_fingerprint.as_ref(),
+                        )
+                    {
+                        eprintln!("verification failed: {err}");
+                        std::process::exit(1)
                     }
                     if self.json {
                         println!("{}", serde_json::to_string_pretty(&verified.list)?);
@@ -1646,8 +1902,8 @@ impl RunWith<BinInfo> for Verify {
                                 String::new()
                             }
                         );
-                        if let Some(source) = sigstore::source_repository(&text)? {
-                            println!("  repository {}", describe_source(&source));
+                        if let Some(source) = &source {
+                            println!("  repository {}", describe_source(source));
                         }
                     }
                     Ok(())
@@ -1663,23 +1919,13 @@ impl RunWith<BinInfo> for Verify {
                 // The bundle verified, so its certificate's record of the
                 // repository is the one Fulcio issued.
                 let source = sigstore::source_repository(&text)?;
-                if let Err(err) = require_source_repository(
-                    self.source_repository.as_deref(),
-                    &text,
-                    &verified.project,
-                    &verified.key_id,
-                    verified.issuer.as_deref(),
-                ) {
-                    eprintln!("verification failed: {err}");
-                    std::process::exit(1)
-                }
-                if let Some(want) = &want_fingerprint
-                    && let Err(err) = match_fingerprint(
-                        want,
+                if keyless
+                    && let Err(err) = self.check_signer(
                         &verified.project,
                         &verified.key_id,
                         verified.issuer.as_deref(),
                         source.as_ref(),
+                        want_fingerprint.as_ref(),
                     )
                 {
                     eprintln!("verification failed: {err}");
@@ -1757,41 +2003,136 @@ impl RunWith<BinInfo> for Verify {
     }
 }
 
-/// Whether a verified bundle's certificate records `want` as its source
-/// repository, and that repository is the project the statement names.
+impl Verify {
+    /// What a verified keyless signer must still satisfy: the
+    /// --source-repository and --pin the user passed, and, unless
+    /// --allow-other-repository was passed, the repository a GitHub or
+    /// GitLab project names. The identity flags only narrow that
+    /// requirement, so --issuer alone cannot accept another repository's
+    /// signature for the project.
+    fn check_signer(
+        &self,
+        project: &str,
+        signer: &str,
+        issuer: Option<&str>,
+        source: Option<&sigstore::SourceRepository>,
+        want_fingerprint: Option<&Fingerprint>,
+    ) -> std::result::Result<(), String> {
+        if let Some(want) = self.source_repository.as_deref() {
+            require_source_repository(want, source)?;
+        }
+        if !self.allow_other_repository {
+            signed_from_project(project, signer, issuer, source, &self.narrowing_flags())?;
+        }
+        if let Some(want) = want_fingerprint {
+            want.verify(issuer, source).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// The trust flags passed that narrow a keyless signer's policy, for a
+    /// refusal to name.
+    fn narrowing_flags(&self) -> Vec<&'static str> {
+        [
+            ("--identity", self.identity.is_some()),
+            ("--identity-prefix", self.identity_prefix.is_some()),
+            ("--issuer", self.issuer.is_some()),
+            ("--source-repository", self.source_repository.is_some()),
+            ("--pin", self.pin.is_some()),
+        ]
+        .into_iter()
+        .filter_map(|(flag, passed)| passed.then_some(flag))
+        .collect()
+    }
+}
+
+/// Whether a verified certificate records `want` as its source repository.
 /// Fulcio derives the record from the forge's token, so it names the
-/// repository whose run signed, whichever workflow that was. A project that
-/// is not on a forge has no repository to compare, so only `want` is
-/// checked.
+/// repository whose run signed, whichever workflow that was. A GitHub or
+/// GitLab repository's name matches in any case, as the forge resolves it.
 fn require_source_repository(
-    want: Option<&str>,
-    bundle: &str,
+    want: &str,
+    source: Option<&sigstore::SourceRepository>,
+) -> std::result::Result<(), String> {
+    let wanted = |uri: &str| {
+        let want = want.trim_end_matches('/');
+        match (uri.strip_prefix("https://"), want.strip_prefix("https://")) {
+            (Some(uri), Some(want)) => packslip::forge::same_project(uri, want),
+            _ => uri == want,
+        }
+    };
+    match source {
+        Some(source) if wanted(&source.uri) => Ok(()),
+        Some(source) => Err(format!(
+            "the certificate's source repository is {}, expected {want}",
+            source.uri
+        )),
+        None => Err(format!(
+            "the certificate records no source repository, expected {want}"
+        )),
+    }
+}
+
+/// Whether a verified keyless signer belongs to the repository a GitHub or
+/// GitLab project names, as [`bound_to_project`] decides, with a refusal
+/// that says what was expected, what signed, and how to accept a signer
+/// outside the repository on purpose. `flags` are the trust flags passed.
+/// A project on any other host names no repository, so nothing is checked.
+fn signed_from_project(
     project: &str,
     signer: &str,
     issuer: Option<&str>,
+    source: Option<&sigstore::SourceRepository>,
+    flags: &[&str],
 ) -> std::result::Result<(), String> {
-    let Some(want) = want else { return Ok(()) };
-    let source = sigstore::source_repository(bundle).map_err(|e| e.to_string())?;
-    match &source {
-        Some(source) if source.uri == want.trim_end_matches('/') => {}
-        Some(source) => {
+    use packslip::forge::IdentityError;
+    let reason = match bound_to_project(project, signer, issuer, source) {
+        Ok(()) => return Ok(()),
+        Err(IdentityError::SourceMismatch {
+            certificate,
+            repository,
+        }) => format!(
+            "{project} must be signed from its repository {repository}, but {signer} signed it from {certificate}"
+        ),
+        Err(IdentityError::SignerOutsideRepository { repository, .. }) => format!(
+            "{project} must be signed from its repository {repository}, but {signer} is not one of its workflows"
+        ),
+        Err(IdentityError::Issuer {
+            expected, actual, ..
+        }) => format!(
+            "{project} must be signed from its repository through {expected}, but {signer} signed it through {}",
+            actual.as_deref().unwrap_or("no issuer")
+        ),
+        Err(err) => err.to_string(),
+    };
+    // The refusal names the flags passed, which do not lift the requirement.
+    let remedy = "accept a signer outside that repository, name it with --issuer and --identity, --identity-prefix, or --source-repository, and add --allow-other-repository";
+    let named = match flags {
+        [] => return Err(format!("{reason}. To {remedy}")),
+        [flag] => {
             return Err(format!(
-                "the certificate's source repository is {}, expected {want}",
-                source.uri
+                "{reason}. {flag} narrows what the project's name requires and does not replace it; to {remedy}"
             ));
         }
-        None => {
-            return Err(format!(
-                "the certificate records no source repository, expected {want}"
-            ));
-        }
-    }
-    bound_to_project(project, signer, issuer, source.as_ref())
+        [first, last] => format!("{first} and {last}"),
+        [init @ .., last] => format!("{}, and {last}", init.join(", ")),
+    };
+    Err(format!(
+        "{reason}. {named} narrow what the project's name requires and do not replace it; to {remedy}"
+    ))
 }
 
 /// The certificate policy for `project`: the identity flags, or else the
 /// one its GitHub or GitLab name implies. `missing` builds the error for a
 /// project that is on neither, so each command can name the flags it has.
+///
+/// The policy a forge name implies is the forge's issuer alone, the one
+/// `packslip install` verifies under ([`packslip::forge::policy`]): the
+/// certificate's source repository, not the workflow that signed, binds a
+/// release to the project, so a reusable workflow of another repository
+/// may sign. That policy accepts any signer the issuer vouches for, so the
+/// caller must then bind the release to the project with
+/// [`bound_to_project`], as `verify` and `pin` do for every keyless signer.
 fn identity_policy(
     identity: &Option<String>,
     identity_prefix: &Option<String>,
@@ -1805,7 +2146,12 @@ fn identity_policy(
         identity_prefix: identity_prefix.clone(),
     };
     if explicit.is_empty() {
-        Ok(Policy::for_project(project).ok_or_else(|| missing(project.into()))?)
+        // `Policy::for_project` decides which names are forge projects, as
+        // it does for install.
+        let derived = Policy::for_project(project)
+            .and_then(|_| packslip::forge::policy(project, project))
+            .ok_or_else(|| missing(project.into()))?;
+        Ok(derived)
     } else {
         Ok(explicit)
     }
@@ -1832,7 +2178,7 @@ fn bound_to_project(
     signer: &str,
     issuer: Option<&str>,
     source: Option<&sigstore::SourceRepository>,
-) -> std::result::Result<(), String> {
+) -> std::result::Result<(), packslip::forge::IdentityError> {
     match packslip::forge::check_source(
         &packslip::forge::Expected::new(project),
         project,
@@ -1841,7 +2187,7 @@ fn bound_to_project(
         source,
     ) {
         Ok(_) | Err(packslip::forge::IdentityError::NotForge(_)) => Ok(()),
-        Err(err) => Err(err.to_string()),
+        Err(err) => Err(err),
     }
 }
 
@@ -1857,7 +2203,7 @@ fn signer_fingerprint(
             "{project} is signed with a key, which has no signer fingerprint; pin it with --pubkey"
         ));
     }
-    bound_to_project(project, signer, issuer, source)?;
+    bound_to_project(project, signer, issuer, source).map_err(|e| e.to_string())?;
     Fingerprint::of_signer(issuer, source).ok_or_else(|| {
         format!(
             "{project}'s certificate records no repository ID, so it has no signer fingerprint; pin it with --identity-prefix and --issuer instead"
@@ -1865,38 +2211,26 @@ fn signer_fingerprint(
     })
 }
 
-/// Check a verified release's signer against a fingerprint.
-fn match_fingerprint(
-    want: &Fingerprint,
-    project: &str,
-    signer: &str,
-    issuer: Option<&str>,
-    source: Option<&sigstore::SourceRepository>,
-) -> std::result::Result<(), String> {
-    bound_to_project(project, signer, issuer, source)?;
-    want.verify(issuer, source).map_err(|e| e.to_string())
-}
-
-/// Print the signer fingerprint of a project's keyless releases
+/// Verify a release bundle and print its signer fingerprint
 ///
-/// Verify a release bundle and print the signer fingerprint of the
-/// repository that signed it: `ps1_` and 26 characters. Run it on a release
-/// you already trust, because it fingerprints whichever repository signed
-/// the bundle it is given. A vendor publishes the fingerprint where
-/// consumers can read it without trusting a release, such as its README,
-/// and a consumer records it in its own configuration, such as a Dockerfile
-/// or CI workflow; `packslip verify --pin` then checks a release against it.
+/// The fingerprint, `ps1_` and 26 characters, comes from the forge's issuer
+/// and the signing repository's ID. It stays the same when the repository is
+/// renamed, moves to another owner, or signs from another workflow; a
+/// repository that later takes the old name gets a different one. Only a
+/// keyless release whose certificate records a repository ID has one; a
+/// key-signed release is pinned by its key, with `packslip verify --pubkey`.
 ///
-/// The fingerprint is derived from the forge's issuer and repository ID
-/// only. It stays the same when the repository is renamed, moves to another
-/// owner, or signs from another workflow, and a repository that later takes
-/// over the old name gets a different one. Only keyless releases whose
-/// certificate records a repository ID have one; for a key-signed release,
-/// pin the key with `packslip verify --pubkey`.
+/// Verification works as in `packslip verify` without
+/// --allow-other-repository. A domain project, one named after a host such as
+/// mytool.example.com, has no policy from its name, so pass --issuer with
+/// --identity or --identity-prefix. Only the fingerprint is printed, on
+/// stdout.
 ///
-/// Verification works as in `packslip verify`: the policy is the one the
-/// project's name implies unless --identity, --identity-prefix, or --issuer
-/// replace it. See https://packslip.dev/docs/verifying/.
+/// Run pin on a release you already trust, since it fingerprints whichever
+/// repository signed. Publish the value where consumers can read it without
+/// trusting a release, such as a README, and check releases with `packslip
+/// verify --pin` or `packslip install --pin`. See
+/// https://packslip.dev/docs/verifying/#pin-a-signer-with-its-fingerprint
 #[derive(Debug, usage_rs::Args)]
 #[usage(
     exit_code(0, "Printed the signer fingerprint"),
@@ -1914,24 +2248,31 @@ struct Pin {
     /// Local release bundle to verify and fingerprint
     #[usage(value_hint = usage_rs::ValueHint::FilePath)]
     bundle: PathBuf,
-    /// The exact certificate identity a keyless signer must have, including
-    /// its ref, such as
+    /// Require this exact certificate identity, ref included, such as
     /// https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3
+    ///
+    /// A GitHub or GitLab repository name in it matches in any case; the rest
+    /// matches exactly. For a domain project, also pass --issuer, or a
+    /// certificate from any issuer is accepted.
     #[usage(long, help_heading = "Trust")]
     identity: Option<String>,
-    /// A prefix the certificate identity must start with, such as
+    /// Require a certificate identity that starts with this prefix, such as
     /// https://github.com/owner/repo/
+    ///
+    /// A GitHub or GitLab repository name in it matches in any case; the rest
+    /// matches exactly. For a domain project, also pass --issuer, or a
+    /// certificate from any issuer is accepted.
     #[usage(long, help_heading = "Trust")]
     identity_prefix: Option<String>,
-    /// The OIDC issuer a keyless signer must have; pass it with --identity
-    /// or --identity-prefix, since alone it accepts any signer from that
-    /// issuer
+    /// Require this OIDC issuer; for a domain project it alone accepts any
+    /// signer from that issuer, so pair it with --identity or
+    /// --identity-prefix
     #[usage(long, help_heading = "Trust")]
     issuer: Option<String>,
     /// Accept a bundle without a transparency log entry
     #[usage(long, help_heading = "Trust")]
     allow_unlogged: bool,
-    /// A sigstore trusted_root.json to use instead of the embedded one
+    /// Use this Sigstore trusted_root.json instead of the embedded one
     #[usage(long, value_hint = usage_rs::ValueHint::FilePath, help_heading = "Trust")]
     trusted_root: Option<PathBuf>,
 }
@@ -2204,5 +2545,394 @@ mod tests {
         );
         assert!(parse_duration("3x").is_err());
         assert!(parse_duration("").is_err());
+    }
+}
+
+/// What `verify` asks of a keyless signer once its signature checks out.
+/// A bundle signed from another repository needs a live Fulcio certificate,
+/// so these cases take hk 2.3.0's real certificate and put it to a statement
+/// naming another project, or describe a certificate without one.
+#[cfg(test)]
+mod signer_tests {
+    use super::*;
+    use packslip::sigstore::{GITHUB_ISSUER, SourceRepository};
+
+    const HK: &str = include_str!("../tests/fixtures/hk-v2.3.0.sigstore.json");
+    const HK_SIGNER: &str =
+        "https://github.com/jdx/hk/.github/workflows/release.yml@refs/tags/v2.3.0";
+    const HK_PIN: &str = "ps1_snirenkjwr7m5ozgcufameodnm";
+
+    /// `packslip verify BUNDLE --issuer GITHUB_ISSUER` with the given
+    /// --source-repository and --allow-other-repository.
+    fn issuer_alone(source_repository: Option<&str>, allow_other_repository: bool) -> Verify {
+        Verify {
+            bundle: PathBuf::from("packslip.sigstore.json"),
+            pubkey: None,
+            identity: None,
+            identity_prefix: None,
+            issuer: Some(GITHUB_ISSUER.into()),
+            source_repository: source_repository.map(str::to_string),
+            pin: None,
+            allow_other_repository,
+            allow_unlogged: false,
+            trusted_root: None,
+            artifact: Vec::new(),
+            json: false,
+        }
+    }
+
+    /// `packslip verify BUNDLE` with no trust flags.
+    fn no_flags() -> Verify {
+        Verify {
+            issuer: None,
+            ..issuer_alone(None, false)
+        }
+    }
+
+    /// The end of a refusal: how to accept a signer outside the repository.
+    const REMEDY: &str = "accept a signer outside that repository, name it with --issuer and --identity, --identity-prefix, or --source-repository, and add --allow-other-repository";
+
+    /// hk 2.3.0 verified under the policy --issuer alone builds, which pins
+    /// no workflow: its signer, issuer, and source repository.
+    fn hk_under_issuer_alone() -> (String, Option<String>, Option<SourceRepository>) {
+        let policy = identity_policy(
+            &None,
+            &None,
+            &Some(GITHUB_ISSUER.into()),
+            "github.com/jdx/hk",
+            sigstore::Error::NoPolicy,
+        )
+        .unwrap();
+        assert_eq!(policy.identity_prefix, None);
+        let root = sigstore::trusted_root(None).unwrap();
+        let options = Options {
+            require_log: true,
+            trusted_root: &root,
+        };
+        let verified = packslip::verify(HK, &Trust::Identity(&policy), options, &[]).unwrap();
+        assert_eq!(verified.key_id, HK_SIGNER);
+        let source = sigstore::source_repository(HK).unwrap();
+        (verified.key_id, verified.issuer, source)
+    }
+
+    #[test]
+    fn issuer_alone_accepts_only_the_forge_projects_repository() {
+        let (signer, issuer, source) = hk_under_issuer_alone();
+        let check = |project: &str| {
+            issuer_alone(None, false).check_signer(
+                project,
+                &signer,
+                issuer.as_deref(),
+                source.as_ref(),
+                None,
+            )
+        };
+        check("github.com/jdx/hk").unwrap();
+        check("github.com/jdx/hk/tool").unwrap();
+
+        // The same signature on a statement that names another project, as
+        // any GitHub repository's workflow can sign one.
+        let err = check("github.com/jdx/mise").unwrap_err();
+        assert_eq!(
+            err,
+            format!(
+                "github.com/jdx/mise must be signed from its repository https://github.com/jdx/mise, but {HK_SIGNER} signed it from https://github.com/jdx/hk. --issuer narrows what the project's name requires and does not replace it; to {REMEDY}"
+            )
+        );
+
+        // A project on the other forge has another issuer as well.
+        let err = check("gitlab.com/jdx/hk").unwrap_err();
+        assert!(
+            err.starts_with(&format!(
+                "gitlab.com/jdx/hk must be signed from its repository through https://gitlab.com, but {HK_SIGNER} signed it through {GITHUB_ISSUER}. "
+            )),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn without_flags_another_repositorys_certificate_is_refused() {
+        // `packslip verify BUNDLE` and `packslip pin BUNDLE` with no trust
+        // flags verify under the forge's issuer alone, which names no
+        // workflow, so hk's bundle verifies under the policy derived for
+        // github.com/jdx/mise as it would for a statement naming mise. Only
+        // the certificate's source repository can refuse it.
+        let policy = identity_policy(
+            &None,
+            &None,
+            &None,
+            "github.com/jdx/mise",
+            sigstore::Error::NoPolicy,
+        )
+        .unwrap();
+        assert_eq!(
+            policy,
+            Policy {
+                issuer: Some(GITHUB_ISSUER.into()),
+                identity: None,
+                identity_prefix: None,
+            }
+        );
+        let root = sigstore::trusted_root(None).unwrap();
+        let options = Options {
+            require_log: true,
+            trusted_root: &root,
+        };
+        let verified = packslip::verify(HK, &Trust::Identity(&policy), options, &[]).unwrap();
+        let source = sigstore::source_repository(HK).unwrap();
+        let (signer, issuer) = (verified.key_id.as_str(), verified.issuer.as_deref());
+
+        let no_flags = Verify {
+            issuer: None,
+            ..issuer_alone(None, false)
+        };
+        no_flags
+            .check_signer("github.com/jdx/hk", signer, issuer, source.as_ref(), None)
+            .unwrap();
+        let err = no_flags
+            .check_signer("github.com/jdx/mise", signer, issuer, source.as_ref(), None)
+            .unwrap_err();
+        assert!(
+            err.starts_with(&format!(
+                "github.com/jdx/mise must be signed from its repository https://github.com/jdx/mise, but {HK_SIGNER} signed it from https://github.com/jdx/hk. "
+            )),
+            "{err}"
+        );
+
+        assert_eq!(
+            signer_fingerprint("github.com/jdx/hk", signer, issuer, source.as_ref())
+                .unwrap()
+                .to_string(),
+            HK_PIN
+        );
+        let err =
+            signer_fingerprint("github.com/jdx/mise", signer, issuer, source.as_ref()).unwrap_err();
+        assert_eq!(
+            err,
+            "the certificate's source repository is https://github.com/jdx/hk, not https://github.com/jdx/mise"
+        );
+    }
+
+    #[test]
+    fn allow_other_repository_lifts_only_the_projects_repository() {
+        let (signer, issuer, source) = hk_under_issuer_alone();
+        let check = |verify: Verify, pin: Option<&str>| {
+            let pin: Option<Fingerprint> = pin.map(|p| p.parse().unwrap());
+            verify.check_signer(
+                "github.com/jdx/mise",
+                &signer,
+                issuer.as_deref(),
+                source.as_ref(),
+                pin.as_ref(),
+            )
+        };
+        check(issuer_alone(None, true), None).unwrap();
+        check(issuer_alone(Some("https://github.com/jdx/hk"), true), None).unwrap();
+        check(issuer_alone(None, true), Some(HK_PIN)).unwrap();
+
+        // The flags that name the signer still apply.
+        let err = check(
+            issuer_alone(Some("https://github.com/jdx/mise"), true),
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            "the certificate's source repository is https://github.com/jdx/hk, expected https://github.com/jdx/mise"
+        );
+        let err = check(
+            issuer_alone(None, true),
+            Some("ps1_kwhjac5qpc45qetfh6ppwisi6a"),
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("but the pin is ps1_kwhjac5qpc45qetfh6ppwisi6a"),
+            "{err}"
+        );
+
+        // Without the opt-out, neither flag accepts another repository, and
+        // the refusal names the flags that were passed.
+        let err = check(issuer_alone(Some("https://github.com/jdx/hk"), false), None).unwrap_err();
+        assert!(
+            err.ends_with(&format!(
+                ". --issuer and --source-repository narrow what the project's name requires and do not replace it; to {REMEDY}"
+            )),
+            "{err}"
+        );
+        let pinned = |source_repository| Verify {
+            pin: Some(HK_PIN.into()),
+            ..issuer_alone(source_repository, false)
+        };
+        let err = check(pinned(None), Some(HK_PIN)).unwrap_err();
+        assert!(
+            err.ends_with(&format!(
+                ". --issuer and --pin narrow what the project's name requires and do not replace it; to {REMEDY}"
+            )),
+            "{err}"
+        );
+        let err = check(pinned(Some("https://github.com/jdx/hk")), Some(HK_PIN)).unwrap_err();
+        assert!(
+            err.ends_with(&format!(
+                ". --issuer, --source-repository, and --pin narrow what the project's name requires and do not replace it; to {REMEDY}"
+            )),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_reusable_workflow_signs_for_the_repository_whose_run_called_it() {
+        let shared = "https://github.com/suzuki-shunsuke/go-release-workflow/.github/workflows/release.yaml@refs/heads/main";
+        let caller = SourceRepository::new("https://github.com/suzuki-shunsuke/mkghtag");
+        let check = |project: &str, signer: &str, source: Option<&SourceRepository>| {
+            issuer_alone(None, false).check_signer(
+                project,
+                signer,
+                Some(GITHUB_ISSUER),
+                source,
+                None,
+            )
+        };
+        check("github.com/suzuki-shunsuke/mkghtag", shared, Some(&caller)).unwrap();
+        // --source-repository names the same repository.
+        issuer_alone(Some("https://github.com/suzuki-shunsuke/mkghtag"), false)
+            .check_signer(
+                "github.com/suzuki-shunsuke/mkghtag",
+                shared,
+                Some(GITHUB_ISSUER),
+                Some(&caller),
+                None,
+            )
+            .unwrap();
+
+        // Another repository's run is refused, even through a workflow of
+        // the project's own.
+        let own = "https://github.com/jdx/hk/.github/workflows/release.yml@refs/heads/main";
+        let elsewhere = SourceRepository::new("https://github.com/someone/else");
+        let err = check("github.com/jdx/hk", own, Some(&elsewhere)).unwrap_err();
+        assert!(
+            err.starts_with(&format!(
+                "github.com/jdx/hk must be signed from its repository https://github.com/jdx/hk, but {own} signed it from https://github.com/someone/else. "
+            )),
+            "{err}"
+        );
+        // So is verify without flags, whose derived prefix the signer
+        // matches; the refusal then names no flags.
+        let err = no_flags()
+            .check_signer(
+                "github.com/jdx/hk",
+                own,
+                Some(GITHUB_ISSUER),
+                Some(&elsewhere),
+                None,
+            )
+            .unwrap_err();
+        assert_eq!(
+            err,
+            format!(
+                "github.com/jdx/hk must be signed from its repository https://github.com/jdx/hk, but {own} signed it from https://github.com/someone/else. To {REMEDY}"
+            )
+        );
+
+        // A certificate that records no repository leaves only the signer,
+        // which must then be a workflow of the project.
+        let err = check("github.com/suzuki-shunsuke/mkghtag", shared, None).unwrap_err();
+        assert!(
+            err.starts_with(&format!(
+                "github.com/suzuki-shunsuke/mkghtag must be signed from its repository https://github.com/suzuki-shunsuke/mkghtag, but {shared} is not one of its workflows. "
+            )),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_project_on_another_host_is_held_to_the_flags_alone() {
+        let (signer, issuer, source) = hk_under_issuer_alone();
+        for project in ["hk.jdx.dev", "example.com/tools/hk"] {
+            issuer_alone(None, false)
+                .check_signer(project, &signer, issuer.as_deref(), source.as_ref(), None)
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn without_flags_a_forge_project_is_verified_under_its_issuer_alone() {
+        // The workflow is left to `check_signer`, which binds the release to
+        // the project through the certificate's source repository, as
+        // install does.
+        let derived = |project: &str| {
+            identity_policy(&None, &None, &None, project, sigstore::Error::NoPolicy)
+        };
+        let issuer_alone = |issuer: &str| Policy {
+            issuer: Some(issuer.into()),
+            identity: None,
+            identity_prefix: None,
+        };
+        for project in ["github.com/jdx/hk", "github.com/oxc-project/oxc/oxlint"] {
+            assert_eq!(derived(project).unwrap(), issuer_alone(GITHUB_ISSUER));
+        }
+        assert_eq!(
+            derived("gitlab.com/group/sub/tool").unwrap(),
+            issuer_alone(packslip::sigstore::GITLAB_ISSUER)
+        );
+        // The names that were not forge projects before still are not.
+        for project in ["hk.jdx.dev", "github.com/jdx", "gitlab.com/group"] {
+            let err = derived(project).unwrap_err().to_string();
+            assert!(
+                err.contains("no identity to verify against"),
+                "{project}: {err}"
+            );
+        }
+    }
+}
+
+#[cfg(all(test, feature = "install-cli"))]
+mod install_tests {
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    use packslip::install::Report;
+    use packslip::install_fs::{Entry, History, Receipt};
+
+    fn printed(pin: Option<&str>) -> (String, String) {
+        let tree = PathBuf::from("/installs/hk");
+        let command = PathBuf::from("/bin/hk");
+        let report = Report {
+            project: "github.com/jdx/hk".into(),
+            receipt: Receipt {
+                schema: 1,
+                project: "github.com/jdx/hk".into(),
+                version: "1.2.3".into(),
+                tree: tree.clone(),
+                exports: BTreeMap::from([(command, Entry::Link(tree.join("hk")))]),
+                history: History::default(),
+            },
+            pin: pin.map(Into::into),
+            warnings: vec!["/bin is absent from PATH".into()],
+        };
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        super::print_install_report(report, &mut out, &mut err).unwrap();
+        (
+            String::from_utf8(out).unwrap(),
+            String::from_utf8(err).unwrap(),
+        )
+    }
+
+    #[test]
+    fn install_prints_the_signer_fingerprint_of_a_keyless_release() {
+        let (out, err) = printed(Some("ps1_snirenkjwr7m5ozgcufameodnm"));
+        assert_eq!(
+            out,
+            "Installed github.com/jdx/hk 1.2.3 at /installs/hk\n\
+             Signer fingerprint: ps1_snirenkjwr7m5ozgcufameodnm\n\
+             Command: /bin/hk\n"
+        );
+        assert_eq!(err, "warning: /bin is absent from PATH\n");
+
+        // A key-signed release has no fingerprint to print.
+        let (out, _) = printed(None);
+        assert_eq!(
+            out,
+            "Installed github.com/jdx/hk 1.2.3 at /installs/hk\nCommand: /bin/hk\n"
+        );
     }
 }

@@ -69,10 +69,12 @@ fn exit_with_usage_error(
 }
 
 /// Print packslip's version
+///
+/// Print `packslip X.Y.Z`, as `packslip --version` does.
 #[derive(Debug, usage_rs::Args)]
 #[usage(visible_alias = "v")]
 pub struct Version {
-    /// Print the name, version, OS, and architecture as JSON
+    /// Print a JSON object with the keys name, version, os, and arch
     #[usage(short = 'J', long)]
     json: bool,
 }

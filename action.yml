@@ -51,7 +51,7 @@ inputs:
     default: ""
   commit:
     description: >
-      Source commit recorded in the release manifest; defaults to github.sha.
+      Source commit recorded in the release bundle; defaults to github.sha.
       Set this to the full commit SHA of the release tag when publishing a
       different revision, for example from a manually dispatched workflow.
       This does not change the workflow identity or artifact provenance.
@@ -72,7 +72,7 @@ inputs:
     default: ""
   manifest:
     description: >
-      A TOML manifest (`packslip create --manifest`) for what the inputs
+      A release.toml file (`packslip create --manifest`) for what the inputs
       cannot say per artifact: executables at different paths in different
       archives, a platform the file name does not give, an artifact that
       runs anywhere, OS or glibc minimums, and resources for one artifact.
@@ -138,13 +138,13 @@ inputs:
       collected by artifacts and download with
       actions/attest-build-provenance, links each artifact's attestation
       from the packslip, and needs the attestations: write permission; an
-      artifact listed only in the TOML manifest is neither attested nor
-      linked. `link` only links the attestations, for a workflow whose
-      build jobs already attested the files as they produced them; it needs
-      no extra permission, and an artifact nothing attested leaves a URL
-      that resolves to nothing. `false` does neither. In a private or
-      internal repository, GitHub attestations need GitHub Enterprise
-      Cloud, so use `false` on other plans.
+      artifact listed only in the manifest input's release.toml is
+      neither attested nor linked. `link` only links the attestations,
+      for a workflow whose build jobs already attested the files as they
+      produced them; it needs no extra permission, and an artifact
+      nothing attested leaves a URL that resolves to nothing. `false` does
+      neither. In a private or internal repository, GitHub attestations
+      need GitHub Enterprise Cloud, so use `false` on other plans.
     required: false
     default: "true"
   out:

@@ -1,5 +1,5 @@
 [packslip]
-name=Packslip upstream installer
+name=packslip upstream installer
 baseurl=https://packslip.dev/rpm/$basearch
 enabled=1
 gpgcheck=1

@@ -308,17 +308,28 @@ pub fn sign(signer: Signer, statement: &[u8]) -> Result<String, Error> {
 pub struct Policy {
     /// The exact OIDC issuer, when pinned.
     pub issuer: Option<String>,
-    /// The exact certificate identity, when pinned.
+    /// The certificate identity, when pinned. A GitHub or GitLab
+    /// repository's name in it matches in any ASCII case, as the forge
+    /// resolves it; the rest of the identity, including a workflow's path
+    /// and ref, matches exactly.
     pub identity: Option<String>,
     /// A prefix the certificate identity must start with, for pinning a
-    /// repository rather than one workflow file and ref.
+    /// repository rather than one workflow file and ref. A GitHub or GitLab
+    /// repository's name in it matches in any ASCII case, as the forge
+    /// resolves it; the rest of the prefix matches exactly.
     pub identity_prefix: Option<String>,
 }
 
 impl Policy {
-    /// The policy a project name implies on a forge the tooling knows:
-    /// `github.com/owner/repo` must be signed by a workflow of that
+    /// An identity-prefix policy for a project on a forge the tooling
+    /// knows: `github.com/owner/repo` must be signed by a workflow of that
     /// repository through GitHub's issuer, and likewise for gitlab.com.
+    /// That is narrower than what the name implies, which also accepts a
+    /// reusable workflow of another repository when the certificate's
+    /// source repository is the project's: verify under
+    /// [`crate::forge::policy`] and then apply
+    /// [`crate::forge::check_source`] for that, as
+    /// [`crate::verify::verify_forge`] does.
     pub fn for_project(project: &str) -> Option<Policy> {
         // A GitHub project may name a tool inside a monorepo
         // (`github.com/owner/repo/tool`); the workflow that signs it
@@ -600,9 +611,6 @@ pub fn verify(
             if let Some(issuer) = &policy.issuer {
                 verification = verification.require_issuer(issuer.clone());
             }
-            if let Some(identity) = &policy.identity {
-                verification = verification.require_identity(identity.clone());
-            }
             let result = sigstore_verify::verify(artifact, &bundle, &verification, trusted_root)
                 .map_err(|e| Error::Verification(e.to_string()))?;
             let identity = result
@@ -613,8 +621,18 @@ pub fn verify(
                 .issuer()
                 .map(str::to_owned)
                 .ok_or_else(|| Error::Verification("certificate has no issuer".into()))?;
+            // A GitHub or GitLab repository's name compares without regard
+            // to case, as the forge resolves it, so packslip compares the
+            // pinned identity itself rather than sigstore's exact match.
+            if let Some(expected) = &policy.identity
+                && !crate::forge::same_url(&identity, expected)
+            {
+                return Err(Error::Verification(format!(
+                    "identity mismatch: expected {expected}, got {identity}"
+                )));
+            }
             if let Some(prefix) = &policy.identity_prefix
-                && !identity.starts_with(prefix)
+                && !crate::forge::identity_has_prefix(&identity, prefix)
             {
                 return Err(Error::IdentityPrefix {
                     actual: identity,

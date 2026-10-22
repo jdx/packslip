@@ -1,318 +1,238 @@
 ---
 title: Build an installer or mirror
-weight: 55
-group: consume
-description: Find, verify, and select release artifacts in your own installer or mirror, keep the trust state the consumer rules require, and use the packslip crate as a library.
+description: Discover, verify, select, and install packslip releases in your own installer or mirror, and keep the trust state the consumer rules require.
+group: build
+weight: 60
 ---
 # Build an installer or mirror
 
-Build an installer, package manager, or mirror that consumes signed
-packslip releases. The work has three parts: find an eligible release,
-verify and select its files, and preserve trust across later installs.
-This guide follows that sequence and shows the Rust library APIs you
-can reuse.
+This guide is for developers whose installer, package manager, or mirror
+consumes signed packslip releases. You will find, verify, and select a
+release, keep trust across installs, and sign a mirror's bundle.
 
-If you need an existing installer, [Install a tool](/docs/bootstrap/)
-covers `packslip install`. For manual checks of downloaded files, use
-[`packslip verify`](/docs/verifying/). The rest of this page is for
-implementing a consumer yourself.
+For a ready-made installer, use `packslip install`
+([Bootstrap a tool](/docs/bootstrap/)); to check files by hand, use
+`packslip verify` ([Verify a release](/docs/verifying/)); for the Rust API
+behind these steps, see [Use the Rust crate](/docs/rust/).
 
 ## Install a release
 
-1. **Find the bundle.** List the project's versions, choose one, and
-   locate its bundle, as [Discovery](/release/v1/#discovery) says.
-   - For a GitHub project, list the repository's releases.
-     `packslip::tag_version` maps each tag to the version it names, so you
-     can list versions without downloading a bundle per release. If the
-     repository carries a supplementary list (`packslip::github_list_path`
-     gives its path), verify it too: for a version it lists, its entry
-     decides the tag, the status, and the bundle digest to accept, so you
-     never choose a version it yanks. Then read the chosen release's
-     `packslip*.sigstore.json` assets and keep the one whose
-     `predicateType` is `https://packslip.dev/release/v1` and whose
-     `project` is the name you asked for, or the same tool of the
-     repository renamed. Never trust the file name;
-     `packslip::peek_unverified` reads both fields without verifying.
-   - For a project on its own domain, verify the signed release list at
-     the URL `packslip::list_url` gives, choose an entry, and download the
-     bundle its `packslip` URL names.
-2. **Verify the bundle alone** against your pin, before you use anything
-   else it says. When a release list entry names the bundle, first refuse
-   the file unless its SHA-256 is the digest the list gives for that URL.
-   After verifying, check that the verified project is the one you asked
-   for and that its version is the one the list entry named or, without an
-   entry, the tag named.
-3. **Choose an artifact.** Read the verified statement's artifacts, with
-   `packslip show` or by decoding the verified payload into
-   `packslip::Statement`, and choose one as
-   [Selecting an artifact](/release/v1/#selecting-an-artifact) says.
-   `packslip::select_artifact` implements that selection. It takes a
-   `packslip::Host` spelled in the specification's
-   [vocabulary](/release/v1/#vocabularies), which differs from Rust's in
-   places: `std::env::consts::OS` reports `macos` for `darwin`, and
-   `consts::ARCH` reports `x86` for `i686`, `arm` for both `armv6` and
-   `armv7`, and `powerpc64` for `powerpc64le`. Then check the chosen
-   artifact's `requires` against the host.
-4. **Download the artifact and verify it** against the same bundle with
-   the same pin before you unpack it. With the CLI, pass it with
-   `--artifact`, as [Verify a release](/docs/verifying/#check-every-file-you-use)
-   shows. Verify each resource asset you download the same way.
+1. **Discover the release.** List the project's versions, choose one, and
+   locate its release bundle, as [Discovery](/release/v1/#discovery) says:
 
-Implementations in other languages can check their artifact and resource
+   | Project | Versions | Bundle |
+   | --- | --- | --- |
+   | Forge project on GitHub | Its non-draft GitHub releases. Take each version from its tag ([Tags](/release/v1/#tags)), and its order and prerelease status from that version, never from GitHub's order or prerelease flag. | The `packslip*.sigstore.json` asset whose statement has the `predicateType` `https://packslip.dev/release/v1` and the requested `project`, or the same tool under the renamed repository. Compare owner and repository in any letter case. |
+   | Domain project | Its signed release list at the [well-known URL](/release/v1/#publishing-a-list), once verified. Refuse a project with none. | The URL in the chosen entry's `packslip` field. |
+   | Forge project on gitlab.com | The specification defines none. | A trusted publisher's list or your own configuration; otherwise refuse the project. |
+
+   If a GitHub repository carries a
+   [supplementary release list](/release/v1/#supplementary-release-lists),
+   verify it too. For each version it lists, the entry decides the tag, the
+   status, and the bundle digest to accept; never choose a version it yanks.
+
+   **Warning:** Never trust a bundle's file name for its type or project;
+   read both from the statement.
+2. **Verify the bundle alone** against your pin before you use anything
+   else it says.
+   - When a release list entry names the bundle, refuse it before verifying
+     unless its SHA-256 equals the digest the entry gives for that URL.
+   - After verifying, check that the project is the one requested, or the
+     same repository renamed. Check that the version is the one the list
+     entry named or, without an entry, the tag named.
+3. **Select an artifact** from the verified result, never the unverified
+   bundle. `packslip verify --json` lists every artifact with its signed
+   digest; see
+   [Read the verified artifacts from a script](/docs/verifying/#read-the-verified-artifacts-from-a-script).
+   Choose one as [Selecting an artifact](/release/v1/#selecting-an-artifact)
+   says. Your installer decides which formats and resource kinds it
+   supports.
+4. **Check host requirements.** Check the chosen artifact's `requires` as
+   [Checking requirements before installation](/release/v1/#checking-requirements-before-installation)
+   says. Refuse only when a library, glibc, or OS version keeps the
+   executables from starting. Warn about a missing or old command and any
+   requirement you cannot check.
+   [Declare host requirements](/docs/host-requirements/) shows what
+   publishers declare.
+5. **Download, verify, and install.** Download the artifact and verify it
+   against the same bundle and pin before you unpack it. With the CLI, use
+   `packslip verify --artifact`; see
+   [Check every file you use](/docs/verifying/#check-every-file-you-use).
+   Verify each resource asset you download the same way.
+
+Implementations in other languages can test their artifact and resource
 selection, tag parsing, statement validation, forge identity, and signer
 fingerprints against the
 [conformance vectors](https://github.com/jdx/packslip/tree/main/tests/conformance).
 
 ## Use private hosts and mirrors
 
-Trust comes from the signature, the signer policy, and the signed digests,
-never from where a file was downloaded. `packslip verify` makes no network
-requests, so it works the same on a private host, an enterprise mirror, or
-a file copied across an air gap. What the caller handles:
+Once a signer is pinned, where a file came from does not change trust
+([How trust works](/docs/trust/)). The exception is a keyless domain
+project's first use: its signer comes only from the list fetched over
+HTTPS from the project's host, never from a copy (rule 1 in
+[Follow the consumer rules](#follow-the-consumer-rules)).
+`packslip verify` makes no network requests, so it works the same from
+an internal download host or across an air gap. When you call it or the
+crate, you fetch the bundle and artifacts and handle credentials,
+proxies, and caching.
 
-| Concern | Who handles it |
-| --- | --- |
-| Fetching the bundle and artifacts, credentials, proxies, and caching | You, when you call `verify` or the library. `packslip install` handles it itself, as the next paragraphs say. |
-| Keeping the file name the release published | You. `--artifact` matches by name, and a mirror that renames files fails with `not listed in the document`. |
-| Trusting the signer | You, with the same pin as for the origin. A mirror holding the vendor's unmodified bundle and files adds no new signer. |
-| Freshness | You. Copy the signed release list and bundles together, and refuse an expired or older list as [consumer rule 5](/release/v1/#consumer-rules) says; a mirror that goes stale serves old, still validly signed releases. |
+Serve a vendor's release from your own host in two ways:
 
-`packslip install` downloads an artifact from the HTTPS `url` the signed
-statement gives. When the statement gives none, it takes the file from
-beside the bundle, using the bundle's URL with the signed artifact name as
-the last path segment. Either way it checks the file against the signed size
-and digest. It has no setting that replaces a URL with a mirror's. For a
-private host, scope a credential to its exact origin in `config.toml`, as
-[Install a tool](/docs/bootstrap/) shows.
+- **Serve a copy** of the vendor's unmodified bundle and files. Consumers
+  verify it with the vendor's pin, using `packslip verify --artifact` or
+  their own installer; the copy adds no signer.
+  - Keep the published file names. `--artifact` matches files by name, so
+    a renamed file fails with
+    `verification failed: artifact NAME: not listed in the document`.
+  - Copy the signed release list and the bundles together. Consumers
+    refuse an expired or older list
+    ([consumer rule 5](/release/v1/#consumer-rules)). A stale copy serves
+    old releases that are still validly signed.
+- **Run a mirror** by signing your own repackager bundle that lists your
+  URLs, as [Repackage another vendor's release](#repackage-another-vendors-release)
+  shows.
 
-To serve a release from your own host, you have two options:
+`packslip install` can use neither. It finds a bundle only through the
+project's own discovery and downloads the files that bundle names. It has
+no setting to point an artifact URL at another host. When a host the
+bundle names needs a token, see
+[Download from a private host](/docs/bootstrap/#download-from-a-private-host).
 
-- Download from the mirror yourself and verify with
-  `packslip verify --artifact`.
-- Publish a repackager document for a vendor that publishes no packslip of
-  its own (`attested_by: repackager`). It still names the vendor's project
-  and carries the vendor's digests, but it has your URLs and is signed with
-  your identity, as the
-  [specification](/release/v1/#repackager-attestation) describes. A
-  consumer that already holds the vendor's document for the project
-  refuses to replace it with a repackager one without a person's approval.
+## Repackage another vendor's release
+
+A repackager signs its own release bundle for another vendor's files: for a
+vendor that publishes no packslip, or to mirror files a vendor's packslip
+covers. The bundle names the vendor's project and carries the vendor's
+digests, but lists your URLs and is signed with your identity, as
+[Repackager attestation](/release/v1/#repackager-attestation) describes.
+
+To mirror a vendor release whose verified bundle you saved as
+`vendor/packslip.sigstore.json`:
+
+```sh
+vendor_sha256=$(sha256sum vendor/packslip.sigstore.json | cut -d ' ' -f 1)
+packslip create \
+  --project mytool.example.com \
+  --version 1.2.3 \
+  --attested-by repackager \
+  --evidence "vendor-packslip=$vendor_sha256" \
+  --url-base https://mirror.example.net/mytool/1.2.3/ \
+  --bin mytool \
+  --key mirror.key \
+  --out mirror \
+  dist/mytool-1.2.3-linux-x86_64.tar.gz
+```
+
+- `--attested-by repackager` says that you, not the vendor, make the
+  claim; the default is `vendor`.
+- `--evidence KIND[=DETAIL]` records one check you made; pass it once per
+  check. `vendor-packslip` takes the SHA-256 of the vendor's bundle file.
+  [Repackager attestation](/release/v1/#repackager-attestation) lists the
+  documented kinds, such as `vendor-signature` and `pkgbuild-checksums`.
+- `--url-base` points the artifact URLs at your mirror.
+- `--key mirror.key` signs with your key; in CI with an OIDC identity,
+  omit it to sign keyless.
+- `--out mirror` writes your bundle to `mirror/packslip.sigstore.json`.
+
+`--evidence` without `--attested-by repackager` fails with `--evidence
+describes what a repackager checked; pass --attested-by repackager`.
+Neither flag has a release.toml equivalent; pass both even with
+`--manifest`.
+
+A verified repackager bundle establishes that the repackager signed these
+digests and what it says it checked. It does not establish anything on the
+vendor's behalf: consumers must trust the repackager's signer explicitly
+and rank its bundle below a vendor packslip. A consumer whose last
+accepted release was vendor-attested asks a person before accepting yours
+([No-downgrade and approvals](/docs/trust/#no-downgrade-and-approvals)).
+
+With the CLI, a consumer verifies your key-signed bundle with
+`--pubkey mirror.pub` alone. For a keyless one, see
+[Verify a repackager's release](/docs/verifying/#verify-a-repackagers-release).
+
+If you also publish a release list of your bundles, record each check you
+made on a listed release with `packslip releases --evidence URL=KIND[=DETAIL]`,
+once per check.
+[Publish a list as a stamping host](/docs/release-lists/#publish-a-list-as-a-stamping-host)
+covers lists from publishers other than the vendor.
 
 ## Follow the consumer rules
 
-Verification is one part of an install. The [consumer
-rules](/release/v1/#consumer-rules) define the complete contract; use this
-checklist to find the parts your implementation still needs.
+A successful `packslip verify` alone does not meet the
+[consumer rules](/release/v1/#consumer-rules), the complete contract for an
+install. `packslip verify` and the crate's `verify_forge`,
+`select_artifact`, and `select_resources` cover verification and selection.
+The crate's [installer modules](/docs/rust/#use-the-installers-modules)
+also check list freshness, choose versions, enforce no-downgrade, and check
+host requirements, with APIs shaped for `packslip install`. Beyond the
+[Install a release](#install-a-release) steps, your code handles each rule:
 
-| Rule | Responsibility | What to implement beyond checking a signature |
-| --- | --- | --- |
-| 1 | Pin the signer | Establish trust from configuration, a public key, a forge identity, or a published signer fingerprint. Never take a trusted key from the bundle itself. Remember forge repository IDs across renames and transfers. |
-| 2 | Verify the bundle and files | Validate the statement, compare its project with the request, and check every downloaded artifact and resource asset. Require log evidence unless the user has explicitly accepted unlogged releases. |
-| 3 | Preserve signer continuity | Refuse a weaker scheme, lost provenance, or a change from vendor to repackager. Require approval for signer changes or relaxed workflow pinning. Compare with the last accepted release, including across repository renames. |
-| 4 | Apply release-age policy | Measure any minimum age from authenticated log integration time; use `published_at` only for deliberately accepted unlogged bundles. |
-| 5 | Discover eligible releases | Verify release lists, enforce expiry and sequence, honor withdrawals and version policy, and check the selected bundle's digest and version. Enforce configured stamping-host policy too. |
-| 6 | Select one artifact | Apply the specified platform and format preferences; fail when two candidates tie. |
-| 7 | Check the host | Check declared libraries, glibc, OS, and commands before installing. Requirements do not break an artifact-selection tie. See [Host requirements](/docs/host-requirements/). |
-| 8 | Select resources | Choose the most specific matching resource and its strongest available source. Run vendor code only as the resource rules permit; missing resources are reported, while digest mismatches fail installation. |
-
-The rule numbers above refer to the specification. In particular,
-[discovery](/release/v1/#discovery), [artifact
-selection](/release/v1/#selecting-an-artifact), and [resource
-selection](/release/v1/#resources) have details that a signature
-verifier cannot enforce for you.
+1. **Pin the identity once.** For a forge project, take the first pin
+   from the name: accept only the forge's issuer and a certificate whose
+   source repository is that repository (`packslip verify` with no trust
+   flags and `verify_forge` do this). Then remember the repository ID it
+   records; the ID holds across renames and transfers.
+   Take other projects' pins from your configuration or, on a keyless
+   domain project's first use, from the list fetched over HTTPS from its
+   host.
+   Add any signer fingerprint you read independently to the first pin.
+   Take a public key only from your own pins, never from the bundle or its
+   key hint. Trust another publisher's list per host, through
+   configuration. See
+   [First use and signer fingerprints](/docs/trust/#first-use-and-signer-fingerprints).
+2. **Verify the bundle and downloaded files.** Pass `--allow-unlogged`, or
+   in Rust `require_log: false`, only when the user explicitly accepted
+   unlogged releases.
+3. **Enforce no-downgrade.** Ask a person before accepting a signer
+   change, relaxed workflow pinning, or another weakening the rule lists,
+   compared with the last accepted release across renames; see
+   [No-downgrade and approvals](/docs/trust/#no-downgrade-and-approvals).
+4. **Apply the minimum release age.** Measure it from the authenticated
+   log integration time, which the verifier reports as `logged_at`. Use
+   `published_at` only for an unlogged bundle the user deliberately
+   accepted.
+5. **Use the project's discovery metadata.** Refuse an expired list, a list
+   whose `sequence` is below the last you accepted, and a project whose
+   accepted list has gone missing. Never select a yanked entry. Skip
+   prereleases unless asked, rank by semver precedence, and follow
+   [Latest](/release/v1/#latest) for an unconstrained request. Apply any
+   stamping-host policy you configured.
+6. **Select one artifact.** Step 3. Refuse a tie the preferences leave
+   unresolved; host requirements never break one. In Rust,
+   `select_artifact` does this (pass the formats you can unpack).
+7. **Check host requirements before installing.** Step 4; in Rust,
+   `install_host` checks `requires`.
+8. **Install resources.** Apply [Resources](/release/v1/#resources): keep
+   each resource's most specific entries that fit the artifact, and take
+   each from its strongest available source. Run vendor code only as
+   [Running an exec entry](/release/v1/#running-an-exec-entry) permits.
+   Ignore unknown kinds. Report a resource you cannot fetch and finish
+   without it; fail on a digest mismatch.
 
 ## Keep trust state between installs
 
-The [consumer rules](/release/v1/#consumer-rules) list the state to keep
-for each project: the pin (the signer, its repository ID, and the
-remembered `pin_workflow` value), the trust properties of the last
-accepted release (its scheme, `attested_by`, and provenance), the highest
-release-list `sequence` you accepted and whether you accepted a signed
-list at all, and the choices a person made, such as an approved signer
-change or an allowed unlogged bundle.
+Keep, for each project, the remembered state the
+[consumer rules](/release/v1/#consumer-rules) list:
 
-A lockfile can carry a project's pin alongside artifact URLs and digests
-so another machine can enforce it on its first install. Local state can
-separately remember signer history and release-list sequences. The
-specification does not say where a consumer stores either.
-[Use packslip with mise](/docs/mise/#preserve-trust-across-upgrades-and-machines)
-shows one consumer that keeps both. For how a vendor publishes a list,
-withdraws versions, and recommends a default, see
-[Manage release lists](/docs/release-lists/).
+- **Pins:** the signer, its repository ID, and `pin_workflow`, kept for the
+  releases and separately for the release list
+  ([Release lists are pinned separately](/docs/trust/#release-lists-are-pinned-separately)),
+  plus any signer fingerprint or lockfile commitment. Rule 1 holds later
+  releases and lists to them; rule 3 compares signers.
+- **Accepted trust properties:** the last accepted release's scheme,
+  `attested_by`, and provenance. Rule 3 asks a person before any of them
+  weakens.
+- **List history:** the highest accepted `sequence`, and whether a signed
+  list was ever accepted. Rule 5 refuses a lower sequence or a missing list.
+- **User choices:** approved trust changes, permission to accept unlogged
+  bundles, and trusting a vendor without a stamp. Rules 2 to 5 honor them.
 
-## Use the Rust library
+A lockfile can carry a project's pin with artifact URLs and digests, so
+another machine enforces it on its first install. Local state can
+separately remember signer history and list sequences. The specification
+leaves where to store either to you. One consumer, mise, keeps both; see
+[Preserve trust across upgrades and machines](/docs/mise/#preserve-trust-across-upgrades-and-machines).
 
-The `packslip` crate holds the schema, the verifier, and the selection
-rules as well as the CLI and the generator. A consumer that only verifies
-takes it without the parts it will not call:
-
-```sh
-cargo add packslip --no-default-features
-```
-
-This keeps the statement types, `verify`, `verify_release_list`,
-`verify_forge`, `verify_forge_release_list`, `peek_unverified`,
-`Fingerprint`, `select_artifact`, and `select_resources`. It omits archive
-readers, executable inspection, signing, schema generation, and the CLI.
-Enable the features you need; the default `cli` feature includes the
-complete command-line application:
-
-| Feature | Adds |
-| --- | --- |
-| `cli` (default) | The complete binary: installation, verification, publishing, and schema generation. |
-| `verify-cli` | The verifier binary: `verify`, `pin`, `show`, completions, and version, without publishing, archive inspection, or schema generation. |
-| `install-cli` | The verifier commands plus `install`, complete-tree extraction, native command exports, and host checks; excludes publishing and schema generation. |
-| `create` | Build a statement from built artifacts; implies `archive`, `linkage`, and `sign`. |
-| `archive` | Read tar and zip archives to resolve declared executable paths. |
-| `linkage` | Derive `requires.libs` from ELF, Mach-O, and PE executables. |
-| `sign` | Sign statements, keylessly through Fulcio or with a minisign key. |
-| `manifest` | Read a TOML manifest (`release.toml`) for `create --manifest`. |
-| `schema` | `Statement::schema()` and `ReleaseListStatement::schema()`. |
-
-Distribution packagers can build the installer without the publishing stack:
-
-```sh
-cargo build --locked --release --no-default-features --features install-cli
-```
-
-The installer build omits `create`, `releases`, `keygen`, and `schema`.
-Use `verify-cli` for a verifier-only binary, or `--no-default-features`
-for the library alone. The default build includes every CLI command.
-
-The samples below also use `serde_json`, and the release-list check
-needs a `jiff::Timestamp` from `jiff` 0.2, the version packslip depends
-on. packslip re-exports neither crate, so add both as your own
-dependencies:
-
-```sh
-cargo add serde_json jiff@0.2
-```
-
-For a GitHub or GitLab project, `verify_forge` verifies a bundle under
-the policy the forge implies and checks it against what the consumer
-remembers, following renames and transfers by repository ID. The following
-Rust fragment illustrates selected checks from steps 2 to 4 for a bundle
-already downloaded. It does not compare the previous release's `scheme`,
-`attested_by`, or provenance. `load_pins`,
-`load_signer`, `download`, `store_pin`, and `store_signer` stand for your
-own storage and download functions; the fragment is not a complete
-installer. Add host checks and the rest of the checklist above before
-installing the verified file:
-
-```rust
-use packslip::forge::{Continuity, Expected, ForgePin, PinSource};
-
-let bundle = std::fs::read_to_string("packslip.sigstore.json")?;
-let root = packslip::sigstore::trusted_root(None)?;
-let options = packslip::Options { require_log: true, trusted_root: &root };
-
-// The pins this consumer stored after earlier installs: its own and the
-// lockfile's. The release must satisfy each one.
-let pins: Vec<(PinSource, ForgePin)> = load_pins("github.com/jdx/hk");
-let expected = Expected::new("github.com/jdx/hk").pinned_by(&pins);
-
-// Verify the bundle alone, then hold it to the signer accepted last time
-// and to whether that signer pinned its workflow. Rule 3 also compares the
-// scheme, attested_by, and provenance links with the last release.
-let accepted = packslip::verify_forge(&bundle, &expected, options, &[])?;
-if let Some((previous, pinned_workflow)) = load_signer("github.com/jdx/hk") {
-    if !accepted.check.continues_signer(&previous)
-        || (pinned_workflow && !accepted.check.pins_workflow())
-    {
-        return Err("the release lowers remembered trust; ask a person first".into());
-    }
-}
-// Step 2: the version must be the one the tag or list entry named.
-if accepted.verified.version != "2.3.0" {
-    return Err("the packslip is not the version its tag named".into());
-}
-if let Continuity::Renamed { signed, .. } = &accepted.check.continuity {
-    eprintln!("github.com/jdx/hk is now {signed}");
-}
-
-// Choose the artifact from the statement in the bundle that just verified.
-let payload = packslip::sigstore::peek_statement(&bundle)?;
-let statement: packslip::Statement = serde_json::from_slice(&payload)?;
-let host = packslip::Host { os: "linux", arch: "x86_64", libc: Some("gnu") };
-let artifact = packslip::select_artifact(
-    &statement.predicate.artifacts,
-    &host,
-    None,
-    &["tar.xz", "tar.gz", "zip"],
-)?;
-
-// Download it under its own file name and verify it against the same
-// bundle. Only then remember the pin and the signer.
-let file = download(artifact)?;
-packslip::verify_forge(&bundle, &expected, options, &[file.as_path()])?;
-if let Some(pin) = &accepted.check.pin {
-    store_pin("github.com/jdx/hk", pin);
-}
-store_signer(
-    "github.com/jdx/hk",
-    &accepted.verified.key_id,
-    accepted.check.pins_workflow(),
-);
-```
-
-`packslip::select_resources(&statement, artifact)` then gives the resource
-entries for the chosen artifact.
-
-To hold a release to a signer fingerprint the user configured, check it
-right after `verify_forge`, which has already confirmed that the
-certificate's repository is the one the statement names:
-
-```rust
-let want: packslip::Fingerprint = "ps1_snirenkjwr7m5ozgcufameodnm".parse()?;
-want.verify(accepted.verified.issuer.as_deref(), accepted.check.source.as_ref())?;
-```
-
-A malformed fingerprint fails to parse rather than counting as no pin.
-
-The library provides these pieces for signer continuity:
-
-- `accepted.check.continues_signer(&previous)` is the signer-continuity
-  check of [rule 3](/release/v1/#consumer-rules). It compares a remembered
-  signer with this release's across a rename or a transfer. Call it before
-  you accept the release.
-- `accepted.check.pin` is what to store once you accept the release: the
-  repository ID and the name the release was signed under, not the owner.
-  A repository that moves to another owner is reported as
-  `Continuity::Renamed`, and releases from before the move still verify. A
-  pin that packslip 1.4 stored with an owner ID still deserializes; the
-  owner ID is ignored.
-- `accepted.check.pins_workflow()` is `false` for a release that declares
-  `pin_workflow: false`. A vendor whose releases are signed by more than
-  one workflow file of its repository, such as separate stable and nightly
-  workflows, declares it with `packslip create --no-pin-workflow`, so that
-  consumers hold later releases to the repository instead of one workflow
-  file. `continues_signer` then accepts any workflow of the repository.
-  Store the value beside the signer and apply the downgrade rule in
-  [Workflow pinning](/release/v1/#workflow-pinning).
-  `packslip verify --json` reports `"pin_workflow": false` for such a
-  release and omits the field otherwise.
-- `packslip::forge::same_workflow` compares two remembered signers, each
-  with the pin recorded beside it, when no release is at hand, such as
-  when regenerating a lockfile. It always compares workflow paths, so for
-  a signer accepted with `pin_workflow: false`, compare only the forge and
-  the repository ID instead, as `ForgePin::continues` does.
-
-A release from a different repository under a pinned name fails
-`verify_forge` with an error that says which pin disagreed and ends with
-`the name belongs to a different repository now`. The name has been
-recreated after a rename or deletion: find where the project went, and do
-not pin the name again.
-
-`packslip::peek_unverified` reads the project and version a bundle claims
-without verifying it, so an installer can choose a policy before
-verifying. Treat both as untrusted, and take the project and version from
-the verified result.
-
-For release lists, `verify_release_list` verifies a domain project's list
-under a `packslip::Trust` you hold, and `verify_forge_release_list` a
-GitHub repository's supplementary list under the policy the forge implies.
-Neither checks expiry or sequence. With `list` the verified statement
-(`VerifiedList::list`), refuse it unless `list.is_current(now)` is true
-for `now` from `jiff::Timestamp::now()` and `list.predicate.sequence` is
-at least the highest you accepted. `list.digest_of(url)` then gives the
-SHA-256 the list pins for a bundle URL, which step 2 compares with the
-downloaded bundle; `packslip::digest_file` hashes the file.
+For the vendor's side (publishing a list, withdrawing versions, and
+recommending a default), see [Manage release lists](/docs/release-lists/).

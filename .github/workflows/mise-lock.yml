@@ -24,15 +24,17 @@ jobs:
     with:
       # ci.yml runs `mise run render` and fails if it produces a diff, so a
       # tool bump that changes generated output (usage renders the CLI
-      # reference) has to regenerate it in the same commit.
+      # reference) has to regenerate it in the same commit. List every path
+      # the render task in mise.toml writes; a directory covers files added
+      # to it later.
       post_update_task: render
       post_update_paths: |
         packslip.usage.kdl
         packslip.1
         content/cli
         content/spec.md
-        static/schema/release-v1.json
-        static/schema/releases-v1.json
+        content/docs/actions.md
+        static/schema
     secrets:
       MISE_LOCK_APP_ID: ${{ secrets.MISE_LOCK_APP_ID }}
       MISE_LOCK_APP_PRIVATE_KEY: ${{ secrets.MISE_LOCK_APP_PRIVATE_KEY }}

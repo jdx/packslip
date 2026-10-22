@@ -1,68 +1,151 @@
-# packslip Go module
+# Go module for packslip publishers
 
-This module is the publisher-facing Go library for [packslip release-v1](https://packslip.dev/release/v1/) statements. It constructs release statements from explicit artifact metadata, streams artifact digests, validates the statement, and signs it keylessly with Sigstore.
+`github.com/jdx/packslip/go` lets a Go release tool publish a packslip without
+the CLI: it builds the release statement from your artifacts and signs it
+keylessly with Sigstore. To verify releases instead, see
+[Choose a library](https://packslip.dev/docs/libraries/).
 
-Install it with `go get github.com/jdx/packslip/go@latest`; it requires Go
-1.25.8 or newer. The first proxy-installable version is v1.9.1. See
-[the library guide](https://packslip.dev/docs/libraries/) for the Go and npm
-roles and release cadence.
+The module hashes each artifact, checks that the statement is well formed
+under the [release/v1 specification](https://packslip.dev/release/v1/), and
+returns the signed release bundle. It does not read GoReleaser
+configuration, find or upload artifacts, or provide a release CLI. Mapping a
+release tool's configuration to packslip belongs in an adapter owned by that
+tool or its users.
 
-It is intentionally not a GoReleaser adapter or a release CLI. Mapping build platforms, archive names, upload destinations, and release-tool configuration stays in an adapter owned by that tool or its users.
+## Install
 
-```go
-// In CI: the OIDC token (SIGSTORE_ID_TOKEN, or a GitHub Actions token for the
-// `sigstore` audience) and the identity Fulcio will certify for it.
-oidcToken, err := packslip.AmbientIDToken(ctx) // packslip.ErrNoIDToken when there is none
-if err != nil { /* handle a missing token */ }
-identity, err := packslip.IdentityFromToken(oidcToken)
-if err != nil { /* handle an unusable token */ }
-
-statement, err := packslip.Build(packslip.Predicate{
-    Project: "github.com/acme/tool",
-    Version: "0.1.0",
-    PublishedAt: time.Now().UTC(),
-    Source: &packslip.Source{Repo: "https://github.com/acme/tool", Tag: "v0.1.0"},
-    Identity: identity,
-}, []packslip.ArtifactInput{{
-    Path: "dist/tool-linux-x64.tar.xz",
-    Artifact: packslip.Artifact{Name: "tool-linux-x64.tar.xz", OS: "linux", Arch: "x86_64", Format: "tar.xz", Bin: []packslip.Bin{packslip.NewBin("tool")}},
-}})
-if err != nil { /* handle malformed metadata or an unreadable artifact */ }
-
-options, err := packslip.ProductionKeylessOptions(ctx, oidcToken)
-if err != nil { /* handle public-good TUF discovery */ }
-bundle, err := packslip.SignKeyless(statement, options)
+```sh
+go get github.com/jdx/packslip/go@latest
 ```
 
-`IdentityFromToken` derives the `Identity` Fulcio will certify for the token,
-so the statement and the certificate agree.
+The module requires Go 1.25.8 or newer. Import it as `packslip`:
 
-These are the only functions that read the environment or make an OIDC
-request; `SignKeyless` and `ProductionKeylessOptions` never do. The token is
-not verified by `IdentityFromToken`: a mismatch fails in `SignKeyless` before
-anything is logged.
+```go
+import packslip "github.com/jdx/packslip/go"
+```
 
-Four helpers map a build matrix to the documented vocabularies:
-`ArchFromGo(goarch, goarm)` translates a `GOARCH` (`amd64` to `x86_64`,
-`arm` with `GOARM=7` to `armv7`; a universal macOS binary gets no arch),
-`VariantFromGo(goarch, level)` returns the `variant` of a build above Go's
-default CPU level (`goamd64: v3` is `v3`; soft-float ARM is `softfloat`; a
-default-level build has none), `VariantFromRustABI(abi)` does the same for a
-Rust target's ABI (`gnueabi` is `softfloat`, `gnueabihf` has none), and
-`NewBareBin(artifactName, format, command)` names the executable inside a
-`raw`, `gz`, `xz`, `zst`, or `bz2` artifact.
+## Sign a release
 
-When a resource references a separately uploaded release asset, pass it as
-`packslip.BuildOptions{Assets: []packslip.AssetInput{{Name: "...", Path: "..."}}}`.
-Assets are hashed into subjects but are not artifacts.
+This program signs one archive of a GitHub project and writes the bundle to
+`dist/packslip.sigstore.json`. Run it in a GitHub Actions job in the
+project's repository with `id-token: write` permission. By default, consumers
+accept a `github.com/` project's bundle only when a GitHub Actions job in that
+repository signed it.
+[How trust works](https://packslip.dev/docs/trust/#what-a-project-name-says-about-the-signer)
+explains why.
 
-`Build` and `Statement.Validate` only establish structural validity. `SignKeyless` returns a Sigstore bundle after `sigstore-go` has verified it against the injected trusted root. Never treat parsed JSON as cryptographically verified.
+To sign a domain project, such as `mytool.example.com`, or a `gitlab.com`
+project from GitLab CI, change the program as
+[Sign a domain or GitLab project](https://packslip.dev/docs/go/#sign-a-domain-or-gitlab-project)
+describes. That section also says which CI systems cannot sign keylessly.
 
-## Releases
+```go
+package main
 
-This module shares the CLI/action/npm release version. When release-plz creates
-the root `vX.Y.Z` tag, the release workflow creates `go/vX.Y.Z` at the same
-commit; the `go/` prefix is required for a subdirectory module. The repository's
-release-plz configuration publishes the root Cargo crate only. Go module
-distribution follows the normal Go module proxy behavior—there is no registry
-upload step or separate Go release dispatch.
+import (
+	"context"
+	"log"
+	"os"
+	"time"
+
+	packslip "github.com/jdx/packslip/go"
+)
+
+func main() {
+	ctx := context.Background()
+
+	// SIGSTORE_ID_TOKEN, or a GitHub Actions token when the job has
+	// `id-token: write`.
+	token, err := packslip.AmbientIDToken(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	// The identity Fulcio will put in the signing certificate.
+	identity, err := packslip.IdentityFromToken(token)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	statement, err := packslip.Build(packslip.Predicate{
+		Project:     "github.com/owner/mytool",
+		Version:     "1.2.3",
+		PublishedAt: time.Now(),
+		Source:      &packslip.Source{Repo: "https://github.com/owner/mytool", Tag: "v1.2.3"},
+		Identity:    identity,
+	}, []packslip.ArtifactInput{{
+		Path: "dist/mytool-linux-x64.tar.gz",
+		Artifact: packslip.Artifact{
+			Name:   "mytool-linux-x64.tar.gz",
+			OS:     "linux",
+			Arch:   "x86_64",
+			Format: "tar.gz",
+			Bin:    []packslip.Bin{packslip.NewBin("mytool")},
+		},
+	}})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	options, err := packslip.ProductionKeylessOptions(ctx, token)
+	if err != nil {
+		log.Fatal(err)
+	}
+	bundle, err := packslip.SignKeyless(statement, options)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := os.WriteFile("dist/packslip.sigstore.json", bundle, 0o644); err != nil {
+		log.Fatal(err)
+	}
+}
+```
+
+- `AmbientIDToken` returns `SIGSTORE_ID_TOKEN` when it is set. Otherwise it
+  requests a GitHub Actions token for the `sigstore` audience. It is the only
+  function that reads an OIDC token from the environment or requests one.
+- `IdentityFromToken` derives the identity Fulcio will certify for the token.
+  It does not verify the token. `SignKeyless` refuses a certificate whose
+  identity differs from the statement's `Identity`, before anything reaches
+  the transparency log.
+- `Build` streams each `Path` once to record its size, SHA-256, and SHA-512.
+  `Name` is the artifact's file name in the release, the name you upload it
+  under. The file must hold the exact bytes you upload.
+- `ProductionKeylessOptions` selects the public-good Fulcio and Rekor services
+  and loads the trusted root from Sigstore's TUF metadata. It downloads that
+  metadata and caches it under `~/.sigstore/root`. For a private Sigstore
+  deployment, fill in `KeylessOptions` yourself.
+- `SignKeyless` returns the bundle after sigstore-go verifies it against the
+  trusted root.
+
+Upload the bundle to the release beside the artifacts, named
+`packslip.sigstore.json`.
+
+Passing `Build` or `Statement.Validate` establishes only that a statement is
+well formed. It does not establish who signed a bundle or that its files
+match. Verify bundles with `packslip verify` or a library from
+[Choose a library](https://packslip.dev/docs/libraries/).
+
+## Versions
+
+The module shares packslip's release version with the CLI, the GitHub
+Actions, the Rust crate, and the npm package. Each release `vX.Y.Z` also tags
+the module as `go/vX.Y.Z` at the same commit. To require a specific release:
+
+```sh
+go get github.com/jdx/packslip/go@vX.Y.Z
+```
+
+The version tracks the implementation, not the statement format, which stays
+`release/v1`.
+
+## Documentation
+
+- [Publish from Go](https://packslip.dev/docs/go/): the guide for this
+  module, including `ArchFromGo` for mapping `GOARCH` and `GOARM`,
+  `VariantFromGo` and `VariantFromRustABI` for CPU-level and float-ABI
+  variants, `NewBareBin` for single-file artifacts, and `BuildOptions` for resource
+  assets.
+- [Go package reference](https://pkg.go.dev/github.com/jdx/packslip/go) on
+  pkg.go.dev: every exported function and type.
+- [release/v1 specification](https://packslip.dev/release/v1/): the rules a
+  statement follows.

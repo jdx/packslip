@@ -8,11 +8,14 @@
 //! repository under the old name with a workflow at the same path. Fulcio
 //! records the forge's repository ID in every GitHub Actions and GitLab CI
 //! certificate ([`SourceRepository`]), and it does not change on a rename
-//! or a transfer. [`check`] classifies a verified release against what the
-//! consumer expected, so a rename or a transfer keeps working and a
-//! recreated name is refused. Only a repository's current owner can
-//! transfer it, and that owner already signs its releases, so the owner is
-//! not part of the identity. [`crate::verify::verify_forge`] verifies a
+//! or a transfer. [`check_source`] classifies a verified release against
+//! what the consumer expected, so a rename or a transfer keeps working and
+//! a recreated name is refused; the certificate's source repository binds
+//! the release to the project, so a reusable workflow of another
+//! repository may sign. [`check`] also requires the signer to be a
+//! workflow of the project's repository. Only a repository's current owner
+//! can transfer it, and that owner already signs its releases, so the owner
+//! is not part of the identity. [`crate::verify::verify_forge`] verifies a
 //! bundle and runs it.
 //!
 //! A consumer can hold several pins for a project, such as its own and a
@@ -20,6 +23,13 @@
 //! [`same_workflow`] compares two signers the consumer stored, with the
 //! pins recorded alongside them, for a no-downgrade check that has no
 //! release in hand.
+//!
+//! GitHub and GitLab resolve owner, group, and repository names without
+//! regard to case, and neither lets two repositories' names differ only in
+//! case, so [`check`] and the signer comparisons fold the ASCII case of a
+//! repository's name: `github.com/jdx/Mise` is `github.com/jdx/mise`, not
+//! a rename of it ([`same_project`]). A monorepo subpath, a workflow's path
+//! inside the repository, and its ref compare exactly.
 
 use crate::model;
 use crate::sigstore::{GITHUB_ISSUER, GITLAB_ISSUER, Policy, SourceRepository};
@@ -70,6 +80,7 @@ impl ForgeName<'_> {
 
     /// What every signer identity of the repository starts with: a GitHub
     /// workflow under the repository, a GitLab pipeline config after `//`.
+    /// Compare an identity with it through [`identity_has_prefix`].
     fn signer_prefix(&self) -> String {
         if self.host == "gitlab.com" {
             format!("{}//", self.uri())
@@ -77,6 +88,79 @@ impl ForgeName<'_> {
             format!("{}/", self.uri())
         }
     }
+
+    /// Whether `other` is the same repository, in whatever case either
+    /// spells its name.
+    fn same_repository(&self, other: &ForgeName<'_>) -> bool {
+        same_repository((self.host, self.repository), (other.host, other.repository))
+    }
+}
+
+/// Whether two project names name the same project. On `github.com` and
+/// `gitlab.com` the repository's name, `owner/repo` or the GitLab project
+/// path, compares without regard to ASCII case, as the forge resolves it;
+/// a monorepo subpath, and a name on any other host, compare exactly.
+///
+/// ```
+/// use packslip::forge::same_project;
+///
+/// assert!(same_project("github.com/jdx/mise", "github.com/JDX/Mise"));
+/// assert!(!same_project("github.com/jdx/mise/tool", "github.com/jdx/mise/Tool"));
+/// assert!(!same_project("example.com/Tool", "example.com/tool"));
+/// ```
+pub fn same_project(a: &str, b: &str) -> bool {
+    match (ForgeName::parse(a), ForgeName::parse(b)) {
+        (Some(x), Some(y)) => x.same_repository(&y) && x.subpath == y.subpath,
+        _ => a == b,
+    }
+}
+
+/// Whether two `(forge, repository)` pairs, as [`ForgeName`] and
+/// [`repository_of`] give them, are the same repository: the name compares
+/// without regard to ASCII case.
+fn same_repository(a: (&str, &str), b: (&str, &str)) -> bool {
+    a.0 == b.0 && a.1.eq_ignore_ascii_case(b.1)
+}
+
+/// Where a repository's name lies in a GitHub or GitLab URL, such as a
+/// Source Repository URI, a workflow identity, or a prefix of either:
+/// `owner/repo` after `https://github.com/`, or the project path before
+/// `//` after `https://gitlab.com/`. None for any other URL or identity.
+fn repository_span(url: &str) -> Option<std::ops::Range<usize>> {
+    if let Some(rest) = url.strip_prefix("https://github.com/") {
+        let start = url.len() - rest.len();
+        let len = rest
+            .match_indices('/')
+            .nth(1)
+            .map_or(rest.len(), |(i, _)| i);
+        return Some(start..start + len);
+    }
+    let rest = url.strip_prefix("https://gitlab.com/")?;
+    let start = url.len() - rest.len();
+    Some(start..start + rest.find("//").unwrap_or(rest.len()))
+}
+
+/// Whether the certificate identity `identity` starts with `prefix`. The
+/// GitHub or GitLab repository name that `prefix` spells compares without
+/// regard to ASCII case, as the forge resolves it; everything else,
+/// including a workflow's path and ref, compares exactly.
+pub(crate) fn identity_has_prefix(identity: &str, prefix: &str) -> bool {
+    let Some(name) = repository_span(prefix) else {
+        return identity.starts_with(prefix);
+    };
+    let (identity, prefix) = (identity.as_bytes(), prefix.as_bytes());
+    identity.len() >= name.end
+        && identity[..name.start] == prefix[..name.start]
+        && identity[name.clone()].eq_ignore_ascii_case(&prefix[name.clone()])
+        && identity[name.end..].starts_with(&prefix[name.end..])
+}
+
+/// Whether two URLs or certificate identities are the same, a GitHub or
+/// GitLab repository's name in them compared without regard to ASCII case,
+/// as the forge resolves it; everything else, including a workflow's path
+/// and ref, compares exactly.
+pub(crate) fn same_url(a: &str, b: &str) -> bool {
+    a.len() == b.len() && identity_has_prefix(a, b)
 }
 
 /// What a consumer remembers about a forge project's identity once it has
@@ -157,6 +241,20 @@ impl ForgePin {
         };
         before.host == now.host && previous.repository_id == self.repository_id
     }
+}
+
+/// A pin of the repository a certificate's Source Repository extensions
+/// record, under its name on the forge (`github.com/owner/repo`), when they
+/// record the repository's ID on `github.com` or `gitlab.com`. None for any
+/// other certificate, such as one issued before Fulcio recorded the ID, or
+/// one from a self-hosted forge, whose names [`ForgePin::continues`] cannot
+/// compare. Verifies nothing: take `source` from an authenticated bundle.
+#[cfg(any(feature = "install-policy", test))]
+pub(crate) fn source_pin(source: &SourceRepository) -> Option<ForgePin> {
+    let id = source.id.as_deref().filter(|id| !id.is_empty())?;
+    let name = source.uri.strip_prefix("https://")?;
+    let parsed = ForgeName::parse(name)?;
+    (parsed.subpath.is_none() && parsed.uri() == source.uri).then(|| ForgePin::of(name, id))
 }
 
 /// Where a consumer's pin came from, so that a refusal can say which one
@@ -330,7 +428,8 @@ impl std::fmt::Display for Evidence {
 #[non_exhaustive]
 pub enum Continuity {
     /// Signed under the requested name, by the pinned repository when
-    /// there was a pin.
+    /// there was a pin. A GitHub or GitLab name spelled in another case is
+    /// the requested name ([`same_project`]).
     Same,
     /// The same repository under another name: renamed or transferred to
     /// another owner since the request's name was current, or, for a release
@@ -439,6 +538,8 @@ pub struct Check {
     /// repository is the one expected.
     by_id: bool,
     pin_workflow: bool,
+    /// The project the consumer asked for.
+    requested: String,
     /// The names of the projects the consumer's pins recorded, which a
     /// renamed project's earlier signers were workflows of.
     previous_projects: Vec<String>,
@@ -453,8 +554,16 @@ impl Check {
     /// `https://github.com/old/tool/.github/workflows/release.yml`
     /// continues as `https://github.com/new/tool/.github/workflows/release.yml`.
     /// When the name was all there was to go on, the identity must be the
-    /// same apart from its ref. [`same_workflow`] compares two signers a
-    /// consumer stored.
+    /// same apart from its ref and the case of the repository's name.
+    /// [`same_workflow`] compares two signers a consumer stored.
+    ///
+    /// A reusable workflow of another repository and the project's own
+    /// workflow never continue each other, whatever their paths: a shared
+    /// workflow continues only a workflow of that same repository, and the
+    /// project's own workflow continues only one recorded under a name the
+    /// repository ID showed is the project's (the name the release was
+    /// signed under, the requested name, or a name one of the consumer's
+    /// pins recorded). [`same_workflow`] holds the same rule.
     ///
     /// A release that declares `pin_workflow: false` (see
     /// [`Check::pins_workflow`]) is held to the repository alone: any
@@ -472,33 +581,25 @@ impl Check {
             else {
                 return false;
             };
-            return before.0 == now.0 && (self.by_id || before == now);
+            return before.0 == now.0 && (self.by_id || same_repository(before, now));
         }
-        // A release signed through a shared workflow needs `previous` to be a
-        // workflow of that repository. One signed by the project's own
-        // workflow needs `previous` to be the project's too, under the name
-        // of any pin the consumer holds, since a rename is not a shared
-        // workflow. Without a pin to name the project's earlier names,
-        // nothing tells the two apart, so only the first direction is held.
+        // `previous` was the project's own workflow when it is a workflow of
+        // a name the repository ID showed is the project's; any other
+        // repository's was a shared one. A release signed through a shared
+        // workflow continues only a workflow of that same repository, and
+        // one signed by the project's own workflow only the project's own.
         if let (Some(pin), Some(before)) = (pin, repository_of(previous)) {
-            match external_signer(&self.identity, pin) {
-                Some(shared) => {
-                    if before != shared {
-                        return false;
-                    }
-                }
-                None => {
-                    let own = |name: &str| {
-                        ForgeName::parse(name)
-                            .is_some_and(|name| (name.host, name.repository) == before)
-                    };
-                    if !self.previous_projects.is_empty()
-                        && !own(&pin.project)
-                        && !self.previous_projects.iter().any(|name| own(name))
-                    {
-                        return false;
-                    }
-                }
+            let own = std::iter::once(pin.project.as_str())
+                .chain(std::iter::once(self.requested.as_str()))
+                .chain(self.previous_projects.iter().map(String::as_str))
+                .filter_map(ForgeName::parse)
+                .any(|name| same_repository((name.host, name.repository), before));
+            let continues = match external_signer(&self.identity, pin) {
+                Some(shared) => same_repository(before, shared) && !own,
+                None => own,
+            };
+            if !continues {
+                return false;
             }
         }
         same_path(previous, pin, &self.identity, pin)
@@ -536,17 +637,26 @@ impl Check {
 /// name looks like. A workflow of another repository, such as a shared
 /// reusable workflow, is the same signer only as a workflow of that
 /// repository, whatever its path. Without both pins, the identities must be
-/// the same apart from a workflow's ref.
+/// the same apart from a workflow's ref and the case of a GitHub or GitLab
+/// repository's name.
 pub fn same_workflow(
     previous: &str,
     previous_pin: Option<&ForgePin>,
     current: &str,
     current_pin: Option<&ForgePin>,
 ) -> bool {
-    if let (Some(before), Some(now)) = (previous_pin, current_pin)
-        && external_signer(previous, before) != external_signer(current, now)
-    {
-        return false;
+    if let (Some(before), Some(now)) = (previous_pin, current_pin) {
+        let shared = match (
+            external_signer(previous, before),
+            external_signer(current, now),
+        ) {
+            (None, None) => true,
+            (Some(before), Some(now)) => same_repository(before, now),
+            _ => false,
+        };
+        if !shared {
+            return false;
+        }
     }
     same_path(previous, previous_pin, current, current_pin)
 }
@@ -564,10 +674,10 @@ fn same_path(
             now.continues(before)
                 && match (workflow_path(previous), workflow_path(current)) {
                     (Some(before), Some(now)) => before == now,
-                    _ => without_ref(previous) == without_ref(current),
+                    _ => same_url(without_ref(previous), without_ref(current)),
                 }
         }
-        _ => without_ref(previous) == without_ref(current),
+        _ => same_url(without_ref(previous), without_ref(current)),
     }
 }
 
@@ -580,7 +690,7 @@ fn same_path(
 fn external_signer<'a>(identity: &'a str, pin: &ForgePin) -> Option<(&'a str, &'a str)> {
     let signer = repository_of(identity)?;
     let project = ForgeName::parse(&pin.project)?;
-    (signer != (project.host, project.repository)).then_some(signer)
+    (!same_repository(signer, (project.host, project.repository))).then_some(signer)
 }
 
 /// A workflow identity without the ref after its last `@`. Only a URL
@@ -727,7 +837,7 @@ fn check_inner(
         });
     }
     let repository = got.uri();
-    if require_signer && !identity.starts_with(&got.signer_prefix()) {
+    if require_signer && !identity_has_prefix(identity, &got.signer_prefix()) {
         return Err(IdentityError::SignerOutsideRepository {
             identity: identity.to_string(),
             repository,
@@ -736,7 +846,7 @@ fn check_inner(
     // The IDs describe the repository the run was based on; they say
     // something about this project only if that is the one it names.
     if let Some(source) = source
-        && source.uri != repository
+        && !same_url(&source.uri, &repository)
     {
         return Err(IdentityError::SourceMismatch {
             certificate: source.uri.clone(),
@@ -746,7 +856,7 @@ fn check_inner(
 
     let actual_id = source.and_then(|s| s.id.as_deref());
     let pins = expected.all_pins();
-    let same_name = signed_project == requested;
+    let same_name = same_project(signed_project, requested);
     let by_id =
         actual_id.is_some() && (!pins.is_empty() || expected.resolved_repository_id.is_some());
     let continuity = match actual_id {
@@ -790,6 +900,7 @@ fn check_inner(
         identity: identity.to_string(),
         by_id,
         pin_workflow: true,
+        requested: requested.to_string(),
         previous_projects: pins.iter().map(|(pin, _)| pin.project.clone()).collect(),
     })
 }
@@ -1278,6 +1389,62 @@ mod tests {
         assert!(!renamed.continues_signer(
             "https://github.com/jdx/shared/.github/workflows/release.yml@refs/tags/v1"
         ));
+
+        // A repository that took the project's old name is another
+        // repository: its shared workflow does not continue the project's
+        // own, recorded under that name.
+        let squatter = "https://github.com/jdx/old-hk/.github/workflows/release.yml@refs/tags/v2";
+        let taken = check_source(
+            &Expected::new("github.com/jdx/hk").pinned(Some(&old)),
+            "github.com/jdx/hk",
+            squatter,
+            Some(GITHUB_ISSUER),
+            Some(&hk()),
+        )
+        .unwrap();
+        assert!(!taken.continues_signer(
+            "https://github.com/jdx/old-hk/.github/workflows/release.yml@refs/tags/v1"
+        ));
+    }
+
+    #[test]
+    fn without_a_pin_a_shared_workflow_and_the_projects_own_still_differ() {
+        // Only the forge's lookup gives the repository ID, so the names the
+        // project is known under are the requested one and the one the
+        // release was signed under.
+        let expected = Expected::new("github.com/jdx/hk").resolved(Some("922514152"));
+        let shared = "https://github.com/jdx/shared/.github/workflows/release.yml@refs/tags/v2";
+        let own = "https://github.com/jdx/hk/.github/workflows/release.yml@refs/tags/v2";
+        let signed = |signer: &str| {
+            check_source(
+                &expected,
+                "github.com/jdx/hk",
+                signer,
+                Some(GITHUB_ISSUER),
+                Some(&hk()),
+            )
+            .unwrap()
+        };
+        let shared_before =
+            "https://github.com/jdx/shared/.github/workflows/release.yml@refs/tags/v1";
+        let own_before = "https://github.com/jdx/hk/.github/workflows/release.yml@refs/tags/v1";
+        assert!(signed(shared).continues_signer(shared_before));
+        assert!(!signed(shared).continues_signer(own_before));
+        assert!(signed(own).continues_signer(own_before));
+        assert!(!signed(own).continues_signer(shared_before));
+
+        // After a transfer, a workflow under the requested name is the
+        // project's own, and a shared one still is not.
+        let moved = check_source(
+            &expected,
+            "github.com/acme/hk",
+            "https://github.com/acme/hk/.github/workflows/release.yml@refs/tags/v2",
+            Some(GITHUB_ISSUER),
+            Some(&transferred()),
+        )
+        .unwrap();
+        assert!(moved.continues_signer(own_before));
+        assert!(!moved.continues_signer(shared_before));
     }
 
     #[test]
@@ -1665,6 +1832,158 @@ mod tests {
         assert!(!gitlab.continues(&hk));
         assert!(acme.continues(&hk));
         assert!(!ForgePin::of("github.com/jdx/hk", "555").continues(&hk));
+    }
+
+    #[test]
+    fn forge_names_compare_without_case() {
+        // GitHub's own spelling in the certificate, another in the statement
+        // and the request: the same repository, not a rename.
+        let canonical = SourceRepository::new("https://github.com/jdx/Mise").with_id("1");
+        let signer = "https://github.com/jdx/Mise/.github/workflows/release.yml@refs/tags/v1";
+        let pin = ForgePin::of("github.com/jdx/mise", "1");
+        for expected in [
+            Expected::new("github.com/jdx/mise"),
+            Expected::new("github.com/JDX/MISE"),
+            Expected::new("github.com/JDX/mise").pinned(Some(&pin)),
+        ] {
+            for source in [Some(&canonical), None] {
+                let ok = check(
+                    &expected,
+                    "github.com/jdx/mise",
+                    signer,
+                    Some(GITHUB_ISSUER),
+                    source,
+                )
+                .unwrap();
+                assert_eq!(ok.continuity, Continuity::Same, "{expected:?} {source:?}");
+            }
+        }
+        // The workflow's path keeps its case, by repository ID or by name.
+        let by_name = check(
+            &Expected::new("github.com/jdx/mise"),
+            "github.com/jdx/mise",
+            signer,
+            Some(GITHUB_ISSUER),
+            None,
+        )
+        .unwrap();
+        let by_id = check(
+            &Expected::new("github.com/jdx/mise").pinned(Some(&pin)),
+            "github.com/jdx/mise",
+            signer,
+            Some(GITHUB_ISSUER),
+            Some(&canonical),
+        )
+        .unwrap();
+        for ok in [&by_name, &by_id] {
+            assert!(
+                ok.continues_signer("https://github.com/JDX/mise/.github/workflows/release.yml")
+            );
+            assert!(
+                !ok.continues_signer("https://github.com/jdx/Mise/.github/workflows/Release.yml")
+            );
+        }
+        assert!(same_workflow(
+            "https://github.com/jdx/mise/.github/workflows/release.yml",
+            None,
+            signer,
+            None,
+        ));
+        // A repository ID still decides, whatever the case.
+        let err = check(
+            &Expected::new("github.com/jdx/mise").pinned(Some(&pin)),
+            "github.com/jdx/MISE",
+            "https://github.com/jdx/MISE/.github/workflows/release.yml@refs/tags/v1",
+            Some(GITHUB_ISSUER),
+            Some(&SourceRepository::new("https://github.com/jdx/MISE").with_id("2")),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, IdentityError::DifferentRepository { .. }),
+            "{err}"
+        );
+        // A monorepo subpath is a tool, not a forge name: exact.
+        let err = check(
+            &Expected::new("github.com/jdx/mise/tool"),
+            "github.com/jdx/mise/Tool",
+            signer,
+            Some(GITHUB_ISSUER),
+            Some(&canonical),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, IdentityError::ProjectMismatch { .. }),
+            "{err}"
+        );
+        // GitLab resolves its paths without case too.
+        let ok = check(
+            &Expected::new("gitlab.com/group/sub/tool"),
+            "gitlab.com/Group/Sub/Tool",
+            "https://gitlab.com/Group/Sub/Tool//.gitlab-ci.yml@refs/tags/v1",
+            Some(GITLAB_ISSUER),
+            Some(&SourceRepository::new("https://gitlab.com/group/sub/tool").with_id("42")),
+        )
+        .unwrap();
+        assert_eq!(ok.continuity, Continuity::Same);
+
+        assert!(identity_has_prefix(
+            "https://github.com/JDX/Mise/.github/workflows/r.yml",
+            "https://github.com/jdx/mise/"
+        ));
+        assert!(identity_has_prefix(
+            "https://gitlab.com/Group/Tool//.gitlab-ci.yml",
+            "https://gitlab.com/group/tool//"
+        ));
+        for (identity, prefix) in [
+            // Only the repository's name folds: not the scheme and host, the
+            // workflow's path, or a name on another host.
+            (
+                "HTTPS://GITHUB.COM/jdx/mise/r.yml",
+                "https://github.com/jdx/mise/",
+            ),
+            (
+                "https://github.com/jdx/mise/.GITHUB/workflows/r.yml",
+                "https://github.com/jdx/mise/.github/",
+            ),
+            ("https://example.com/Jdx/r.yml", "https://example.com/jdx/"),
+            (
+                "https://github.com/jdx/mise-evil/r.yml",
+                "https://github.com/jdx/mise/",
+            ),
+            ("https://github.com/jdx", "https://github.com/jdx/mise/"),
+            (
+                "https://gitlab.com/group/tool/x//.gitlab-ci.yml",
+                "https://gitlab.com/group/tool//",
+            ),
+        ] {
+            assert!(!identity_has_prefix(identity, prefix), "{identity}");
+        }
+        assert!(!same_project("example.com/Tool", "example.com/tool"));
+        assert!(same_project("example.com/tool", "example.com/tool"));
+        assert!(!same_project("github.com/jdx/mise", "gitlab.com/jdx/mise"));
+    }
+
+    #[test]
+    fn a_source_repository_with_an_id_on_a_forge_gives_a_pin() {
+        assert_eq!(source_pin(&hk()), Some(pin()));
+        assert_eq!(
+            source_pin(&SourceRepository::new("https://gitlab.com/group/sub/tool").with_id("7")),
+            Some(ForgePin::of("gitlab.com/group/sub/tool", "7"))
+        );
+        for source in [
+            // No ID to remember: an older certificate.
+            SourceRepository::new("https://github.com/jdx/hk"),
+            SourceRepository::new("https://github.com/jdx/hk").with_id(""),
+            // A self-hosted forge, whose names a pin cannot compare.
+            SourceRepository::new("https://git.example.com/jdx/hk").with_id("1"),
+            // Not a repository's URL.
+            SourceRepository::new("https://github.com/jdx").with_id("1"),
+            SourceRepository::new("https://github.com/jdx/hk/tool").with_id("1"),
+            SourceRepository::new("https://github.com/jdx/hk/").with_id("1"),
+            SourceRepository::new("http://github.com/jdx/hk").with_id("1"),
+        ] {
+            assert_eq!(source_pin(&source), None, "{source:?}");
+        }
     }
 
     #[test]

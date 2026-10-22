@@ -148,3 +148,75 @@ func TestValidateRejectsObjectBinWithoutName(t *testing.T) {
 		t.Fatal("accepted object-form bin without a name")
 	}
 }
+
+func TestCanonicalJSONWritesPublishedAtInUTC(t *testing.T) {
+	cest := time.FixedZone("CEST", 2*60*60)
+	statement := Statement{Type: StatementType, PredicateType: ReleasePredicateType,
+		Subject: []Subject{{Name: "tool", Digest: Digest{SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}},
+		Predicate: Predicate{Project: "github.com/example/tool", Version: "0.1.0", PublishedAt: time.Date(2026, 9, 1, 14, 0, 0, 0, cest),
+			Artifacts: []Artifact{{Name: "tool", Size: 1, Format: "raw", Bin: []Bin{NewBin("tool")}}},
+			Identity:  Identity{Scheme: "sigstore-key", KeyID: "AABB"}}}
+	encoded, err := statement.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Predicate struct {
+			PublishedAt string `json:"published_at"`
+		} `json:"predicate"`
+	}
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := decoded.Predicate.PublishedAt, "2026-09-01T12:00:00Z"; got != want {
+		t.Fatalf("published_at = %s, want %s", got, want)
+	}
+	if statement.Predicate.PublishedAt.Location() != cest {
+		t.Fatal("CanonicalJSON changed the caller's statement")
+	}
+}
+
+func TestBuildRefusesRequirementMinimumsOutsideTheGrammar(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "tool.tar.xz")
+	if err := os.WriteFile(file, []byte("packslip"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	build := func(requires Requires) error {
+		_, err := Build(Predicate{
+			Project:     "github.com/example/tool",
+			Version:     "0.1.0",
+			PublishedAt: time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC),
+			Identity:    Identity{Scheme: "sigstore-key", KeyID: "AABB"},
+		}, []ArtifactInput{{
+			Path:     file,
+			Artifact: Artifact{Name: "tool.tar.xz", OS: "linux", Arch: "x86_64", Libc: "gnu", Format: "tar.xz", Requires: &requires},
+		}})
+		return err
+	}
+	for _, requires := range []Requires{{GlibcMin: "glibc-2.31"}, {OSMin: "v5"}, {OSMin: "5.4 LTS", GlibcMin: "2.31"}} {
+		if err := build(requires); err == nil {
+			t.Fatalf("Build accepted %#v", requires)
+		}
+	}
+	// A valid spelling is written, comparable or not.
+	if err := build(Requires{OSMin: "5.4", GlibcMin: "2.31-r1"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRequiredBinRefusesAnExplicitEmptyMin(t *testing.T) {
+	var b RequiredBin
+	if err := json.Unmarshal([]byte(`{"name":"java","min":""}`), &b); err == nil {
+		t.Fatal(`accepted "min": ""`)
+	}
+	for text, want := range map[string]RequiredBin{
+		`{"name":"java"}`:            {Name: "java"},
+		`{"name":"java","min":null}`: {Name: "java"},
+		`{"name":"java","min":"17"}`: {Name: "java", Min: "17"},
+	} {
+		var got RequiredBin
+		if err := json.Unmarshal([]byte(text), &got); err != nil || got != want {
+			t.Fatalf("%s: got %#v, %v", text, got, err)
+		}
+	}
+}

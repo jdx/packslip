@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path"
 	"regexp"
 	"strings"
 	"time"
@@ -117,6 +116,28 @@ type RequiredBin struct {
 	Name string `json:"name"`
 	Min  string `json:"min,omitempty"`
 }
+
+// UnmarshalJSON refuses an explicit empty min. An empty Min means the entry
+// has none, so Validate cannot tell "min": "" from an absent min, but the
+// specification makes a document with an empty min invalid.
+func (b *RequiredBin) UnmarshalJSON(v []byte) error {
+	var x struct {
+		Name string  `json:"name"`
+		Min  *string `json:"min"`
+	}
+	if err := json.Unmarshal(v, &x); err != nil {
+		return err
+	}
+	if x.Min != nil && *x.Min == "" {
+		return fmt.Errorf("packslip: required bin %q has an empty min", x.Name)
+	}
+	*b = RequiredBin{Name: x.Name}
+	if x.Min != nil {
+		b.Min = *x.Min
+	}
+	return nil
+}
+
 type Resource struct {
 	Kind       string                     `json:"kind"`
 	Artifact   string                     `json:"artifact,omitempty"`
@@ -454,17 +475,24 @@ func validMin(v string) bool {
 	return v != "" && v[0] >= '0' && v[0] <= '9' && regexp.MustCompile(`^[A-Za-z0-9.+-]+$`).MatchString(v)
 }
 func validShell(v string) bool { return v != "" && regexp.MustCompile(`^[a-z0-9_-]+$`).MatchString(v) }
-func fileName(v string) string { return path.Base(v) }
+
+// fileName is the last path segment, as the Rust crate reads it: empty for a
+// path ending in "/", which Validate then refuses as an empty name.
+func fileName(v string) string { return v[strings.LastIndex(v, "/")+1:] }
 func commandName(v string) string {
 	if len(v) >= 4 && strings.EqualFold(v[len(v)-4:], ".exe") {
 		return v[:len(v)-4]
 	}
 	return v
 }
+
+// CanonicalJSON validates the statement and encodes it as it is signed.
+// PublishedAt is written in UTC with Z, whatever its location.
 func (s Statement) CanonicalJSON() ([]byte, error) {
 	if err := s.Validate(); err != nil {
 		return nil, err
 	}
+	s.Predicate.PublishedAt = s.Predicate.PublishedAt.UTC()
 	return json.Marshal(s)
 }
 func EqualDigests(data []byte) Digest {

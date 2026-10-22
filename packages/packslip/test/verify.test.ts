@@ -16,6 +16,7 @@ import {
   verifyRelease,
   type VerifiedStatement,
 } from '../src/index.ts';
+import { sameIdentity } from '../src/project.ts';
 import { readStatement } from '../src/statement.ts';
 
 // The bundle jdx/mise v2026.10.11 published as packslip.sigstore.json.
@@ -52,6 +53,16 @@ describe('verifyRelease (public-good sigstore)', () => {
     assert.match(artifact.sha512 ?? '', /^[0-9a-f]{128}$/);
   });
 
+  it('still verifies a release from the project repository with allowOtherRepository', async () => {
+    const statement = await verifyRelease(bundleText, {
+      identity: IDENTITY,
+      issuer: ISSUER,
+      project: 'github.com/jdx/mise',
+      allowOtherRepository: true,
+    });
+    assert.deepEqual(statement.signer, { identity: IDENTITY, issuer: ISSUER });
+  });
+
   it('accepts an identity predicate', async () => {
     const statement = await verifyRelease(bundleText, {
       identity: (san) => san.startsWith('https://github.com/jdx/mise/.github/workflows/'),
@@ -64,6 +75,15 @@ describe('verifyRelease (public-good sigstore)', () => {
     await assert.rejects(
       verifyRelease(bundleText, { identity: 'https://github.com/evil/mise/.github/workflows/release.yml@refs/tags/v1', issuer: ISSUER }),
       (error: unknown) => error instanceof IdentityError && error.actualIdentity === IDENTITY,
+    );
+  });
+
+  it('matches a GitHub repository name in a string identity in any case', async () => {
+    const statement = await verifyRelease(bundleText, { identity: IDENTITY.replace('jdx/mise', 'JDX/Mise'), issuer: ISSUER });
+    assert.equal(statement.signer.identity, IDENTITY);
+    await assert.rejects(
+      verifyRelease(bundleText, { identity: IDENTITY.replace('release.yml', 'Release.yml'), issuer: ISSUER }),
+      IdentityError,
     );
   });
 
@@ -111,6 +131,23 @@ describe('verifyRelease (public-good sigstore)', () => {
   });
 });
 
+describe('sameIdentity', () => {
+  it('compares a GitHub or GitLab repository name without case, and the rest exactly', () => {
+    assert.ok(sameIdentity(IDENTITY, IDENTITY.replace('jdx/mise', 'JDX/MISE')));
+    assert.ok(sameIdentity('https://gitlab.com/Group/Tool//.gitlab-ci.yml@refs/tags/v1', 'https://gitlab.com/group/tool//.gitlab-ci.yml@refs/tags/v1'));
+    assert.ok(sameIdentity('person@example.com', 'person@example.com'));
+    for (const other of [
+      IDENTITY.replace('.github', '.GITHUB'),
+      IDENTITY.replace('refs/tags/v', 'refs/tags/V'),
+      IDENTITY.replace('https://github.com', 'HTTPS://GITHUB.COM'),
+      IDENTITY.replace('jdx/mise', 'jdx/mise-evil'),
+    ]) {
+      assert.ok(!sameIdentity(other, IDENTITY), other);
+    }
+    assert.ok(!sameIdentity('Person@example.com', 'person@example.com'));
+  });
+});
+
 // A wrong predicate type cannot be re-signed, so the statement checks run on their own too.
 describe('readStatement', () => {
   const payload = (edit: (statement: Record<string, any>) => void = () => {}) => {
@@ -122,6 +159,18 @@ describe('readStatement', () => {
   it('accepts the real statement', () => {
     const statement = readStatement(payload(), { project: 'github.com/jdx/mise' });
     assert.equal(statement.subject.length, 41);
+  });
+
+  it('matches a GitHub repository name in any case, but a subpath exactly', () => {
+    assert.equal(readStatement(payload(), { project: 'github.com/JDX/Mise' }).predicate.project, 'github.com/jdx/mise');
+    assert.throws(
+      () => readStatement(payload((s) => (s.predicate.project = 'github.com/jdx/mise/tool')), { project: 'github.com/jdx/mise/Tool' }),
+      (error: unknown) => error instanceof StatementError && error.code === 'project',
+    );
+    assert.throws(
+      () => readStatement(payload((s) => (s.predicate.project = 'example.com/Tool')), { project: 'example.com/tool' }),
+      (error: unknown) => error instanceof StatementError && error.code === 'project',
+    );
   });
 
   it('rejects the release list predicate', () => {

@@ -859,6 +859,43 @@ impl Session {
         Ok(read(&path)?.unwrap_or_default())
     }
 
+    /// The projects named by the records of every remembered history: the
+    /// spelling each install request used. A history kept under one name is
+    /// found by its exact spelling, so this is how a consumer finds one that
+    /// an earlier version kept under the same name in another case.
+    /// A history file that cannot be parsed names nothing.
+    pub fn remembered_projects(&self) -> Result<BTreeSet<String>, Error> {
+        let mut projects = BTreeSet::new();
+        let entries = match fs::read_dir(&self.state) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(projects),
+            Err(e) => return Err(e.into()),
+        };
+        for entry in entries {
+            let entry = entry?;
+            let name = entry.file_name();
+            let is_history = name
+                .to_str()
+                .is_some_and(|name| name.starts_with("history-") && name.ends_with(".json"));
+            if !is_history {
+                continue;
+            }
+            let history = match read::<History>(&entry.path()) {
+                Ok(Some(history)) => history,
+                Ok(None) | Err(Error::Json(_)) => continue,
+                Err(e) => return Err(e),
+            };
+            projects.extend(
+                history
+                    .release
+                    .into_iter()
+                    .chain(history.list)
+                    .map(|record| record.project),
+            );
+        }
+        Ok(projects)
+    }
+
     /// Persist accepted list history before artifact work, so a later failed
     /// install cannot make an older signed list acceptable again.
     pub fn remember(&self, project: &str, history: &History) -> Result<(), Error> {

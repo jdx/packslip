@@ -4,7 +4,7 @@
 // implement a release tool adapter. Publishers describe their artifacts
 // explicitly, call Build, then sign the resulting statement with SignKeyless.
 //
-// In CI, AmbientIDToken and IdentityFromToken obtain the OIDC token and the
-// identity Fulcio will certify for it; they are the only functions that read
-// the environment or make an OIDC request.
+// In CI, AmbientIDToken obtains the OIDC token and IdentityFromToken derives
+// the identity Fulcio will certify for it. AmbientIDToken is the only function
+// that reads an OIDC token from the environment or requests one.
 package packslip

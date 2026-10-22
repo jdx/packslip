@@ -75,7 +75,7 @@
       "description": "The `releases/v1` predicate: which releases a project has, so a\nconsumer can find them without a registry, and cannot be shown a stale\nor truncated view without noticing.",
       "properties": {
         "expires_at": {
-          "description": "After this the list is stale and a consumer refuses it, RFC 3339 UTC.",
+          "description": "After this the list is stale and a consumer refuses it, RFC 3339,\nwritten in UTC.",
           "type": "string"
         },
         "extensions": {
@@ -84,7 +84,7 @@
           "type": "object"
         },
         "generated_at": {
-          "description": "When the list was produced, RFC 3339 UTC.",
+          "description": "When the list was produced, RFC 3339, written in UTC.",
           "type": "string"
         },
         "identity": {
@@ -102,7 +102,7 @@
           "type": "string"
         },
         "releases": {
-          "description": "In any order; consumers rank by semver precedence.",
+          "description": "In any order, and possibly empty; consumers rank by semver\nprecedence.",
           "items": {
             "$ref": "#/$defs/ReleaseRef"
           },
@@ -144,7 +144,7 @@
           "type": "string"
         },
         "published_at": {
-          "description": "RFC 3339 UTC, copied from the release's packslip.",
+          "description": "RFC 3339, copied from the release's packslip and written in UTC.",
           "format": "date-time",
           "type": "string"
         },
@@ -242,6 +242,7 @@
       "items": {
         "$ref": "#/$defs/Subject"
       },
+      "minItems": 1,
       "type": "array"
     }
   },

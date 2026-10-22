@@ -61,8 +61,8 @@ func parseIssuedCertificate(data []byte) (*x509.Certificate, error) {
 
 // ProductionKeylessOptions resolves the current Sigstore public-good Fulcio,
 // Rekor, and trust root from production TUF metadata. idToken is deliberately
-// passed by the caller: this package never reads an environment variable or
-// performs an OIDC exchange on its own.
+// passed by the caller: this function never reads a token from the
+// environment or performs an OIDC exchange; AmbientIDToken does that.
 func ProductionKeylessOptions(ctx context.Context, idToken string) (KeylessOptions, error) {
 	if idToken == "" {
 		return KeylessOptions{}, fmt.Errorf("packslip: an OIDC ID token is required")

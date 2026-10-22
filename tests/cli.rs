@@ -77,12 +77,98 @@ fn pin_prints_the_signer_fingerprint_of_a_verified_release() {
 
 const GITHUB_ISSUER: &str = "https://token.actions.githubusercontent.com";
 
+const MKGHTAG_BUNDLE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/mkghtag-v0.1.14-10.sigstore.json"
+);
+const MKGHTAG_SIGNER: &str = "https://github.com/suzuki-shunsuke/go-release-workflow/.github/workflows/release.yaml@refs/heads/add-packslip";
+const MKGHTAG_PIN: &str = "ps1_xfjx4bjm6cpir2jd2yovxlyqxm";
+
+#[test]
+fn a_release_signed_through_another_repositorys_reusable_workflow_verifies_without_flags() {
+    // A run of mkghtag signed this release through go-release-workflow's
+    // reusable workflow. The certificate's source repository, not the
+    // workflow, binds it to github.com/suzuki-shunsuke/mkghtag.
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let (code, out, err) = packslip(d, &["verify", MKGHTAG_BUNDLE]);
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.starts_with(&format!(
+            "ok: github.com/suzuki-shunsuke/mkghtag 0.1.14-10 (prerelease) published 2026-10-11T22:25:09.421283212Z signed by {MKGHTAG_SIGNER} "
+        )),
+        "{out}"
+    );
+    assert!(
+        out.contains("\n  repository https://github.com/suzuki-shunsuke/mkghtag (id 701940692), "),
+        "{out}"
+    );
+
+    let (code, out, err) = packslip(d, &["pin", MKGHTAG_BUNDLE]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out, format!("{MKGHTAG_PIN}\n"), "the pin and nothing else");
+
+    for flags in [
+        &["--pin", MKGHTAG_PIN][..],
+        &["--issuer", GITHUB_ISSUER],
+        &[
+            "--issuer",
+            GITHUB_ISSUER,
+            "--source-repository",
+            "https://github.com/suzuki-shunsuke/mkghtag",
+        ],
+    ] {
+        let mut args = vec!["verify", MKGHTAG_BUNDLE];
+        args.extend_from_slice(flags);
+        let (code, _, err) = packslip(d, &args);
+        assert_eq!(code, 0, "{flags:?}: {err}");
+    }
+
+    // Flags still narrow the policy: a prefix for the project's own
+    // workflows does not match the shared one, and another source
+    // repository is not this one.
+    let (code, _, err) = packslip(
+        d,
+        &[
+            "verify",
+            MKGHTAG_BUNDLE,
+            "--issuer",
+            GITHUB_ISSUER,
+            "--identity-prefix",
+            "https://github.com/suzuki-shunsuke/mkghtag/",
+        ],
+    );
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("expected an identity starting with"), "{err}");
+    let (code, _, err) = packslip(
+        d,
+        &[
+            "verify",
+            MKGHTAG_BUNDLE,
+            "--issuer",
+            GITHUB_ISSUER,
+            "--source-repository",
+            "https://github.com/suzuki-shunsuke/go-release-workflow",
+        ],
+    );
+    assert_eq!(code, 1, "{err}");
+    assert!(
+        err.contains("source repository is https://github.com/suzuki-shunsuke/mkghtag"),
+        "{err}"
+    );
+}
+
 #[test]
 fn verify_source_repository_goes_by_the_certificates_repository_not_its_workflow() {
     let dir = tempfile::tempdir().unwrap();
     let d = dir.path();
-    // A trailing slash is the same repository.
-    for source in ["https://github.com/jdx/hk", "https://github.com/jdx/hk/"] {
+    // A trailing slash is the same repository, and so is its name in
+    // another case, as GitHub resolves it.
+    for source in [
+        "https://github.com/jdx/hk",
+        "https://github.com/jdx/hk/",
+        "https://github.com/JDX/HK",
+    ] {
         let (code, _, err) = packslip(
             d,
             &[
@@ -97,23 +183,29 @@ fn verify_source_repository_goes_by_the_certificates_repository_not_its_workflow
         assert_eq!(code, 0, "{source}: {err}");
     }
 
-    // Another repository is refused whichever workflow signed.
-    let (code, _, err) = packslip(
-        d,
-        &[
-            "verify",
-            HK_BUNDLE,
-            "--issuer",
-            GITHUB_ISSUER,
-            "--source-repository",
-            "https://github.com/jdx/other",
-        ],
-    );
-    assert_eq!(code, 1, "{err}");
-    assert!(
-        err.contains("source repository is https://github.com/jdx/hk"),
-        "{err}"
-    );
+    // Another repository is refused whichever workflow signed, and so is a
+    // path inside this one.
+    for source in [
+        "https://github.com/jdx/other",
+        "https://github.com/jdx/hk/sub",
+    ] {
+        let (code, _, err) = packslip(
+            d,
+            &[
+                "verify",
+                HK_BUNDLE,
+                "--issuer",
+                GITHUB_ISSUER,
+                "--source-repository",
+                source,
+            ],
+        );
+        assert_eq!(code, 1, "{source}: {err}");
+        assert!(
+            err.contains("source repository is https://github.com/jdx/hk"),
+            "{err}"
+        );
+    }
 
     // The issuer is required, and a workflow pin cannot be combined with it.
     let (code, _, err) = packslip(
@@ -155,6 +247,275 @@ fn verify_source_repository_goes_by_the_certificates_repository_not_its_workflow
     );
     assert_ne!(code, 0);
     assert!(err.contains("--pubkey pins a key"), "{err}");
+}
+
+#[test]
+fn identity_flags_narrow_a_forge_projects_policy() {
+    // hk 2.3.0 names github.com/jdx/hk and was signed from that repository,
+    // so flags at least as narrow as the project accept it, with or without
+    // the opt-out. A signature from another repository is refused under
+    // the same flags. Producing one takes a live Fulcio certificate, so the
+    // binary's unit tests cover that with hk's certificate, and CI's signing
+    // job with a release and a list it signs for another project.
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    for flags in [
+        &["--issuer", GITHUB_ISSUER][..],
+        &[
+            "--issuer",
+            GITHUB_ISSUER,
+            "--identity-prefix",
+            "https://github.com/jdx/",
+        ],
+        &[
+            "--issuer",
+            GITHUB_ISSUER,
+            "--identity-prefix",
+            "https://github.com/jdx/",
+            "--allow-other-repository",
+        ],
+        &[
+            "--issuer",
+            GITHUB_ISSUER,
+            "--source-repository",
+            "https://github.com/jdx/hk",
+            "--allow-other-repository",
+        ],
+        &[
+            "--issuer",
+            GITHUB_ISSUER,
+            "--identity-prefix",
+            "https://github.com/jdx/hk/",
+            "--pin",
+            HK_PIN,
+        ],
+    ] {
+        let mut args = vec!["verify", HK_BUNDLE];
+        args.extend_from_slice(flags);
+        let (code, out, err) = packslip(d, &args);
+        assert_eq!(code, 0, "{flags:?}: {err}");
+        assert!(out.starts_with("ok: github.com/jdx/hk 2.3.0 "), "{out}");
+    }
+
+    // The opt-out does not loosen the flags that name the signer.
+    let (code, _, err) = packslip(
+        d,
+        &[
+            "verify",
+            HK_BUNDLE,
+            "--issuer",
+            GITHUB_ISSUER,
+            "--identity-prefix",
+            "https://github.com/jdx/other/",
+            "--allow-other-repository",
+        ],
+    );
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("expected an identity starting with"), "{err}");
+
+    // It needs a flag that names the signer it accepts instead, and a key
+    // has no repository to lift.
+    for flags in [
+        &["--allow-other-repository"][..],
+        &["--issuer", GITHUB_ISSUER, "--allow-other-repository"],
+        &["--pin", HK_PIN, "--allow-other-repository"],
+    ] {
+        let mut args = vec!["verify", HK_BUNDLE];
+        args.extend_from_slice(flags);
+        let (code, out, err) = packslip(d, &args);
+        assert_ne!(code, 0, "{flags:?}");
+        assert_eq!(out, "");
+        assert!(
+            err.contains(
+                "name that signer with --identity, --identity-prefix, or --source-repository"
+            ),
+            "{flags:?}: {err}"
+        );
+    }
+    // Without the project's repository, the issuer is all that vouches for
+    // the signer the flags name, so it is required, as with
+    // --source-repository.
+    for flags in [
+        &[
+            "--identity-prefix",
+            "https://github.com/jdx/",
+            "--allow-other-repository",
+        ][..],
+        &[
+            "--identity",
+            "https://github.com/jdx/hk/.github/workflows/release.yml@refs/tags/v2.3.0",
+            "--allow-other-repository",
+        ],
+        &[
+            "--source-repository",
+            "https://github.com/jdx/hk",
+            "--allow-other-repository",
+        ],
+    ] {
+        let mut args = vec!["verify", HK_BUNDLE];
+        args.extend_from_slice(flags);
+        let (code, out, err) = packslip(d, &args);
+        assert_eq!(code, 1, "{flags:?}");
+        assert_eq!(out, "");
+        assert!(
+            err.contains("--allow-other-repository needs --issuer"),
+            "{flags:?}: {err}"
+        );
+    }
+    let (code, _, err) = packslip(
+        d,
+        &[
+            "verify",
+            HK_BUNDLE,
+            "--pubkey",
+            "RWQ-not-a-key",
+            "--allow-other-repository",
+        ],
+    );
+    assert_ne!(code, 0);
+    assert!(err.contains("a key has none"), "{err}");
+}
+
+#[test]
+fn a_key_signed_release_and_list_for_a_forge_project_answer_to_the_key_alone() {
+    // Only a certificate names a repository: a pinned key is the whole
+    // policy for a release and for a release list, whatever host the
+    // project is on.
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let (code, _, err) = packslip(d, &["keygen", "-o", "release.key"]);
+    assert_eq!(code, 0, "{err}");
+    std::fs::write(d.join("tool-v1.0.0-linux-x64.tar.xz"), b"linux").unwrap();
+    let (code, _, err) = packslip(
+        d,
+        &[
+            "create",
+            "--project",
+            "github.com/someone/tool",
+            "--version",
+            "1.0.0",
+            "--key",
+            "release.key",
+            "--no-log",
+            "--out",
+            "dist",
+            "--url-base",
+            "https://dl.example.com/tool/1.0.0",
+            "--published-at",
+            "2026-09-01T00:00:00Z",
+            "tool-v1.0.0-linux-x64.tar.xz",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    let (code, _, err) = packslip(
+        d,
+        &[
+            "releases",
+            "--project",
+            "github.com/someone/tool",
+            "--sequence",
+            "1",
+            "--release",
+            "https://dl.example.com/tool/1.0.0/packslip.sigstore.json=dist/packslip.sigstore.json",
+            "--key",
+            "release.key",
+            "--no-log",
+            "--out",
+            "packslip.json",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+
+    for (bundle, ok) in [
+        (
+            "dist/packslip.sigstore.json",
+            "ok: github.com/someone/tool 1.0.0 ",
+        ),
+        (
+            "packslip.json",
+            "ok: release list for github.com/someone/tool ",
+        ),
+    ] {
+        let (code, out, err) = packslip(
+            d,
+            &[
+                "verify",
+                bundle,
+                "--pubkey",
+                "release.pub",
+                "--allow-unlogged",
+            ],
+        );
+        assert_eq!(code, 0, "{bundle}: {err}");
+        assert!(out.starts_with(ok), "{out}");
+        let (code, _, err) = packslip(
+            d,
+            &[
+                "verify",
+                bundle,
+                "--pubkey",
+                "release.pub",
+                "--allow-unlogged",
+                "--allow-other-repository",
+            ],
+        );
+        assert_ne!(code, 0, "{bundle}");
+        assert!(err.contains("a key has none"), "{bundle}: {err}");
+        // The identity the project's name implies is a certificate's.
+        let (code, _, err) = packslip(d, &["verify", bundle, "--allow-unlogged"]);
+        assert_eq!(code, 1, "{bundle}");
+        assert!(err.contains("pin the key instead"), "{bundle}: {err}");
+    }
+}
+
+#[test]
+fn verify_identity_flags_match_a_github_repository_name_in_any_case() {
+    let dir = tempfile::tempdir().unwrap();
+    let workflow = "/.github/workflows/release.yml@refs/tags/v2.3.0";
+    for flags in [
+        ["--identity-prefix", "https://github.com/JDX/HK/"].as_slice(),
+        &[
+            "--issuer",
+            GITHUB_ISSUER,
+            "--identity",
+            &format!("https://github.com/JDX/HK{workflow}"),
+        ],
+    ] {
+        let (code, out, err) = packslip(dir.path(), &[&["verify", HK_BUNDLE], flags].concat());
+        assert_eq!(code, 0, "{flags:?}: {err}");
+        assert!(out.starts_with("ok: github.com/jdx/hk 2.3.0 "), "{out}");
+    }
+    // The workflow's path inside the repository, and its ref, keep their
+    // case.
+    let (code, _, err) = packslip(
+        dir.path(),
+        &[
+            "verify",
+            HK_BUNDLE,
+            "--identity-prefix",
+            "https://github.com/jdx/hk/.GITHUB/",
+        ],
+    );
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("expected an identity starting with"), "{err}");
+    for identity in [
+        "https://github.com/jdx/hk/.GITHUB/workflows/release.yml@refs/tags/v2.3.0",
+        "https://github.com/jdx/hk/.github/workflows/release.yml@refs/tags/V2.3.0",
+    ] {
+        let (code, _, err) = packslip(
+            dir.path(),
+            &[
+                "verify",
+                HK_BUNDLE,
+                "--issuer",
+                GITHUB_ISSUER,
+                "--identity",
+                identity,
+            ],
+        );
+        assert_eq!(code, 1, "{identity}: {err}");
+        assert!(err.contains("identity mismatch"), "{err}");
+    }
 }
 
 #[test]
@@ -469,6 +830,38 @@ fn keygen_create_verify_show_and_list() {
         ),
         "{out}"
     );
+    // With no --release, a list with no releases, which still verifies.
+    let (code, out, err) = packslip(
+        d,
+        &[
+            "releases",
+            "--project",
+            "tool.example.com",
+            "--sequence",
+            "5",
+            "--generated-at",
+            "2026-09-02T00:00:00Z",
+            "--key",
+            "release.key",
+            "--no-log",
+            "--out",
+            "site/empty.json",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("0 release(s), sequence 5"), "{out}");
+    let (code, out, err) = packslip(
+        d,
+        &[
+            "verify",
+            "site/empty.json",
+            "--pubkey",
+            "release.pub",
+            "--allow-unlogged",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("listing 0 release(s)"), "{out}");
     let (code, _, err) = packslip(
         d,
         &[
@@ -1749,6 +2142,30 @@ fn host_requirements_are_read_and_declared() {
         out.contains("requires tool-linux-x64.tar.gz: libs libz.so.1; bin java>=17"),
         "{out}"
     );
+    // An os_min or glibc_min outside the grammar of a min is refused when
+    // written, though a consumer reading one only warns.
+    for (requires, expected) in [
+        (
+            r#"{ glibc_min = "glibc-2.31" }"#,
+            r#"requires glibc_min "glibc-2.31""#,
+        ),
+        (r#"{ os_min = "v5" }"#, r#"requires os_min "v5""#),
+        (r#"{ glibc_min = "" }"#, r#"requires glibc_min """#),
+    ] {
+        std::fs::write(
+            d.join("min.toml"),
+            format!(
+                "bin = [\"tool\"]\nrequires = {requires}\n[[artifact]]\npath = \"tool-linux-x64.tar.gz\"\n"
+            ),
+        )
+        .unwrap();
+        let (code, _, err) = manifest("min.toml");
+        assert_ne!(code, 0, "{requires}");
+        assert!(
+            err.contains(&format!("artifact \"tool-linux-x64.tar.gz\" {expected}")),
+            "{requires}: {err}"
+        );
+    }
 
     // Malformed and self-referential requirements are refused.
     for (spec, expected) in [
@@ -1933,4 +2350,49 @@ fn static_builds_and_unnamed_architectures() {
     let (code, _, err) = create(&["--manifest", "release.toml"]);
     assert_eq!(code, 0, "{err}");
     assert_eq!(platform(&show()[0]), [s("linux"), s("aarch64"), None]);
+}
+
+#[test]
+fn create_writes_published_at_in_utc() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let (code, _, err) = packslip(d, &["keygen", "-o", "release.key"]);
+    assert_eq!(code, 0, "{err}");
+    std::fs::write(d.join("tool-v1.0.0.bin"), b"x").unwrap();
+    let create = |published_at: &str| {
+        packslip(
+            d,
+            &[
+                "create",
+                "--project",
+                "tool.example.com",
+                "--version",
+                "1.0.0",
+                "--key",
+                "release.key",
+                "--no-log",
+                "--out",
+                "dist",
+                "--published-at",
+                published_at,
+                "--format",
+                "tool-v1.0.0.bin=raw",
+                "tool-v1.0.0.bin:linux/x86_64",
+            ],
+        )
+    };
+    // An offset is written as the same instant in UTC.
+    let (code, _, err) = create("2026-09-01T14:00:00+02:00");
+    assert_eq!(code, 0, "{err}");
+    let (code, out, err) = packslip(d, &["show", "dist/packslip.sigstore.json"]);
+    assert_eq!(code, 0, "{err}");
+    let doc: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(doc["predicate"]["published_at"], "2026-09-01T12:00:00Z");
+    // Text that names no instant is refused.
+    let (code, _, err) = create("2026-09-01 2pm");
+    assert_ne!(code, 0);
+    assert!(
+        err.contains(r#"published_at must be RFC 3339, got "2026-09-01 2pm""#),
+        "{err}"
+    );
 }

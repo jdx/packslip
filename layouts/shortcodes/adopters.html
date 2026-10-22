@@ -1,0 +1,82 @@
+{{- /* Render data/adopters.toml on /docs/who-is-using-packslip/.
+
+     {{< adopters table upstream >}}     the upstream-published tools
+     {{< adopters table third_party >}}  the repackaged and third-party builds
+     {{< adopters count >}}              every row; add upstream, repackager,
+                                         or build to count one kind
+     {{< adopters surveyed >}}           the date of the last search for bundles
+     {{< adopters checked >}}            the date every bundle was last checked
+     {{< adopters checked_with >}}       the packslip version that checked them
+
+     Every row is a GitHub release, so its links are built from repository,
+     tag, and bundle. A "+" in a tag is escaped as GitHub's own links do.
+     A third_party row whose kind is not repackager or build fails the build,
+     so the table and the counts always agree. */ -}}
+{{- $data := hugo.Data.adopters -}}
+{{- $kinds := dict "repackager" "Repackager" "build" "Third-party build" -}}
+{{- range $data.third_party -}}
+  {{- if not (isset $kinds (.kind | default "")) -}}
+    {{- errorf "adopters: third_party row %q in data/adopters.toml has kind %q; use repackager or build" .software .kind -}}
+  {{- end -}}
+{{- end -}}
+{{- $what := .Get 0 -}}
+{{- $which := .Get 1 -}}
+{{- if eq $what "count" -}}
+  {{- if not $which -}}
+    {{- add (len $data.upstream) (len $data.third_party) -}}
+  {{- else if eq $which "upstream" -}}
+    {{- len $data.upstream -}}
+  {{- else if isset $kinds $which -}}
+    {{- len (where $data.third_party "kind" $which) -}}
+  {{- else -}}
+    {{- errorf "adopters: unknown kind %q to count at %s" $which .Position -}}
+  {{- end -}}
+{{- else if eq $what "surveyed" -}}
+  {{- time.Format "January 2, 2006" $data.surveyed -}}
+{{- else if eq $what "checked" -}}
+  {{- time.Format "January 2, 2006" $data.checked -}}
+{{- else if eq $what "checked_with" -}}
+  {{- $data.checked_with -}}
+{{- else if and (eq $what "table") (eq $which "upstream") -}}
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>Tool</th><th>Example release</th><th>Bundle</th></tr>
+  </thead>
+  <tbody>
+    {{- range $data.upstream }}
+    {{- $repo := printf "https://github.com/%s" .repository }}
+    {{- $tag := replace .tag "+" "%2B" }}
+    <tr>
+      <td><a href="{{ $repo }}">{{ .tool }}</a></td>
+      <td><a href="{{ $repo }}/releases/tag/{{ $tag }}">{{ .version }}</a>{{ if .prerelease }} (prerelease){{ end }}</td>
+      <td><a href="{{ $repo }}/releases/download/{{ $tag }}/{{ .bundle }}"><code>{{ .bundle }}</code></a></td>
+    </tr>
+    {{- end }}
+  </tbody>
+</table>
+</div>
+{{- else if and (eq $what "table") (eq $which "third_party") -}}
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>Upstream software</th><th>Publisher</th><th>Kind</th><th>Example release</th><th>Bundle</th></tr>
+  </thead>
+  <tbody>
+    {{- range $data.third_party }}
+    {{- $repo := printf "https://github.com/%s" .repository }}
+    {{- $tag := replace .tag "+" "%2B" }}
+    <tr>
+      <td><a href="{{ .home }}">{{ .software }}</a></td>
+      <td><a href="{{ $repo }}">{{ .repository }}</a></td>
+      <td>{{ index $kinds .kind }}</td>
+      <td><a href="{{ $repo }}/releases/tag/{{ $tag }}">{{ .version }}</a>{{ if .prerelease }} (prerelease){{ end }}</td>
+      <td><a href="{{ $repo }}/releases/download/{{ $tag }}/{{ .bundle }}"><code>{{ .bundle }}</code></a></td>
+    </tr>
+    {{- end }}
+  </tbody>
+</table>
+</div>
+{{- else -}}
+  {{- errorf "adopters: unknown arguments %q %q at %s" $what $which .Position -}}
+{{- end -}}

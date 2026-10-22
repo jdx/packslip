@@ -1,47 +1,57 @@
 # Social previews
 
-The [social-image partial](../../layouts/partials/social-image.html) generates
-a 1200 × 630 PNG for each page using Hugo's native image filters and the
-bundled, OFL-licensed [Space Grotesk font](fonts/README.md).
+Every page on packslip.dev except the 404 page gets its own 1200 × 630 PNG
+link preview. Read this before you change the preview's artwork, text, or font.
 
-## How images are built
+## How the images are built
 
-The partial draws the page title, "packslip / docs", and "packslip.dev" over
-`background.png`. The background contains only the color, red top bar,
-divider line, and logo mark.
+The [social-image partial](../../layouts/partials/social-image.html) builds
+each image with Hugo's native image filters and the bundled, OFL-licensed
+[Space Grotesk font](fonts/README.md). It draws the page title,
+"packslip / docs", and "packslip.dev" over `background.png`. The background
+holds only the color, the red top bar, the divider line, and the logo mark.
 
-Most pages use their page title. The CLI landing page uses "CLI reference",
-and command pages use `packslip <command>` from the source file's name:
-generated CLI Markdown has no title front matter. Longer titles use smaller
-text, and rendered titles are truncated to 260 characters.
+Each page shows its page title, and the partial names the CLI pages itself:
 
-Open Graph and Twitter use the same image and alt text, `<title> — packslip`.
-Hugo generates the image URLs from the image and its filters, so changes
-to the rendered title produce a new URL.
+- The CLI landing page shows "CLI reference".
+- Each command page shows `packslip <command>`, taken from its source file's
+  name.
+
+Longer titles use smaller text. Titles longer than 260 characters are
+truncated.
+
+Open Graph and Twitter use the same image and the same alt text. The alt
+text is the same title, untruncated, followed by ` — packslip`, such as
+`packslip verify — packslip`. On CLI command pages it differs from the
+page's HTML `<title>`, which ends in ` — CLI reference`. Hugo derives each
+image's URL from the image and its filters, so a change to the rendered
+title produces a new URL.
 
 ## Update the artwork
 
-1. Edit `background.svg`, the source for the background artwork.
+1. Edit `background.svg`, the source for the background.
 2. Rasterize it as `background.png` at exactly 1200 × 630.
-3. Check the built previews below and commit both background files.
+3. [Check the output](#check-the-output) and commit both background files.
 
-Keeping the rasterized PNG in the repository lets production builds run
-without an SVG renderer. Text belongs in the partial, so each page can
+The repository keeps the rasterized PNG so production builds run without an
+SVG renderer. Text belongs in the partial, not the artwork, so each page can
 have its own title.
 
 ## Check the output
 
-Build the documentation, then check the generated images:
+Build the site, then check the generated images. Run both commands from the
+repository root:
 
 ```sh
 mise run docs:build
 node scripts/check-social-images.mjs public
 ```
 
-The check compares Open Graph and Twitter metadata, confirms that the
-referenced PNGs exist at 1200 × 630, and requires a distinct image for
-each content page. It skips redirect aliases.
+The check compares each page's Open Graph and Twitter metadata. It confirms
+that every referenced PNG exists at 1200 × 630 and that each page has a
+distinct image. It skips HTML files without an image: the 404 page and Hugo's
+redirect aliases.
 
-Neither `mise run docs:check` nor CI runs this check, so run it yourself after
-changing the partial, background artwork, bundled font, or page-title
-generation. The check needs Node.js, which `mise install` does not provide.
+Neither `mise run docs:check` nor CI runs this check. Run it yourself after
+you change the partial, the background artwork, the bundled font, or how page
+titles are generated. It needs Node.js, which `mise install` does not provide.
