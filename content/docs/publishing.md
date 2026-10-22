@@ -282,11 +282,15 @@ make them refuse it.
   yours, and the action and consumers check the source repository. Consumers
   then compare that workflow's path, so moving from a workflow of your own
   to a shared one is a changed signer that a person approves once.
-- **Keep provenance.** Consumers refuse a release that drops the
-  per-artifact provenance the previous release carried. Once you publish
-  with `attest: true` or `link`, do not switch to `attest: false`, and
-  collect every artifact through `artifacts` or `download`, not only
-  through the TOML manifest, so each one gets a link.
+- **Keep provenance.** Consumers refuse a release that drops provenance
+  links from a build both releases offer, where a build is the artifacts
+  sharing `os`, `arch`, `libc`, and `variant`. Retiring a build drops
+  nothing while you still offer one that carried links; a release that
+  offers none of them, for example because every build's `libc` changed,
+  drops them all. Once you publish with `attest: true` or `link`, do not
+  switch to `attest: false`, and collect every artifact through
+  `artifacts` or `download`, not only through the TOML manifest, so each
+  one gets a link.
 - **Opt out of workflow pinning if you must sign from several files.**
   `packslip create --no-pin-workflow` asks consumers to hold your releases
   to the repository rather than to one workflow file. Neither the action's
