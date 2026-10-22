@@ -60,8 +60,8 @@ func NewBareBin(artifactName, format, command string) Bin {
 // ask for one gets the build that runs everywhere; so does an unset level.
 // A GOARM64 option list such as "v8.2,lse" becomes "v8.2-lse", because a
 // variant cannot contain a comma. A soft-float ARM build, or a MIPS build with
-// GOMIPS=softfloat, is "softfloat". GOARM=5 is soft-float already, so it has
-// no variant.
+// GOMIPS=softfloat or GO386=softfloat, is "softfloat". GOARM=5 is soft-float
+// already, so it has no variant, and GOARM=5,hardfloat is "5-hardfloat".
 func VariantFromGo(goarch, level string) string {
 	var def string
 	switch goarch {
@@ -79,6 +79,9 @@ func VariantFromGo(goarch, level string) string {
 		def = "rva20u64"
 	case "arm":
 		goarm, float, _ := strings.Cut(level, ",")
+		if goarm == "5" && float == "hardfloat" {
+			return "5-hardfloat"
+		}
 		if float == "softfloat" && goarm != "5" {
 			return "softfloat"
 		}

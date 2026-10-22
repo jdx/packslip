@@ -735,11 +735,13 @@ so a vendor can map its build matrix directly onto them:
 | `os` | `linux`, `darwin`, `windows`, `freebsd`, `netbsd`, `openbsd`, `illumos`, `android`, `ios` |
 | `arch` | `x86_64`, `aarch64`, `armv7`, `armv6`, `riscv64`, `i686`, `powerpc64le`, `s390x`, `loongarch64` |
 | `libc` | `gnu`, `musl` for Linux builds |
-| `variant` | `fips`, `baseline`, `debug`, `installer`, `source`, `softfloat`, and a CPU level such as `v3` |
+| `variant` | `fips`, `baseline`, `debug`, `installer`, `source`, `softfloat`, `5-hardfloat`, and a CPU level such as `v3` |
 
-A `softfloat` variant marks an ARM build that uses software floating
-point, so it stays distinct from the hard-float build of the same `arch`
-and `libc`. A CPU-level variant is the toolchain's own name for a level
+A `softfloat` variant marks a 386, ARM, or MIPS build that uses software
+floating point, so it stays distinct from the hard-float build of the same
+`arch` and `libc`. An ARMv5 build is soft-float by default, so it has no
+variant; an ARMv5 build that uses hardware floating point is `5-hardfloat`.
+A CPU-level variant is the toolchain's own name for a level
 above the platform default, such as `v3` for GOAMD64 or `v8.2` for
 GOARM64. A build at the default level has no variant, so a consumer that
 does not ask for one gets the build that runs everywhere. A comma in a level

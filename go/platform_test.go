@@ -45,6 +45,8 @@ func TestVariantFromGo(t *testing.T) {
 		{"arm", "7,softfloat", "softfloat"},
 		{"arm", "6,softfloat", "softfloat"},
 		{"arm", "5,softfloat", ""},
+		{"arm", "5", ""},
+		{"arm", "5,hardfloat", "5-hardfloat"},
 		{"mips", "hardfloat", ""},
 		{"mipsle", "softfloat", "softfloat"},
 		{"ppc64le", "power9", "power9"},
