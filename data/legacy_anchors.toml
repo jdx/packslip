@@ -133,3 +133,16 @@ installation-platforms-and-tool-handoff = "check-a-tools-handoff"
 ["/docs/who-is-using-packslip/"]
 independent-publishers = "repackagers-and-third-party-builds"
 about-this-snapshot = "how-the-list-was-checked"
+
+# Ids the /cli/ page had before its rewrite: its title, the installation
+# section and task table that the homepage and the docs index linked, and the
+# headings of the generated overview of the top-level command, whose help and
+# version flags "Get help" now describes. Installation moved to its own page.
+["/cli/"]
+choose-a-task = "publish-a-release"
+flags = "get-help"
+get-help-and-completions = "set-up-shell-completions"
+install-the-cli = "/docs/install/"
+packslip = "get-help"
+packslip-cli = "cli-reference"
+subcommands = "publish-a-release"

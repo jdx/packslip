@@ -7,7 +7,7 @@ about "A signed release manifest: what shipped, and how to verify it"
 long_about #"""
 A signed release manifest: what shipped, and how to verify it
 
-A vendor runs `packslip create` in its release job to sign one document listing every artifact, then uploads it beside them. Consumers check that document, and the files they download, with `packslip verify` against a pinned identity, key, or signer fingerprint. See https://packslip.dev.
+A release job runs `packslip create` to sign a release bundle, packslip.sigstore.json, whose statement lists every artifact with its digest. Consumers check the bundle and the files they download with `packslip verify`, or install a tool from it with `packslip install` instead of running an installer script. Guides and the specification: https://packslip.dev
 """#
 arg_required_else_help #true
 flag "-h --help" help="Print help" action=help builtin=#true
@@ -16,40 +16,61 @@ cmd completion help="Generate a self-contained shell completion script" {
     long_help #"""
 Generate a self-contained shell completion script
 
-Print the script to stdout. Redirect it to a file where your shell loads completions, as in the example. The script asks the installed packslip for candidates, so it needs no other tool and keeps working after upgrades.
+Print the script to stdout, and redirect it to a file your shell loads, as the example does for bash. The script asks the installed packslip for candidates, so it needs no other tool and keeps working after upgrades. The setup for each shell is at https://packslip.dev/cli/#set-up-shell-completions
 """#
     flag "-h --help" help="Print help" action=help builtin=#true
-    arg <SHELL> help="Shell to generate completions for" {
+    arg <SHELL> help="The shell to generate the script for" {
         choices bash elvish zsh fish nu nushell powershell pwsh
     }
     example "mkdir -p ~/.local/share/bash-completion/completions && packslip completion bash > ~/.local/share/bash-completion/completions/packslip" header="Install bash completions for your user"
 }
-cmd create help="Create and sign a packslip for a release" {
+cmd create help="Create and sign the release bundle for a release" {
     long_help #"""
-Create and sign a packslip for a release
+Create and sign the release bundle for a release
 
-Hash local artifacts, infer platforms and formats from file names, and write the signed bundle (packslip.sigstore.json, or a per-tool name for a GitHub monorepo tool; see --out) into the --out directory. Use --manifest for per-artifact paths, formats, requirements, and scoped resources. No files are uploaded.
+Hash local artifacts, infer each one's platform and format from its file name, and write the signed bundle into the --out directory. No files are uploaded. A release.toml passed with --manifest describes per-artifact executables, formats, requirements, and resources. Scalar flags, such as --project, --version, --url-base, and --source-repo, override its release-level values. --bin, --resource, --require, and --provenance add to its values. A file given as an argument that release.toml also lists keeps its release.toml entry.
 
-By default, create signs keyless with an OIDC token: the one in SIGSTORE_ID_TOKEN when it is set, or else the CI job's own identity, which on GitHub Actions needs the `id-token: write` permission. Pass --key to sign with a key from `packslip keygen` instead. Either way, the signature is recorded in the Rekor transparency log. With --key, --no-log skips the log entry, and consumers must then accept the release with --allow-unlogged.
+Signing is keyless by default, with the OIDC token in SIGSTORE_ID_TOKEN or else the CI job's own identity, which on GitHub Actions needs the `id-token: write` permission. --key signs with a key from `packslip keygen` instead. Every signature is recorded in the Rekor transparency log unless --no-log is passed with --key.
 
-The TOML manifest and more examples: https://packslip.dev/docs/describing-releases/
+See https://packslip.dev/docs/describing-releases/ for release.toml and more examples.
 """#
-    flag --project help="The project's name: a host path such as github.com/owner/repo, or github.com/owner/repo/tool for one tool of a monorepo. Required unless the manifest sets it" help_heading=Input {
+    flag --project help="The project's name, such as github.com/owner/repo; required unless release.toml sets it" help_heading=Input {
+        long_help #"""
+The project's name, such as github.com/owner/repo; required unless release.toml sets it
+
+Give github.com/owner/repo, github.com/owner/repo/TOOL for one tool of a monorepo, gitlab.com/GROUP/PROJECT, or a domain project, one named after a host, such as mytool.example.com[/PATH]. Consumers can verify a gitlab.com project's releases, but `packslip install` refuses it.
+"""#
         arg <PROJECT>
     }
-    flag --version help="Semver release version, such as 1.2.3. Required unless the manifest sets it" help_heading=Input {
+    flag --version help="The release's semver version, such as 1.2.3; required unless release.toml sets it" help_heading=Input {
         arg <VERSION>
     }
-    flag "-m --manifest" help="A TOML manifest giving per-artifact executables, formats, requirements, platforms, and the release's resources; its artifact and asset paths are relative to the working directory, not to the manifest. See https://packslip.dev/docs/describing-releases/#use-a-toml-manifest" help_heading=Input {
+    flag "-m --manifest" help="A release.toml describing the artifacts and the release's resources" help_heading=Input {
+        long_help #"""
+A release.toml describing the artifacts and the release's resources
+
+It gives per-artifact executables, formats, requirements, and platforms. Its artifact and asset paths are relative to the working directory, not to the file. See https://packslip.dev/docs/describing-releases/#use-a-toml-manifest and, for every key, https://packslip.dev/docs/release-toml/
+"""#
         arg <MANIFEST>
     }
-    flag "-k --key" help="Sign with this secret key instead of a CI identity" help_heading=Signing {
+    flag "-k --key" help="Sign with this secret key, from `packslip keygen`, instead of signing keyless" help_heading=Signing {
         arg <KEY>
     }
-    flag --sign help="How to sign: oidc (keyless) or key (needs --key). Optional; inferred from whether --key is given" help_heading=Signing {
+    flag --sign help="How to sign: oidc (keyless, with the CI job's identity) or key (with --key)" help_heading=Signing {
+        long_help #"""
+How to sign: oidc (keyless, with the CI job's identity) or key (with --key)
+
+Defaults to key when --key is given, else oidc. sigstore-oidc and sigstore-key are other spellings. --sign key needs --key; --sign oidc conflicts with --key.
+"""#
         arg <SIGN>
     }
-    flag --no-log help="With --key: do not record the signature in Rekor. Consumers must then opt in with --allow-unlogged" help_heading=Signing
+    flag --no-log help="Record no Rekor transparency log entry for a key signature" help_heading=Signing {
+        long_help #"""
+Record no Rekor transparency log entry for a key signature
+
+Needs --key, since keyless signatures are always logged. Consumers must then pass --allow-unlogged.
+"""#
+    }
     flag "-o --out" help="Directory to write the bundle into, created if missing" help_heading=Output default=. {
         long_help #"""
 Directory to write the bundle into, created if missing
@@ -58,24 +79,39 @@ The bundle is packslip.sigstore.json, or packslip.TOOL.sigstore.json for a tool 
 """#
         arg <OUT>
     }
-    flag --url-base help="Download URL prefix: each artifact and resource asset gets PREFIX/FILENAME unless --url or the manifest gives its URL" help_heading="Download URLs" {
+    flag --url-base help="Download URL prefix: each artifact and resource asset gets PREFIX/FILENAME unless --url or release.toml gives its URL" help_heading="Download URLs" {
         arg <URL_BASE>
     }
-    flag --url help="Download URL for one artifact or resource asset, as FILENAME=URL (repeatable)" var=#true help_heading="Download URLs" {
+    flag --url help="Download URL of one artifact or resource asset, as FILENAME=URL (repeatable)" var=#true help_heading="Download URLs" {
+        long_help #"""
+Download URL of one artifact or resource asset, as FILENAME=URL (repeatable)
+
+A URL release.toml gives for an artifact wins.
+"""#
         arg <URL>
     }
-    flag --format help="Format of one artifact whose name does not say, as FILENAME=FORMAT: an archive (tar.xz, tar.gz, tar.zst, tar.bz2, tgz, tar, zip, 7z), a single compressed executable (gz, xz, zst, bz2), an installer (deb, rpm, dmg, pkg, msi, msix, exe, appimage), raw for a bare executable, or a type of your own (repeatable)" var=#true help_heading=Artifacts {
+    flag --format help="Format of an artifact whose file name does not say, as FILENAME=FORMAT (repeatable)" var=#true help_heading=Artifacts {
+        long_help #"""
+Format of an artifact whose file name does not say, as FILENAME=FORMAT (repeatable)
+
+FORMAT is an archive (tar.xz, tar.gz, tar.zst, tar.bz2, tgz, tar, zip, 7z), a single compressed executable (gz, xz, zst, bz2), an installer (deb, rpm, dmg, pkg, msi, msix, exe, appimage), raw for a bare executable, or a type of your own. A format release.toml gives for an artifact wins.
+"""#
         arg <FORMAT>
     }
     flag --source-repo help="Source repository URL, such as https://github.com/owner/repo" help_heading=Source {
         arg <SOURCE_REPO>
     }
-    flag --commit help="Commit the release was built from; needs --source-repo or the manifest's source.repo. A resource with a repo: source requires it, and consumers read that file at this commit" help_heading=Source {
+    flag --commit help="Commit the release was built from; needs --source-repo or release.toml's source.repo" help_heading=Source {
+        long_help #"""
+Commit the release was built from; needs --source-repo or release.toml's source.repo
+
+A resource with a repo: source requires it, and consumers read that file at this commit.
+"""#
         arg <COMMIT>
     }
-    flag --tag help="Git tag of the release, such as v1.2.3; needs --source-repo or the manifest's source.repo" help_heading=Source {
+    flag --tag help="Git tag of the release, such as v1.2.3; needs --source-repo or release.toml's source.repo" help_heading=Source {
         long_help #"""
-Git tag of the release, such as v1.2.3; needs --source-repo or the manifest's source.repo
+Git tag of the release, such as v1.2.3; needs --source-repo or release.toml's source.repo
 
 Consumers that list a GitHub project's versions from its tags do not see the release when the tag does not name the release's version, unless a signed release list names the release. create warns when that happens.
 """#
@@ -85,21 +121,26 @@ Consumers that list a GitHub project's versions from its tags do not see the rel
         long_help #"""
 RFC 3339 publish time; defaults to now
 
-The packslip records it in UTC: 2026-09-01T14:00:00+02:00 is written as 2026-09-01T12:00:00Z.
+The statement records it in UTC: 2026-09-01T14:00:00+02:00 is written as 2026-09-01T12:00:00Z.
 """#
         arg <PUBLISHED_AT>
     }
     flag --notes-url help="URL of the release notes" help_heading="Release metadata" {
         arg <NOTES_URL>
     }
-    flag --extension help="Release-level extension as NAME=JSON, where NAME is who defines it (a consumer such as mise, or a domain the vendor controls) and JSON is its value. Example: 'example.com={\"build_id\":\"20260901.3\"}' (repeatable)" var=#true help_heading="Release metadata" {
+    flag --extension help="Release-level extension as NAME=JSON (repeatable)" var=#true help_heading="Release metadata" {
+        long_help #"""
+Release-level extension as NAME=JSON (repeatable)
+
+NAME is who defines it, a consumer such as mise or a domain the vendor controls, and JSON is its value, such as 'example.com={"build_id":"20260901.3"}'. A flag replaces release.toml's extension of the same NAME.
+"""#
         arg <EXTENSION>
     }
-    flag --bin help="Executable in every artifact: a NAME to find inside each archive, a PATH from the archive root, or NAME=PATH when the command's name differs from the file's (repeatable)" var=#true help_heading=Artifacts {
+    flag --bin help="Executable the artifacts hold, as NAME, PATH, or NAME=PATH (repeatable)" var=#true help_heading=Artifacts {
         long_help #"""
-Executable in every artifact: a NAME to find inside each archive, a PATH from the archive root, or NAME=PATH when the command's name differs from the file's (repeatable)
+Executable the artifacts hold, as NAME, PATH, or NAME=PATH (repeatable)
 
-A PATH includes any top-level directory of the archive. For a bare executable, give the command name it installs as.
+A NAME is found inside each archive. A PATH starts at the archive root and includes any top-level directory. NAME=PATH names the command when it differs from the file's name. For a bare executable, give the command name it installs as. These join release.toml's top-level bin; an artifact that release.toml gives its own bin list keeps only that list.
 """#
         arg <BIN>
     }
@@ -118,14 +159,19 @@ An @ scope limits the entry to the artifacts of that platform, for a layout that
     flag --provenance help="Provenance URL for an artifact, as FILENAME=URL, or bare URLs in the order of the ARTIFACTS arguments (repeatable)" var=#true help_heading=Artifacts {
         arg <PROVENANCE>
     }
-    flag --attested-by help="Who makes the claim: vendor (default) or repackager" help_heading=Repackagers {
+    flag --attested-by help="Who makes the claim: vendor (the default) or repackager" help_heading=Repackagers {
         arg <ATTESTED_BY>
     }
-    flag --evidence help="What a repackager checked, as KIND or KIND=DETAIL (repeatable)" var=#true help_heading=Repackagers {
+    flag --evidence help="What a repackager checked, as KIND or KIND=DETAIL (repeatable); needs --attested-by repackager" var=#true help_heading=Repackagers {
         arg <EVIDENCE>
     }
-    flag --no-sha512 help="Record only sha256, not sha512 as well" help_heading=Artifacts
-    flag --require help="A command the executables need on PATH, as bin:NAME or bin:NAME@MIN where MIN is the lowest version that works. Example: bin:java@17 (repeatable)" var=#true help_heading=Artifacts {
+    flag --no-sha512 help="Record only sha256 digests; by default create records sha256 and sha512" help_heading=Artifacts
+    flag --require help="A command the executables need on PATH, as bin:NAME or bin:NAME@MIN (repeatable)" var=#true help_heading=Artifacts {
+        long_help #"""
+A command the executables need on PATH, as bin:NAME or bin:NAME@MIN (repeatable)
+
+MIN is the lowest version that works, such as bin:java@17. Needs an executable from --bin or release.toml. Each requirement is added to every artifact that has an executable.
+"""#
         arg <REQUIRE>
     }
     flag --no-libs help="Do not read the executables for the shared libraries and C library they load from the host" help_heading=Artifacts {
@@ -135,11 +181,11 @@ Do not read the executables for the shared libraries and C library they load fro
 With this flag, create still finds each --bin inside the archives but does not derive requires.libs; a libs list in release.toml is recorded as written, unchecked. A Linux artifact whose platform and file name give no C library is recorded as gnu, even a static build.
 """#
     }
-    flag --no-pin-workflow help="Keyless only: write identity.pin_workflow: false, so consumers hold later releases to the signing repository instead of to the workflow file that signs this one" help_heading=Signing {
+    flag --no-pin-workflow help="Write identity.pin_workflow: false, so consumers do not hold later releases to this release's workflow file" help_heading=Signing {
         long_help #"""
-Keyless only: write identity.pin_workflow: false, so consumers hold later releases to the signing repository instead of to the workflow file that signs this one
+Write identity.pin_workflow: false, so consumers do not hold later releases to this release's workflow file
 
-For a vendor whose releases are signed by more than one workflow of its repository. The signing certificate must still record that repository as its source. A consumer that last accepted a release without the flag refuses the first one with it until a person approves it. See https://packslip.dev/release/v1/#workflow-pinning
+Use it when more than one workflow of your repository signs releases; consumers then hold later releases to the signing repository instead. The signing certificate must still record that repository as its source. A consumer that last accepted a release without the flag refuses the first one with it until a person approves it. Conflicts with --key, since only a keyless signer has a workflow. See https://packslip.dev/release/v1/#workflow-pinning
 """#
     }
     flag "-h --help" help="Print help" action=help builtin=#true
@@ -147,7 +193,7 @@ For a vendor whose releases are signed by more than one workflow of its reposito
         long_help #"""
 Files to describe, each as PATH, PATH:OS/ARCH[/LIBC], or PATH:any, with an optional @VARIANT
 
-Without a platform suffix, create infers the platform from the file name. Give any as ARCH or LIBC to leave that field out, for a build that runs on every architecture or C library; PATH:any leaves out OS, ARCH, and LIBC. These files join the manifest's artifacts; a file the manifest lists under the same file name keeps its manifest entry, and its platform suffix and @VARIANT here are ignored.
+Without a platform suffix, create infers the platform from the file name. Give any as ARCH or LIBC to leave that field out, for a build that runs on every architecture or C library; PATH:any leaves out OS, ARCH, and LIBC. These files join release.toml's artifacts; a file it lists under the same file name keeps its release.toml entry, and the platform suffix and @VARIANT given here are ignored.
 """#
     }
     complete manifest type=path
@@ -162,7 +208,7 @@ packslip create \
         dist/mytool-1.2.3-linux-x64.tar.gz \
         dist/mytool-1.2.3-darwin-arm64.tar.gz
 """# header="Sign keyless in a CI job"
-    example "packslip create --manifest release.toml --out dist" header="Describe the artifacts in a TOML manifest"
+    example "packslip create --manifest release.toml --out dist" header="Describe the artifacts in release.toml"
     example #"""
 packslip create \
         --project mytool.example.com \
@@ -174,103 +220,199 @@ packslip create \
         dist/mytool-1.2.3-linux-x64.tar.gz
 """# header="Sign with a key from packslip keygen"
 }
-cmd install help="Install an authenticated upstream release and export its declared commands" {
+cmd install help="Install a verified release and export its declared commands" {
     long_help #"""
-Install an authenticated upstream release and export its declared commands
+Install a verified release and export its declared commands
 
-Keeps the complete installation tree. Does not run downloaded code, install dependencies, or edit shell configuration. Use --system for a shared install.
+Find the release a project's name leads to, and verify its release bundle and the artifact for this host. Unpack the archive into an installation tree and export the commands the release declares.
+
+A github.com project must be signed from its repository. A keyless domain project's first install trusts the signer that its release list and release bundle declare, fetched over HTTPS from that host. A key-signed domain project needs --pubkey on its first install. Later installs hold the project to what was accepted, and a keyless domain project to the repository that signed it. A changed signer or signing repository, keyless signing replaced by a key, disabled workflow pinning, a repackager's bundle after the vendor's, or dropped provenance needs --accept-trust-change, and a github.com name that now resolves to a different repository ID is refused. --pin, --issuer, --identity, and --identity-prefix narrow what the project's name requires and never replace it. gitlab.com projects are refused.
+
+The command runs no downloaded code, installs no dependencies, and edits no shell configuration. There is no uninstall, upgrade, or list. It prints the installed version and tree, `Signer fingerprint: ps1_...` for a github.com project, and each command. It warns when the project's release list withdraws the release it last installed. See https://packslip.dev/docs/bootstrap/
 """#
-    flag --version help="Version, prefix, tag, or latest (the default)" {
+    flag --version help="Version, prefix, range, tag, or latest (the default)" {
         long_help #"""
-Version, prefix, tag, or latest (the default)
+Version, prefix, range, tag, or latest (the default)
 
-latest takes the vendor's recommended release, otherwise the highest stable version. When that release carries no packslip for the project or no artifact for this host, install tries the other stable releases from the highest down and warns about each release it skipped. It examines the first release in full, and stops before a later release would bring the bundles it fetched past 32. A version, prefix, or range request skips only releases without a packslip for the project; a tag tries only that release. Host requirements never select a different release.
+latest takes the vendor's recommended release, otherwise the highest stable version. When that release carries no packslip for the project or no artifact for this host, install tries the other stable releases from the highest down. It warns about each release it skips. It examines the first release in full, and stops before a later release would bring the bundles it fetched past 32. A version (1.2.3 also matches 1.2.3+build.5), prefix (1.2), or range (^1.2) skips only releases without a packslip for the project; a tag tries only that release. Host requirements never select a different release.
 """#
         arg <VERSION>
     }
-    flag --system help="Install for all users; Unix root uses this scope by default"
-    flag --user help="Explicitly select the current user's installation scope"
-    flag --force help="Replace conflicting command entries and unmarked installation directories"
-    flag --offline help="Use only locally cached, authenticated metadata and artifacts"
-    flag --install-dir help="Override the installation tree without moving trust state" {
+    flag --system help="Install for all users" {
+        long_help #"""
+Install for all users
+
+The default for root on Unix. Conflicts with --user.
+"""#
+    }
+    flag --user help="Install for the current user" {
+        long_help #"""
+Install for the current user
+
+The default, except for root on Unix, which cannot select it. Conflicts with --system.
+"""#
+    }
+    flag --force help="Replace conflicting command entries and installation directories" {
+        long_help #"""
+Replace conflicting command entries and installation directories
+
+An installation directory conflicts when it is unmarked or belongs to another project. Verification and trust-change approval still apply.
+"""#
+    }
+    flag --offline help="Use only locally cached, authenticated metadata and artifacts" {
+        long_help #"""
+Use only locally cached, authenticated metadata and artifacts
+
+Makes no network requests, and fails when something is not cached.
+"""#
+    }
+    flag --install-dir help="Install into this absolute directory instead of the scope's tree" {
+        long_help #"""
+Install into this absolute directory instead of the scope's tree
+
+Trust state stays in the scope.
+"""#
         arg <INSTALL_DIR>
     }
-    flag --bin-dir help="Override the command directory without moving trust state" {
+    flag --bin-dir help="Export commands into this absolute directory instead of the scope's" {
+        long_help #"""
+Export commands into this absolute directory instead of the scope's
+
+Trust state stays in the scope.
+"""#
         arg <BIN_DIR>
     }
-    flag --variant help="Select a publisher's named variant" {
+    flag --variant help="Select the artifact the publisher marks with this variant name" {
         arg <VARIANT>
     }
-    flag --pin help="Allowed signer fingerprint (repeatable, alternatives within this option)" var=#true {
+    flag --pin help="Require this signer fingerprint (ps1_...), as `packslip pin` prints it (repeatable)" var=#true {
+        long_help #"""
+Require this signer fingerprint (ps1_...), as `packslip pin` prints it (repeatable)
+
+A signer with any of the given fingerprints is accepted.
+"""#
         arg <PIN>
     }
-    flag --pubkey help="The pinned minisign public key file, or its base64 line" {
+    flag --pubkey help="Require this public key: a minisign .pub file, such as one from `packslip keygen`, or its base64 line" {
+        long_help #"""
+Require this public key: a minisign .pub file, such as one from `packslip keygen`, or its base64 line
+
+A key-signed domain project's first install needs it, and later installs remember it. A github.com project refuses it, since it must be signed keyless.
+"""#
         arg <PUBKEY>
     }
-    flag --issuer help="Require this OIDC issuer as well as the project's default identity" {
+    flag --issuer help="Require this OIDC issuer" {
+        long_help #"""
+Require this OIDC issuer
+
+It narrows what the project's name requires and never replaces it.
+"""#
         arg <ISSUER>
     }
-    flag --identity help="Require this certificate identity; a GitHub or GitLab repository name in it matches in any case" {
+    flag --identity help="Require this exact certificate identity, ref included, such as https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3" {
+        long_help #"""
+Require this exact certificate identity, ref included, such as https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3
+
+It narrows what the project's name requires and never replaces it. A GitHub or GitLab repository name in it matches in any case; the rest matches exactly.
+"""#
         arg <IDENTITY>
     }
-    flag --identity-prefix help="Require this certificate identity prefix; a GitHub or GitLab repository name in it matches in any case" {
+    flag --identity-prefix help="Require a certificate identity that starts with this prefix, such as https://github.com/owner/repo/" {
+        long_help #"""
+Require a certificate identity that starts with this prefix, such as https://github.com/owner/repo/
+
+It narrows what the project's name requires and never replaces it. A GitHub or GitLab repository name in it matches in any case; the rest matches exactly.
+"""#
         arg <IDENTITY_PREFIX>
     }
-    flag --accept-trust-change help="Approve one exact displayed trust-change proposal (repeatable)" var=#true {
+    flag --accept-trust-change help="Approve one trust change by the ID install printed for it (repeatable)" var=#true {
+        long_help #"""
+Approve one trust change by the ID install printed for it (repeatable)
+
+The ID covers that exact release bundle or release list, the signer accepted before, and the trust requirements in effect, so it approves nothing else.
+"""#
         arg <ACCEPT_TRUST_CHANGE>
     }
-    flag --trusted-root help="Administrator-supplied Sigstore trusted_root.json instead of TUF refresh" {
+    flag --trusted-root help="Use this Sigstore trusted_root.json instead of refreshing the trust root through TUF" {
         arg <TRUSTED_ROOT>
     }
-    flag --allow-unlogged help="Accept signatures without transparency-log entries for this attempt"
-    flag --allow-incompatible-host help="Accept the selected artifact's incompatible host requirements"
-    flag --max-extracted-size help="Local maximum expanded archive size in bytes" default="10737418240" {
+    flag --allow-unlogged help="Accept a bundle without a transparency log entry, such as one created with --key --no-log" {
+        long_help #"""
+Accept a bundle without a transparency log entry, such as one created with --key --no-log
+
+Applies to this install only.
+"""#
+    }
+    flag --allow-incompatible-host help="Install even when this host does not meet the selected artifact's host requirements"
+    flag --max-extracted-size help="The most bytes an archive may expand to" default="10737418240" {
         arg <MAX_EXTRACTED_SIZE>
     }
-    flag --max-archive-entries help="Local maximum archive entry count" default="100000" {
+    flag --max-archive-entries help="The most entries an archive may hold" default="100000" {
         arg <MAX_ARCHIVE_ENTRIES>
     }
     flag "-h --help" help="Print help" action=help builtin=#true
-    arg <PROJECT> help="Project name (owner/repo, github.com/owner/repo[/subpath], or host[/path])"
+    arg <PROJECT> help="The project: owner/repo, github.com/owner/repo[/TOOL], or a domain project such as mytool.example.com[/PATH]"
     complete install_dir type=dir
     complete bin_dir type=dir
     complete trusted_root type=path
+    example "packslip install github.com/jdx/hk" header="Install the latest release of hk"
+    example #"""
+packslip install github.com/jdx/hk \
+        --version 2.8.0 \
+        --pin ps1_snirenkjwr7m5ozgcufameodnm
+"""# header="Install hk 2.8.0 and require its signer fingerprint"
+    example "packslip install mytool.example.com --pubkey release.pub" header="Install a key-signed domain project"
 }
-cmd keygen help="Generate an Ed25519 key pair for key-signed releases (sigstore-key)" {
+cmd keygen help="Generate an Ed25519 key pair for key-signed releases" {
     long_help #"""
-Generate an Ed25519 key pair for key-signed releases (sigstore-key)
+Generate an Ed25519 key pair for key-signed releases
 
-Write a new secret key to --out (a hex Ed25519 seed, mode 0600 on Unix) and its public key, in minisign format, to the same path with the extension replaced by .pub: --out release.key writes release.key and release.pub. Refuses to overwrite either file.
+Write a new secret key to --out, as a hex Ed25519 seed with mode 0600 on Unix, and its public key, in minisign format, to the same path with the extension replaced by .pub: --out release.key writes release.key and release.pub. If either file exists, keygen writes nothing and fails.
 
-Sign with `packslip create --key release.key`, and give consumers release.pub for `packslip verify --pubkey`. Keep the secret key private. A CI job with an OIDC identity can sign keyless and needs no key.
+Sign with `packslip create --key release.key`, which uses the sigstore-key scheme. Give consumers release.pub for `packslip verify --pubkey` and `packslip install --pubkey`. Keep the secret key private. A CI job with an OIDC identity can sign keyless and needs no key. See https://packslip.dev/docs/other-ci/
 """#
-    flag "-o --out" help="Where to write the secret key" default=packslip.key {
+    flag "-o --out" help="Where to write the secret key; the public key goes beside it, with a .pub extension" default=packslip.key {
+        long_help #"""
+Where to write the secret key; the public key goes beside it, with a .pub extension
+
+It must not end in .pub, since the public key takes that name.
+"""#
         arg <OUT>
     }
     flag "-h --help" help="Print help" action=help builtin=#true
     example "packslip keygen --out release.key" header="Write release.key and release.pub"
 }
-cmd pin help="Print the signer fingerprint of a project's keyless releases" {
+cmd pin help="Verify a release bundle and print its signer fingerprint" {
     long_help #"""
-Print the signer fingerprint of a project's keyless releases
+Verify a release bundle and print its signer fingerprint
 
-Verify a release bundle and print the signer fingerprint of the repository that signed it: `ps1_` and 26 characters. Run it on a release you already trust, because it fingerprints whichever repository signed the bundle it is given. A vendor publishes the fingerprint where consumers can read it without trusting a release, such as its README, and a consumer records it in its own configuration, such as a Dockerfile or CI workflow; `packslip verify --pin` then checks a release against it.
+The fingerprint, `ps1_` and 26 characters, comes from the forge's issuer and the signing repository's ID. It stays the same when the repository is renamed, moves to another owner, or signs from another workflow; a repository that later takes the old name gets a different one. Only a keyless release whose certificate records a repository ID has one; a key-signed release is pinned by its key, with `packslip verify --pubkey`.
 
-The fingerprint is derived from the forge's issuer and repository ID only. It stays the same when the repository is renamed, moves to another owner, or signs from another workflow, and a repository that later takes over the old name gets a different one. Only keyless releases whose certificate records a repository ID have one; for a key-signed release, pin the key with `packslip verify --pubkey`.
+Verification works as in `packslip verify` without --allow-other-repository. A domain project, one named after a host such as mytool.example.com, has no policy from its name, so pass --issuer with --identity or --identity-prefix. Only the fingerprint is printed, on stdout.
 
-Verification works as in `packslip verify` without --allow-other-repository: the policy is the one the project's name implies, and --identity, --identity-prefix, and --issuer narrow it without replacing it, so a GitHub or GitLab project's release must still be signed from its repository. See https://packslip.dev/docs/verifying/.
+Run pin on a release you already trust, since it fingerprints whichever repository signed. Publish the value where consumers can read it without trusting a release, such as a README, and check releases with `packslip verify --pin` or `packslip install --pin`. See https://packslip.dev/docs/verifying/#pin-a-signer-with-its-fingerprint
 """#
-    flag --identity help="The certificate identity a keyless signer must have, including its ref, such as https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3; a GitHub or GitLab repository name in it matches in any case" help_heading=Trust {
+    flag --identity help="Require this exact certificate identity, ref included, such as https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3" help_heading=Trust {
+        long_help #"""
+Require this exact certificate identity, ref included, such as https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3
+
+A GitHub or GitLab repository name in it matches in any case; the rest matches exactly. For a domain project, also pass --issuer, or a certificate from any issuer is accepted.
+"""#
         arg <IDENTITY>
     }
-    flag --identity-prefix help="A prefix the certificate identity must start with, such as https://github.com/owner/repo/; a GitHub or GitLab repository name in it matches in any case" help_heading=Trust {
+    flag --identity-prefix help="Require a certificate identity that starts with this prefix, such as https://github.com/owner/repo/" help_heading=Trust {
+        long_help #"""
+Require a certificate identity that starts with this prefix, such as https://github.com/owner/repo/
+
+A GitHub or GitLab repository name in it matches in any case; the rest matches exactly. For a domain project, also pass --issuer, or a certificate from any issuer is accepted.
+"""#
         arg <IDENTITY_PREFIX>
     }
-    flag --issuer help="The OIDC issuer a keyless signer must have; pass it with --identity or --identity-prefix, since for a project not on GitHub or GitLab it alone accepts any signer from that issuer" help_heading=Trust {
+    flag --issuer help="Require this OIDC issuer; for a domain project it alone accepts any signer from that issuer, so pair it with --identity or --identity-prefix" help_heading=Trust {
         arg <ISSUER>
     }
     flag --allow-unlogged help="Accept a bundle without a transparency log entry" help_heading=Trust
-    flag --trusted-root help="A sigstore trusted_root.json to use instead of the embedded one" help_heading=Trust {
+    flag --trusted-root help="Use this Sigstore trusted_root.json instead of the embedded one" help_heading=Trust {
         arg <TRUSTED_ROOT>
     }
     flag "-h --help" help="Print help" action=help builtin=#true
@@ -286,26 +428,41 @@ cmd releases help="Create and sign a project's release list" {
     long_help #"""
 Create and sign a project's release list
 
-Read local copies of released bundles and write a signed release list: each bundle's URL, digest, version, tag, and publish time, plus the list's sequence and expiry. The bundles are read, not verified, so give copies you trust. Repeat --release for every entry to keep; the command does not append to an earlier list or upload anything. With no --release, the list has no releases, which retires every entry an earlier list carried.
+Read local copies of released bundles and write a signed release list: each release's bundle URL, digest, version, tag, and publish time, plus the list's sequence and expiry. The bundles are read, not verified, so give copies you trust. The list holds exactly the --release entries given; the command does not append to an earlier list or upload anything. With no --release, the list is empty, which retires every entry an earlier list carried.
 
-Publish the list at https://HOST/.well-known/packslip/PATH.json for a project named HOST/PATH, or at https://HOST/.well-known/packslip.json for a project named after a bare host. github.com does not serve that path, so a github.com project commits the list to its default branch instead, as its supplementary list: .well-known/packslip.json, or .well-known/packslip/TOOL.json for a monorepo tool. See https://packslip.dev/docs/release-lists/.
+Publish it at https://HOST/.well-known/packslip/PATH.json for a project named HOST/PATH, or at https://HOST/.well-known/packslip.json for a bare host. A github.com project commits it to its default branch instead, as .well-known/packslip.json, or .well-known/packslip/TOOL.json for a monorepo tool. See https://packslip.dev/docs/release-lists/
 """#
     flag --project help="The project's name, which every --release bundle must name" required=#true {
         arg <PROJECT>
     }
-    flag --sequence help="This list's sequence number, which increases with every list you publish; consumers refuse a list whose sequence is lower than one they have accepted" required=#true {
+    flag --sequence help="This list's sequence number; increase it with every list you publish" required=#true {
+        long_help #"""
+This list's sequence number; increase it with every list you publish
+
+Consumers refuse a list whose sequence is lower than one they accepted.
+"""#
         arg <SEQUENCE>
     }
-    flag --latest help="Recommend this version for an unconstrained latest request, without reordering versions; it must exactly match the version of a --release entry" {
+    flag --latest help="Recommend this version to consumers that ask for the latest release" {
+        long_help #"""
+Recommend this version to consumers that ask for the latest release
+
+It must exactly match a --release entry's version. Versions are not reordered.
+"""#
         arg <LATEST>
     }
     flag --valid-for help="How long until the list expires, as a number and a unit (s, m, h, d, or w), such as 30d" default="30d" {
+        long_help #"""
+How long until the list expires, as a number and a unit (s, m, h, d, or w), such as 30d
+
+Consumers refuse the list once it expires, so publish a new one, with a higher --sequence, before then.
+"""#
         arg <VALID_FOR>
     }
-    flag --generated-at help="RFC 3339 generation time; defaults to now" {
+    flag --generated-at help="RFC 3339 generation time, written in UTC; defaults to now" {
         arg <GENERATED_AT>
     }
-    flag --release help="A released packslip as URL=PATH: where consumers fetch it, and the local copy to read (repeatable; omit it for a list with no releases)" var=#true {
+    flag --release help="A released bundle as URL=PATH: where consumers fetch it, and the local copy to read (repeatable; omit it for an empty list)" var=#true {
         arg <RELEASE>
     }
     flag --yank help="Withdraw a listed release, as URL=REASON, with URL exactly as given to --release (repeatable)" var=#true {
@@ -314,18 +471,40 @@ Publish the list at https://HOST/.well-known/packslip/PATH.json for a project na
     flag --security help="Mark a listed release as a security fix, by its --release URL (repeatable)" var=#true {
         arg <SECURITY>
     }
-    flag --evidence help="What a publisher other than the vendor checked about a listed release, as URL=KIND or URL=KIND=DETAIL (repeatable)" var=#true {
+    flag --evidence help="What a repackager checked about a listed release, as URL=KIND or URL=KIND=DETAIL with URL as given to --release (repeatable)" var=#true {
         arg <EVIDENCE>
     }
-    flag "-k --key" help="Sign with this secret key instead of a CI identity" help_heading=Signing {
+    flag "-k --key" help="Sign with this secret key, from `packslip keygen`, instead of signing keyless" help_heading=Signing {
         arg <KEY>
     }
-    flag --sign help="How to sign: oidc (keyless) or key (needs --key). Optional; inferred from whether --key is given" help_heading=Signing {
+    flag --sign help="How to sign: oidc (keyless, with the CI job's identity) or key (with --key)" help_heading=Signing {
+        long_help #"""
+How to sign: oidc (keyless, with the CI job's identity) or key (with --key)
+
+Defaults to key when --key is given, else oidc. sigstore-oidc and sigstore-key are other spellings. --sign key needs --key; --sign oidc conflicts with --key.
+"""#
         arg <SIGN>
     }
-    flag --no-log help="With --key: do not record the signature in Rekor. Consumers must then opt in with --allow-unlogged" help_heading=Signing
-    flag --no-pin-workflow help="Keyless only: write identity.pin_workflow: false into the list, as `packslip create --no-pin-workflow` does for a release. See https://packslip.dev/release/v1/#workflow-pinning" help_heading=Signing
-    flag "-o --out" help="Where to write the list; consumers fetch it only from its .well-known path, never under this default name" default=packslip-releases.sigstore.json {
+    flag --no-log help="Record no Rekor transparency log entry for a key signature" help_heading=Signing {
+        long_help #"""
+Record no Rekor transparency log entry for a key signature
+
+Needs --key, since keyless signatures are always logged. Consumers must then pass --allow-unlogged.
+"""#
+    }
+    flag --no-pin-workflow help="Write identity.pin_workflow: false into the list, as `packslip create --no-pin-workflow` does for a release" help_heading=Signing {
+        long_help #"""
+Write identity.pin_workflow: false into the list, as `packslip create --no-pin-workflow` does for a release
+
+Conflicts with --key, since only a keyless signer has a workflow. See https://packslip.dev/release/v1/#workflow-pinning
+"""#
+    }
+    flag "-o --out" help="Where to write the list" default=packslip-releases.sigstore.json {
+        long_help #"""
+Where to write the list
+
+Consumers fetch a list only from its .well-known path, never under this default name.
+"""#
         arg <OUT>
     }
     flag "-h --help" help="Print help" action=help builtin=#true
@@ -338,23 +517,35 @@ packslip releases \
         --release https://mytool.example.com/v1.2.3/packslip.sigstore.json=releases/v1.2.3/packslip.sigstore.json \
         --key release.key \
         --out site/.well-known/packslip.json
-"""# header="List one key-signed release of a self-hosted project"
+"""# header="List one key-signed release of a domain project"
 }
 cmd schema help="Print the JSON schema for a decoded release statement" {
     long_help #"""
 Print the JSON schema for a decoded release statement
 
-Use --releases for the release-list statement schema, or --report for the report `verify --json` prints for a release. The statement schemas describe the in-toto payload, not the enclosing sigstore bundle. All are published at https://packslip.dev/schema/release-v1.json, https://packslip.dev/schema/releases-v1.json, and https://packslip.dev/schema/verify-report-v1.json.
+--releases prints the release list's statement schema instead, and --report the schema of the report `verify --json` prints for a release. The statement schemas describe the in-toto payload, not the Sigstore bundle around it.
+
+The three schemas, in that order, are published at https://packslip.dev/schema/release-v1.json, https://packslip.dev/schema/releases-v1.json, and https://packslip.dev/schema/verify-report-v1.json.
+
+See https://packslip.dev/release/v1/#json-schemas
 """#
-    flag --releases help="Print the releases/v1 list schema instead of the release/v1 statement schema"
-    flag --report help="Print the schema of the report `verify --json` prints for a release"
+    flag --releases help="Print the releases/v1 release list schema instead of the release/v1 statement schema"
+    flag --report help="Print the schema of the report `verify --json` prints for a release; wins over --releases"
     flag "-h --help" help="Print help" action=help builtin=#true
 }
 cmd show help="Print the statement inside a bundle, without verifying it" {
-    flag --raw help="Print the signed payload followed by a newline, without pretty-printing"
+    long_help #"""
+Print the statement inside a bundle, without verifying it
+
+Read a release bundle or release list and print its statement as indented JSON. Nothing is checked: the signer, the signature, and every field are unverified until `packslip verify` accepts the bundle.
+
+A release bundle's fields are defined at https://packslip.dev/release/v1/#the-release-statement and a release list's at https://packslip.dev/release/v1/#the-release-list
+"""#
+    flag --raw help="Print the exact signed payload followed by a newline, without pretty-printing"
     flag "-h --help" help="Print help" action=help builtin=#true
     arg <BUNDLE> help="Release bundle or release list to read"
     complete bundle type=path
+    example "packslip show packslip.sigstore.json" header="Read the statement of a release bundle"
 }
 cmd usage help="Generate a usage spec for the CLI" hide=#true {
     long_help #"""
@@ -364,60 +555,99 @@ https://usage.jdx.dev
 """#
     flag "-h --help" help="Print help" action=help builtin=#true
 }
-cmd verify help="Verify a packslip, or a release list, against a pinned identity or key" {
+cmd verify help="Verify a release bundle or release list, and downloaded files" {
     long_help #"""
-Verify a packslip, or a release list, against a pinned identity or key
+Verify a release bundle or release list, and downloaded files
 
-Check the signature, log evidence, and statement structure. With --artifact, also check local files against signed digests and artifact sizes. Without it, only the bundle is checked. Nothing is downloaded: remote artifacts and linked provenance are not fetched.
+Check the signature, the transparency log entry, and the statement. Each --artifact file is checked against its signed digest, and an artifact also against its signed size. Nothing is downloaded.
 
-Choose what to trust. By default, the identity policy comes from the project the document claims, if it is on github.com or gitlab.com: that forge's issuer and a certificate that records that repository as its source, whichever workflow signed, so a reusable workflow of another repository may sign (a certificate that records no source must come from a workflow of that repository). Any other project needs --pubkey or an identity flag. For a keyless release, --issuer with --identity-prefix (any workflow of a repository, such as https://github.com/owner/repo/) or --identity (one certificate identity, including its ref) pins the signer. --issuer with --source-repository instead pins the repository the certificate must record as its source, whichever workflow signed: unlike an identity prefix of that repository, it also matches a reusable workflow of another repository. In --identity, --identity-prefix, and --source-repository, a github.com or gitlab.com repository's name matches in any letter case, as the forge resolves it; the rest, such as a workflow's path and ref, matches exactly. For a key-signed release, pass --pubkey. --pin adds a check on top of the identity policy: the signing repository must have that signer fingerprint.
+A github.com or gitlab.com project's name sets the policy. It requires the forge's issuer and a certificate whose source repository is the project's, or, if the certificate records none, a signer that is a workflow of the project's repository. A reusable workflow the project calls may therefore sign. --issuer, --identity, and --identity-prefix narrow that policy and never replace it. A domain project, one named after a host such as mytool.example.com, has no such policy, so pass --issuer with --identity, --identity-prefix, --source-repository, or --pin. --pubkey verifies a key-signed release instead. --source-repository and --pin add checks, and --allow-other-repository accepts a signer outside the project's repository, such as a repackager's.
 
-For a GitHub or GitLab project, the identity flags narrow what the project's name requires and never replace it: the run that signed must match the flags and still belong to the project's repository, so --issuer alone accepts only that repository's workflows and the reusable workflows it calls. To verify a document signed outside the project's repository, such as a repackager's, name its signer with --issuer and --identity, --identity-prefix, or --source-repository, and add --allow-other-repository. For any other project, the flags you pass are the whole policy: there, --issuer alone accepts any signer from that issuer.
-
-Then match the verified project and version to what you meant to install. For a release list, the command does not check the expiry or compare the sequence with an earlier list. See https://packslip.dev/docs/verifying/.
+Then check that the verified project and version are the ones you meant. A release list's expiry and sequence are not checked. See https://packslip.dev/docs/verifying/
 """#
-    flag "-p --pubkey" help="The pinned public key file, or its base64 line" help_heading=Trust {
+    flag "-p --pubkey" help="Require this public key: a minisign .pub file, such as one from `packslip keygen`, or its base64 line" help_heading=Trust {
+        long_help #"""
+Require this public key: a minisign .pub file, such as one from `packslip keygen`, or its base64 line
+
+Conflicts with every other trust flag except --allow-unlogged and --trusted-root.
+"""#
         arg <PUBKEY>
     }
-    flag --identity help="The certificate identity a keyless signer must have, including its ref, such as https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3; a GitHub or GitLab repository name in it matches in any case" help_heading=Trust {
+    flag --identity help="Require this exact certificate identity, ref included, such as https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3" help_heading=Trust {
+        long_help #"""
+Require this exact certificate identity, ref included, such as https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.2.3
+
+A GitHub or GitLab repository name in it matches in any case; the rest matches exactly. For a domain project, also pass --issuer, or a certificate from any issuer is accepted.
+"""#
         arg <IDENTITY>
     }
-    flag --identity-prefix help="A prefix the certificate identity must start with, such as https://github.com/owner/repo/; a GitHub or GitLab repository name in it matches in any case" help_heading=Trust {
+    flag --identity-prefix help="Require a certificate identity that starts with this prefix, such as https://github.com/owner/repo/" help_heading=Trust {
+        long_help #"""
+Require a certificate identity that starts with this prefix, such as https://github.com/owner/repo/
+
+A GitHub or GitLab repository name in it matches in any case; the rest matches exactly. For a domain project, also pass --issuer, or a certificate from any issuer is accepted.
+"""#
         arg <IDENTITY_PREFIX>
     }
-    flag --issuer help="The OIDC issuer a keyless signer must have; pass it with --identity or --identity-prefix, since for a project not on GitHub or GitLab it alone accepts any signer from that issuer" help_heading=Trust {
+    flag --issuer help="Require this OIDC issuer; for a domain project it alone accepts any signer from that issuer, so pair it with --identity, --identity-prefix, --source-repository, or --pin" help_heading=Trust {
         arg <ISSUER>
     }
-    flag --source-repository help="The repository the signing certificate must record as its source, such as https://github.com/owner/repo, whichever workflow signed, so it also matches a reusable workflow of another repository, which an identity prefix of the repository does not. Needs --issuer, and replaces --identity and --identity-prefix" help_heading=Trust {
+    flag --source-repository help="Require the certificate to record this source repository, such as https://github.com/owner/repo, whichever workflow signed" help_heading=Trust {
+        long_help #"""
+Require the certificate to record this source repository, such as https://github.com/owner/repo, whichever workflow signed
+
+Unlike an identity prefix of the repository, it also matches a reusable workflow of another repository that the repository's run called. A GitHub or GitLab repository name in it matches in any case. Needs --issuer. Conflicts with --identity and --identity-prefix.
+"""#
         arg <SOURCE_REPOSITORY>
     }
-    flag --pin help="The signer fingerprint (ps1_...) the certificate's repository must have, as `packslip pin` prints it" help_heading=Trust {
+    flag --pin help="Require this signer fingerprint (ps1_...), as `packslip pin` prints it" help_heading=Trust {
         arg <PIN>
     }
-    flag --allow-other-repository help="Accept a keyless signer outside the repository a GitHub or GitLab project names, such as a repackager's; needs --issuer, and --identity, --identity-prefix, or --source-repository to name that signer" help_heading=Trust
-    flag --allow-unlogged help="Accept a bundle without a transparency log entry" help_heading=Trust
-    flag --trusted-root help="A sigstore trusted_root.json to use instead of the embedded one" help_heading=Trust {
+    flag --allow-other-repository help="Accept a keyless signer outside the project's repository, such as a repackager's" help_heading=Trust {
+        long_help #"""
+Accept a keyless signer outside the project's repository, such as a repackager's
+
+For a github.com or gitlab.com project. Needs --issuer and one of --identity, --identity-prefix, or --source-repository to name the signer. Conflicts with --pubkey.
+"""#
+    }
+    flag --allow-unlogged help="Accept a bundle without a transparency log entry, such as one created with --key --no-log" help_heading=Trust
+    flag --trusted-root help="Use this Sigstore trusted_root.json instead of the embedded one" help_heading=Trust {
         arg <TRUSTED_ROOT>
     }
-    flag "-a --artifact" help="A downloaded artifact or resource asset to check against the bundle, matched by file name, so keep the name it was published under (repeatable)" var=#true {
+    flag "-a --artifact" help="A downloaded artifact or resource asset to check against its signed digest, and an artifact also against its size (repeatable)" var=#true {
+        long_help #"""
+A downloaded artifact or resource asset to check against its signed digest, and an artifact also against its size (repeatable)
+
+Files are matched by name, so keep the name each was published under. A release list has no artifacts to check.
+"""#
         arg <ARTIFACT>
     }
-    flag "-J --json" help="Print the verified report as JSON, including every listed artifact with its signed digest and source_repository when the signing certificate records one; for a release list, print the verified list statement" help_heading=Output
+    flag "-J --json" help="Print the verified report as JSON" help_heading=Output {
+        long_help #"""
+Print the verified report as JSON
+
+The report lists every artifact with its signed digest, and source_repository when the signing certificate records one. For a release list, the verified list statement is printed instead.
+"""#
+    }
     flag "-h --help" help="Print help" action=help builtin=#true
     arg <BUNDLE> help="Local release bundle or signed release list to verify"
     complete bundle type=path
     complete trusted_root type=path
     example #"""
 packslip verify packslip.sigstore.json \
-        --identity-prefix https://github.com/owner/repo/ \
-        --issuer https://token.actions.githubusercontent.com \
         --artifact mytool-1.2.3-linux-x64.tar.gz
-"""# header="Verify a GitHub release against its repository"
+"""# header="Verify a GitHub release and a downloaded artifact"
     example #"""
 packslip verify packslip.sigstore.json \
         --pin ps1_snirenkjwr7m5ozgcufameodnm \
         --artifact hk-x86_64-unknown-linux-gnu.tar.gz
-"""# header="Verify hk 2.3.0 against its signer fingerprint"
+"""# header="Verify hk 2.8.0 against its signer fingerprint"
+    example #"""
+packslip verify packslip.sigstore.json \
+        --issuer https://token.actions.githubusercontent.com \
+        --identity-prefix https://github.com/repackager/mytool/ \
+        --allow-other-repository
+"""# header="Verify a release a repackager signed from its own repository"
     example #"""
 packslip verify packslip.sigstore.json \
         --pubkey release.pub \
@@ -429,6 +659,11 @@ packslip verify packslip.sigstore.json \
 }
 cmd version help="Print packslip's version" {
     alias v
-    flag "-J --json" help="Print the name, version, OS, and architecture as JSON"
+    long_help #"""
+Print packslip's version
+
+Print `packslip X.Y.Z`, as `packslip --version` does.
+"""#
+    flag "-J --json" help="Print a JSON object with the keys name, version, os, and arch"
     flag "-h --help" help="Print help" action=help builtin=#true
 }

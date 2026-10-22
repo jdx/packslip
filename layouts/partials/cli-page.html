@@ -1,11 +1,14 @@
 <!doctype html>
 <html lang="en">
 <head>
-{{ $pageTitle := "packslip CLI" }}
-{{ $description := "Install the packslip CLI, choose a task, and look up commands for publishing, verifying, and installing software." }}
+{{/* Each page's title and description come from its front matter:
+     docs/cli.md for the overview, docs/templates/cli-command.md.tera for a
+     command. */}}
+{{ $pageTitle := printf "%s — packslip" (.Title | default "CLI reference") }}
+{{ $description := .Description | default "Commands for publishing, verifying, and installing releases with packslip." }}
 {{ if not .IsSection }}
-  {{ $pageTitle = printf "packslip %s — CLI reference" .File.ContentBaseName }}
-  {{ $description = printf "Command-line reference for packslip %s." .File.ContentBaseName }}
+  {{ $pageTitle = printf "%s — CLI reference" (.Title | default (printf "packslip %s" .File.ContentBaseName)) }}
+  {{ $description = .Description | default (printf "Command-line reference for packslip %s." .File.ContentBaseName) }}
 {{ end }}
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -44,7 +47,7 @@
 
   <article class="prose">
     {{ if not .IsSection }}
-    <p class="meta">For installation and common tasks, see the <a href="/cli/">CLI overview</a>. This reference is generated from development CLI help; run <code>packslip {{ .File.ContentBaseName }} --help</code> for your installed version.</p>
+    <p class="meta">The <a href="/cli/">CLI reference</a> lists the commands by task. This page is generated from the development branch's help; run <code>packslip {{ .File.ContentBaseName }} --help</code> for the options your installed version supports.</p>
     {{ end }}
     {{ .Content }}
   </article>

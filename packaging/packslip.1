@@ -1,6 +1,11 @@
+.\" The man page the APT and DNF packages install. Their packslip is built
+.\" with --features install-cli, so it has no publishing commands. Written by
+.\" hand: keep it in step with the install, verify, pin, show, and completion
+.\" help in src/main.rs.
 .TH PACKSLIP 1 "October 2026" "packslip" "User Commands"
+.nh
 .SH NAME
-packslip \- install and verify authenticated upstream releases
+packslip \- install and verify signed upstream releases
 .SH SYNOPSIS
 .B packslip install
 .I PROJECT
@@ -9,45 +14,203 @@ packslip \- install and verify authenticated upstream releases
 .B packslip verify
 .I BUNDLE
 .RI [ OPTIONS ]
+.br
+.B packslip pin
+.I BUNDLE
+.RI [ OPTIONS ]
+.br
+.B packslip show
+.I BUNDLE
+.RB [ \-\-raw ]
+.br
+.B packslip completion
+.I SHELL
+.br
+.B packslip version
+.RB [ \-\-json ]
 .SH DESCRIPTION
-Packslip installs a complete authenticated upstream release tree and exports
-only the commands declared by its signed metadata. It does not run downloaded
-code, install dependencies, edit shell setup, or activate environments.
-This distribution build includes installation and verification commands.
+.B packslip install
+finds a project's release, verifies its release bundle and the artifact for
+this host, and unpacks the archive into an installation tree.
+It exports only the commands the release declares.
+It runs no downloaded code, installs no dependencies, and edits no shell
+configuration.
+There is no uninstall, upgrade, or list.
+.PP
+The packslip in this package installs and verifies releases.
+The release binaries add create, keygen, releases, and schema, which publish
+releases; see https://packslip.dev/docs/install/.
 Run a command with
-.B --help
-for its complete option reference.
-.SH INSTALLATION
-.B packslip install owner/repo
-uses GitHub discovery. A host-named project uses its signed release list.
-.B --version
-selects a version, prefix, or tag.
-.B --system
-selects shared installation; Unix root uses it by default.
-.B --user
-selects the current user and requires non-root execution on Unix.
-.B --install-dir
+.B \-\-help
+for its full help, or with
+.B \-h
+for a summary.
+.SH COMMANDS
+.TP
+.BI "install " PROJECT
+Install a verified release and export its declared commands.
+.TP
+.BI "verify " BUNDLE
+Verify a release bundle or release list, and each file given with
+.BR \-\-artifact .
+Nothing is downloaded.
+.TP
+.BI "pin " BUNDLE
+Verify a release bundle and print its signer fingerprint.
+.TP
+.BI "show " BUNDLE
+Print the statement inside a bundle without verifying it.
+.TP
+.BI "completion " SHELL
+Print a shell completion script.
+This package installs completions for bash, zsh, and fish.
+.TP
+.B version
+Print packslip's version.
+.SH INSTALL A TOOL
+.I PROJECT
+is
+.IR owner/repo ,
+.IR github.com/owner/repo [ /TOOL ],
+or a domain project, one named after a host, such as
+.IR mytool.example.com [ /PATH ].
+A github.com project's releases are found on GitHub.
+A domain project's releases are found in the signed release list its host
+publishes.
+gitlab.com projects are refused.
+.PP
+.B \-\-version
+selects a version, prefix, range, or tag.
+The default, latest, takes the vendor's recommended release, otherwise
+the highest stable version.
+When that release has no packslip for the project or no artifact for this
+host, install warns and tries the next stable release.
+Install never selects a release that the project's signed release list
+withdraws, and warns when that list withdraws the release it last installed.
+.B \-\-system
+installs for all users and is the default for root on Unix.
+.B \-\-user
+installs for the current user, and root on Unix cannot select it.
+.B \-\-install\-dir
 and
-.B --bin-dir
-override destinations without moving trust state.
-.SH TRUST AND RECOVERY
-.B --pin
-requires a separately obtained signer fingerprint.
-.B --pubkey
-requires a public key for key-signed releases.
-Administrator pins, caller constraints, and remembered continuity all apply.
-.B --force
-replaces conflicting command entries and unmarked directories. It never
-bypasses trust, freshness, protected paths, or archive safety.
-Packslip stages changes and recovers interrupted replacements before the next
-install. Once committed, cleanup failures are reported as warnings and retried.
-.B --offline
-requires cached authenticated metadata and artifacts.
+.B \-\-bin\-dir
+change where the tree and the commands go; trust state stays in the scope.
+.B \-\-offline
+uses only cached, authenticated metadata and artifacts.
+.SH TRUST
+A github.com project must be signed from its repository.
+A keyless domain project's first install trusts the signer that its release
+list and release bundle declare, fetched over HTTPS from that host.
+A key-signed domain project needs
+.B \-\-pubkey
+on its first install, and later installs remember the key.
+.PP
+Later installs hold the project to what was accepted, and a keyless domain
+project to the repository that signed it.
+A changed signer or signing repository, keyless signing replaced by a key,
+disabled workflow pinning, a repackager's bundle after the vendor's, or
+dropped provenance needs
+.B \-\-accept\-trust\-change
+with the ID install printed for it.
+A github.com name that now resolves to a different repository ID is refused.
+.PP
+.B \-\-pin
+requires a signer fingerprint
+.RI ( ps1_... )
+that you obtained separately, such as from the project's README.
+.BR \-\-issuer ,
+.BR \-\-identity ,
+and
+.B \-\-identity\-prefix
+narrow what the project's name requires and never replace it.
+Administrator pins apply as well; see FILES.
+.PP
+.B \-\-force
+replaces conflicting command entries and installation directories.
+It never bypasses verification, trust-change approval, release list
+freshness, the refusal of directories other users can write, or archive
+limits.
+Changes are staged, and an interrupted replacement is recovered before the
+next install.
+Once an install is committed, a cleanup failure is reported as a warning and
+retried.
+.SH VERIFY A RELEASE
+A github.com or gitlab.com project's name sets the policy: the forge's
+issuer, and a certificate whose source repository is the project's.
+.BR \-\-issuer ,
+.BR \-\-identity ,
+and
+.B \-\-identity\-prefix
+narrow that policy and never replace it.
+A domain project has no policy from its name, so pass
+.B \-\-issuer
+with
+.BR \-\-identity ,
+.BR \-\-identity\-prefix ,
+.BR \-\-source\-repository ,
+or
+.BR \-\-pin .
+.B \-\-pubkey
+verifies a key-signed release instead.
+After verification, check that the project and version are the ones you
+meant.
+.SH EXIT STATUS
+0 when the command succeeds, 1 when it fails, including when verify or pin
+rejects a release, and 2 when the command line is invalid.
+.SH ENVIRONMENT
+.TP
+.BR GH_TOKEN ", " GITHUB_TOKEN
+A token for GitHub requests; GH_TOKEN wins when both are set.
+.TP
+.BR XDG_CONFIG_HOME ", " XDG_DATA_HOME ", " XDG_STATE_HOME
+Where a user install keeps its configuration, trees, and state, by default
+~/.config, ~/.local/share, and ~/.local/state.
+Root ignores them, HOME, and user configuration.
 .SH FILES
+.TP
 .I /etc/packslip/pins.d/*.toml
-contains administrator trust constraints.
-User state is under XDG_STATE_HOME/packslip, defaulting to ~/.local/state/packslip.
-Root state is /var/lib/packslip and ignores HOME and user configuration.
+Administrator pins.
+Each file that names the project adds a requirement no flag can remove.
+.TP
+.I ~/.config/packslip/pins.d/*.toml
+A user's own pins, read by user installs.
+.TP
+.I ~/.config/packslip/config.toml
+HTTP credentials for user installs, each scoped to one HTTPS origin.
+.TP
+.IR ~/.local/share/packslip/ ", " ~/.local/bin/ ", " ~/.local/state/packslip/
+A user install's trees, commands, and state.
+.TP
+.IR /opt/packslip/ ", " /usr/local/bin/ ", " /var/lib/packslip/
+A system install's trees, commands, and state.
+.TP
+.I /usr/share/doc/packslip/bootstrap.md
+The bootstrap guide.
+.SH EXAMPLES
+Install the latest release of hk:
+.PP
+.RS
+packslip install github.com/jdx/hk
+.RE
+.PP
+Install hk 2.8.0 and require its signer fingerprint:
+.PP
+.RS
+.nf
+packslip install github.com/jdx/hk \e
+    \-\-version 2.8.0 \e
+    \-\-pin ps1_snirenkjwr7m5ozgcufameodnm
+.fi
+.RE
+.PP
+Install a key-signed domain project:
+.PP
+.RS
+packslip install mytool.example.com \-\-pubkey release.pub
+.RE
 .SH SEE ALSO
-https://packslip.dev/docs/bootstrap/
-https://packslip.dev/docs/compatibility/
+Bootstrap a tool: https://packslip.dev/docs/bootstrap/
+.br
+Verify a release: https://packslip.dev/docs/verifying/
+.br
+CLI reference: https://packslip.dev/cli/

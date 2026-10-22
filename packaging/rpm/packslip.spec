@@ -19,9 +19,9 @@ BuildRequires: jq
 Requires: ca-certificates
 
 %description
-Packslip verifies signed release metadata and installs a complete upstream
-release tree, exporting only its declared commands. It preserves trust and
-ownership state without running downloaded code or editing shell setup.
+Verifies signed release metadata and installs a complete upstream release
+tree, exporting only its declared commands. It preserves trust and ownership
+state without running downloaded code or editing shell setup.
 
 %prep
 %autosetup
