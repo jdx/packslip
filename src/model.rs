@@ -739,6 +739,18 @@ fn file_name(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
 
+/// The size directory of a path in the hicolor icon theme's layout,
+/// whose last four segments are `hicolor/SIZE/CONTEXT/FILE`: `48x48` for
+/// `share/icons/hicolor/48x48/apps/tool.png`. hicolor repeats an icon's
+/// file name in every size directory, so this is what tells the sizes
+/// apart.
+fn hicolor_size(path: &str) -> Option<&str> {
+    let mut parts = path.rsplit('/');
+    let (_file, _context, size, theme) =
+        (parts.next()?, parts.next()?, parts.next()?, parts.next()?);
+    (theme == "hicolor" && !size.is_empty()).then_some(size)
+}
+
 /// A command's name in the form the specification writes it: as typed at
 /// a shell, without `.exe`. `bin[].name`, `requires.bin[].name`, and a
 /// resource's `bin` all use it, so a consumer compares them without
@@ -1066,16 +1078,19 @@ impl Resource {
     /// completion (one per shell an `exec` entry generates), `format` and
     /// `bin` of a cli-spec, the name of a skill, the format of an SBOM,
     /// and for every other kind `bin`, if any, and the file name of the
-    /// source, or nothing for an `exec` source. A completion or man page
-    /// that leaves `bin` out is for the release's only executable; see
+    /// source, or nothing for an `exec` source. An icon whose source path
+    /// ends in the segments `hicolor/SIZE/CONTEXT/FILE` also has that
+    /// `SIZE`, so one icon at several sizes is several things.
+    /// An entry whose identity includes `bin` and that leaves it out is
+    /// for the release's only executable; see
     /// [`Resource::identities_for`], which [`select_resources`] uses.
     pub fn identities(&self) -> Vec<ResourceIdentity> {
         self.identities_for(None)
     }
 
     /// [`Resource::identities`] in a release whose only executable is
-    /// `sole_bin`: a completion or man page that leaves `bin` out is for
-    /// that one, and competes with an entry that names it.
+    /// `sole_bin`: an entry whose identity includes `bin` and that leaves
+    /// it out is for that one, and competes with an entry that names it.
     pub fn identities_for(&self, sole_bin: Option<&str>) -> Vec<ResourceIdentity> {
         // The bare name, as `sole_bin` and validation compare it, so an
         // entry naming the Windows form is for the same executable.
@@ -1113,10 +1128,11 @@ impl Resource {
                     .as_deref()
                     .or(self.asset.as_deref())
                     .or(self.repo.as_deref());
-                match path {
-                    Some(path) => vec![id(vec![file_name(path)])],
-                    None => vec![id(vec![])],
-                }
+                let size = match self.kind.as_str() {
+                    "icon" => path.and_then(hicolor_size),
+                    _ => None,
+                };
+                vec![id(size.into_iter().chain(path.map(file_name)).collect())]
             }
         }
     }
@@ -3586,6 +3602,74 @@ mod tests {
                 .archive
                 .as_deref(),
             Some("second")
+        );
+    }
+
+    #[test]
+    fn icons_at_different_hicolor_sizes_are_different_things() {
+        let icon = |path: &str| Resource {
+            archive: Some(path.into()),
+            ..Resource::new("icon")
+        };
+        let mut doc = sample();
+        doc.predicate.resources = vec![
+            Resource {
+                os: Some("linux".into()),
+                ..icon("share/icons/hicolor/512x512/apps/mise.png")
+            },
+            icon("share/icons/hicolor/48x48@2/apps/mise.png"),
+            icon("mise-v2026.9.1/share/icons/hicolor/scalable/apps/mise.png"),
+        ];
+        let artifact = &doc.predicate.artifacts[0];
+        assert_eq!(
+            select_resources(&doc, artifact),
+            doc.predicate.resources.iter().collect::<Vec<_>>(),
+            "each size is its own icon, so the Linux-scoped one hides neither of the others"
+        );
+        let sole_bin = doc.sole_bin().map(str::to_string);
+        let ids = |r: &Resource| -> Vec<String> {
+            r.identities_for(sole_bin.as_deref())
+                .iter()
+                .map(ToString::to_string)
+                .collect()
+        };
+        assert_eq!(
+            ids(&doc.predicate.resources[1]),
+            ["icon/mise/48x48@2/mise.png"]
+        );
+        assert_eq!(
+            ids(&doc.predicate.resources[2]),
+            ["icon/mise/scalable/mise.png"]
+        );
+
+        // Outside a hicolor size directory the identity is the file name
+        // alone, as it always was: the most specific entry hides the rest.
+        doc.predicate.resources = vec![
+            Resource {
+                os: Some("linux".into()),
+                ..icon("share/pixmaps/mise.png")
+            },
+            icon("icons/mise.png"),
+            icon("hicolor/mise.png"),
+            icon("share/icons/Adwaita/48x48/apps/mise.png"),
+            icon("share/icons/myhicolor/48x48/apps/mise.png"),
+        ];
+        let artifact = &doc.predicate.artifacts[0];
+        assert_eq!(
+            select_resources(&doc, artifact),
+            [&doc.predicate.resources[0]]
+        );
+        for resource in &doc.predicate.resources {
+            assert_eq!(ids(resource), ["icon/mise/mise.png"]);
+        }
+
+        // Only an icon's hicolor path counts toward its identity.
+        assert_eq!(
+            ids(&Resource {
+                archive: Some("share/icons/hicolor/48x48/apps/mise.png".into()),
+                ..Resource::new("desktop")
+            }),
+            ["desktop/mise/mise.png"]
         );
     }
 

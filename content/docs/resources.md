@@ -61,7 +61,8 @@ directory, include it in `archive`, for example
 | `cli-spec` | `cli-spec/FORMAT[/BIN]` | `format`, `bin` | The documented format is `usage`. |
 | `skill` | `skill/NAME` | `name` | A directory that holds `SKILL.md`; as an `asset`, an archive of that directory. See [Agent skills and desktop files](#agent-skills-and-desktop-files). |
 | `sbom` | `sbom/FORMAT` | `format` | `cyclonedx` or `spdx`. Never from `exec`. |
-| `desktop`, `icon` | `desktop`, `icon` | | A freedesktop desktop entry, or an icon file. |
+| `desktop` | `desktop` | | A freedesktop desktop entry. |
+| `icon` | `icon` | | An icon file. List one entry per size: icons in different hicolor size directories, such as `share/icons/hicolor/48x48/apps/mytool.png` and `.../256x256/apps/mytool.png`, are different icons, and a consumer installs each. |
 | `app` | `app` | | A macOS `.app` bundle inside a `dmg` or `zip`. `archive` source only. |
 | A kind of your own, such as `font` | `KIND` or `KIND/NAME` | `name` | Consumers ignore kinds they do not know. |
 

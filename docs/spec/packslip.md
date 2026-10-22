@@ -995,7 +995,16 @@ consists of the `kind` and the following fields:
 | `cli-spec` | `bin` and `format`. |
 | `skill` | `name`. |
 | `sbom` | `format`. |
-| Every other kind | The source's file name, or the kind alone for an `exec` source. |
+| `icon` | `bin`, if any, the source's hicolor size directory, if any, and the source's file name. An `exec` source has no file name. |
+| Every other kind | `bin`, if any, and the source's file name. An `exec` source has no file name. |
+
+When the last four `/`-separated segments of an icon's source path are
+`hicolor`, SIZE, CONTEXT, and FILE, its hicolor size directory is SIZE:
+`48x48` for `share/icons/hicolor/48x48/apps/tool.png`, or a name such as
+`48x48@2` or `scalable`. Otherwise the icon has none, as for
+`share/icons/myhicolor/48x48/apps/tool.png`. Where an identity includes
+`bin`, an entry that omits it in a release with one executable is for
+that executable.
 
 Entries with different identities never hide one another. A Linux-scoped
 skill does not replace an unscoped skill with a different name, and a
@@ -1094,7 +1103,9 @@ per artifact archive.
   for a Linux launcher. AppImage, deb, rpm, and the Windows installer
   formats carry their own desktop integration.
 - `icon` supplies an icon file. A hicolor path such as
-  `share/icons/hicolor/512x512/...` identifies its size.
+  `share/icons/hicolor/512x512/...` identifies its size. The size is part
+  of the icon's [identity](#resource-identity), so a release can list one
+  icon at several sizes and a consumer installs each of them.
 - `app` names a macOS application bundle inside a `dmg` or `zip`, by its
   path in the archive. A consumer copies the bundle to Applications.
   Only an `archive` source is allowed.
