@@ -1,0 +1,13 @@
+{{- /* Fragment ids this page used to have that now live on another page,
+     from data/legacy_anchors.toml. static/docs.js sends a reader who arrives
+     with one of them to its new URL. Same-page moves need nothing here: the
+     render-heading hook gives the new heading the old id as well. */ -}}
+{{- $moved := dict -}}
+{{- with index hugo.Data.legacy_anchors .RelPermalink -}}
+  {{- range $old, $new := . -}}
+    {{- if hasPrefix $new "/" }}{{ $moved = merge $moved (dict $old $new) }}{{ end -}}
+  {{- end -}}
+{{- end -}}
+{{- with $moved }}
+<script type="application/json" data-legacy-anchors>{{ jsonify . | safeJS }}</script>
+{{- end -}}

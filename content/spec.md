@@ -3,6 +3,7 @@ title: packslip release/v1 specification
 url: /release/v1/
 aliases:
   - /releases/v1/
+toc_end_level: 4
 ---
 # packslip: a signed release manifest
 

@@ -23,7 +23,7 @@ description = "Check the shell scripts the actions, workflows, and install scrip
 run = "shellcheck scripts/*.sh installer/*.sh container/*.sh"
 
 [tasks.render]
-description = "Generate the usage spec, CLI reference, schemas, and spec page"
+description = "Generate the usage spec, CLI reference, schemas, spec page, and actions reference"
 depends = ["build"]
 run = [
   "target/debug/packslip usage > packslip.usage.kdl",
@@ -33,11 +33,14 @@ run = [
   "target/debug/packslip schema --report > static/schema/verify-report-v1.json",
   # The site renders the spec from its canonical text.
   # Both predicate types must resolve: the list predicate is /releases/v1.
-  "{ printf -- '---\ntitle: packslip release/v1 specification\nurl: /release/v1/\naliases:\n  - /releases/v1/\n---\n'; cat docs/spec/packslip.md; } > content/spec.md",
+  # Its contents list the H4 field tables too.
+  "{ printf -- '---\ntitle: packslip release/v1 specification\nurl: /release/v1/\naliases:\n  - /releases/v1/\ntoc_end_level: 4\n---\n'; cat docs/spec/packslip.md; } > content/spec.md",
   "rm -rf content/cli && mkdir -p content/cli",
   "usage generate markdown --multi --file packslip.usage.kdl --out-dir content/cli --url-prefix /cli --html-encode",
   "mv content/cli/index.md content/cli/_index.md",
   "{ cat docs/cli.md; printf '\\n'; sed -e 's/^## /### /' -e 's/^# /## /' content/cli/_index.md; } > content/cli/overview.tmp && mv content/cli/overview.tmp content/cli/_index.md",
+  # The actions reference: docs/actions.md with tables from both action.yml files.
+  "python3 scripts/render-actions.py",
 ]
 
 [tasks.docs]

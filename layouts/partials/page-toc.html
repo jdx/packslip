@@ -1,0 +1,7 @@
+{{- /* The page's own contents, H2 and H3 as hugo.toml sets. A page whose
+     front matter sets toc_end_level goes deeper: the specification lists
+     its H4 field tables this way. The label tells this navigation apart
+     from the documentation navigation above it. */ -}}
+{{- $toc := .TableOfContents -}}
+{{- with .Params.toc_end_level }}{{ $toc = $.Fragments.ToHTML 2 (int .) false }}{{ end -}}
+{{- replace $toc `<nav id="TableOfContents">` `<nav id="TableOfContents" aria-label="On this page">` | safeHTML -}}

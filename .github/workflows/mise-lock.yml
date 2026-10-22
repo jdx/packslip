@@ -33,6 +33,7 @@ jobs:
         packslip.1
         content/cli
         content/spec.md
+        content/docs/actions.md
         static/schema
     secrets:
       MISE_LOCK_APP_ID: ${{ secrets.MISE_LOCK_APP_ID }}

@@ -1,0 +1,55 @@
+{{- /* The documentation navigation every guide, CLI page, and the
+     specification share. Guides are grouped by the `group` front-matter
+     param and ordered by weight inside each group. The index link leads
+     Start. A guide with no group, or an unknown one, is listed last under
+     "Other guides" so it never drops out of the navigation. Reference ends
+     with the CLI reference and the specification; on a CLI page, the
+     commands are listed under the CLI reference. */ -}}
+{{- $current := .RelPermalink -}}
+{{- $inCLI := eq .Section "cli" -}}
+{{- $index := site.GetPage "/docs" -}}
+{{- $pages := $index.RegularPages.ByWeight -}}
+{{- $groups := slice
+  (dict "key" "start" "title" "Start")
+  (dict "key" "publish" "title" "Publish")
+  (dict "key" "consume" "title" "Install and verify")
+  (dict "key" "build" "title" "Build on packslip")
+  (dict "key" "reference" "title" "Reference")
+-}}
+{{- $keys := slice -}}
+{{- range $groups }}{{ $keys = $keys | append .key }}{{ end -}}
+{{- $other := slice -}}
+{{- range $pages }}{{ if not (in $keys (.Params.group | default "")) }}{{ $other = $other | append . }}{{ end }}{{ end -}}
+{{- with $other }}{{ $groups = $groups | append (dict "key" "other" "title" "Other guides") }}{{ end -}}
+{{- $cli := site.GetPage "/cli" -}}
+{{- $spec := site.GetPage "/spec" -}}
+<nav aria-label="Documentation">
+{{- range $groups }}
+  {{- $members := cond (eq .key "other") $other (where $pages "Params.group" .key) }}
+  {{- if or $members (in (slice "start" "reference") .key) }}
+  <div class="toc-group">
+    <div class="toc-title">{{ .title }}</div>
+    <ul>
+      {{- if eq .key "start" }}
+      <li><a href="{{ $index.RelPermalink }}"{{ if eq $current $index.RelPermalink }} class="active" aria-current="page"{{ end }}>Documentation</a></li>
+      {{- end }}
+      {{- range $members }}
+      <li><a href="{{ .RelPermalink }}"{{ if eq $current .RelPermalink }} class="active" aria-current="page"{{ end }}>{{ .Title }}</a></li>
+      {{- end }}
+      {{- if eq .key "reference" }}
+      <li><a href="{{ $cli.RelPermalink }}"{{ if eq $current $cli.RelPermalink }} class="active" aria-current="page"{{ end }}>CLI reference</a>
+        {{- if $inCLI }}
+        <ul>
+          {{- range $cli.RegularPagesRecursive }}
+          <li><a href="{{ .RelPermalink }}"{{ if eq $current .RelPermalink }} class="active" aria-current="page"{{ end }}>packslip {{ .File.ContentBaseName }}</a></li>
+          {{- end }}
+        </ul>
+        {{- end }}
+      </li>
+      <li><a href="{{ $spec.RelPermalink }}"{{ if eq $current $spec.RelPermalink }} class="active" aria-current="page"{{ end }}>Specification</a></li>
+      {{- end }}
+    </ul>
+  </div>
+  {{- end }}
+{{- end }}
+</nav>

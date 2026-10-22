@@ -400,6 +400,14 @@ th, td {
 
 th { font-weight: 600; color: var(--ink-2); font-size: 0.85rem; letter-spacing: 0.03em; text-transform: uppercase; }
 td code { white-space: nowrap; }
+/* The generated actions tables (scripts/render-actions.py). A default or a
+   description wraps anywhere, even inside a code span or a URL, so the table
+   fits the content column. The minimum widths keep both readable: on a
+   narrow screen the table scrolls instead. Names stay on one line. */
+.action-inputs td:nth-child(2), .action-table td:last-child { overflow-wrap: anywhere; }
+.action-inputs td:nth-child(2) code, .action-table td:last-child code { white-space: normal; }
+.action-inputs td:nth-child(2) { min-width: 11rem; }
+.action-table td:last-child { min-width: 15rem; }
 
 .lvl {
   display: inline-block;
@@ -457,7 +465,8 @@ footer a { color: var(--muted); }
 .toc a { color: var(--ink-2); text-decoration: none; }
 .toc a:hover { color: var(--accent); }
 .toc .toc-title { font-family: var(--mono); font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 0.6rem; }
-.toc .toc-group + .toc-group { margin-top: 1.5rem; }
+/* The page's contents follow the documentation navigation's <nav>. */
+.toc .toc-group + .toc-group, .toc nav + .toc-group { margin-top: 1.5rem; }
 
 .doc article, .step, .split > div, .cols > div { min-width: 0; }
 
@@ -487,7 +496,7 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 .doc .prose { max-width: 100%; }
 .toc { max-height: calc(100vh - 3rem); overflow-y: auto; }
 .toc ul ul { padding-left: .9rem; }
-.prose :is(h2, h3, h4) { scroll-margin-top: 1.5rem; }
+.prose :is(h2, h3, h4), .prose .legacy-anchor { scroll-margin-top: 1.5rem; }
 .prose p, .prose li { overflow-wrap: anywhere; }
 .overview { max-width: 78ch; padding-bottom: 4rem; }
 .overview h2 { margin-top: 2.5rem; line-height: 1.2; }
