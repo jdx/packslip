@@ -177,7 +177,7 @@ fn forge_identity() {
             GITHUB_ISSUER
         };
         let identity = format!("{}@refs/tags/v1.0.0", text(release, "signer"));
-        let got = forge::check(
+        let got = forge::check_source(
             &Expected::new(&requested).pinned(Some(&pin)),
             &project,
             &identity,

@@ -250,7 +250,8 @@ packslip pin packslip.sigstore.json
 
 For that name, `packslip pin` first verifies the bundle as
 `packslip verify` does, under the identity policy the name implies (a
-workflow of that repository, through GitHub's issuer), and then prints a
+run of that repository through GitHub's issuer, even one that signs
+through a reusable workflow of another repository), and then prints a
 `ps1_…` value. Publish it where users can read it independently of your
 releases, such as your README or install instructions. With it,
 `packslip verify --pin` refuses a release signed from any other

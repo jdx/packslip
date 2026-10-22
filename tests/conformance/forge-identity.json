@@ -1,6 +1,6 @@
 {
   "rule": "https://packslip.dev/release/v1/#repository-identity-and-renames",
-  "description": "Whether a verified release is the forge project a consumer expected. A consumer pinned `pin.project` and `pin.repository_id` from a release it accepted earlier, and now asks for `requested`. The release's statement names `release.project`, and its signing certificate records the Source Repository URI, Source Repository Identifier, and the owner's URI and ID as `release.certificate` (`owner_uri` and `owner_id` are omitted when the certificate carries none). `release.signer` is the workflow, without its ref, that signed. `expect.outcome` is `same` (accept it under the requested name), `renamed` (accept it and report the name it was signed under: the repository was renamed or transferred to another owner), or `refuse`, with `expect.reason` `different-repository` (the certificate's repository ID is not the pinned one) or `project-mismatch` (the statement names another project and the certificate gives no repository ID to show it is the same one). The owner never changes an outcome: only a repository's current owner can transfer it. A case with `previous_signer` also says whether that workflow, recorded for the pin before, continues as `release.signer`, as `expect.signer_continues`: the workflow's path inside the repository is compared when the repository ID matches.",
+  "description": "Whether a verified release is the forge project a consumer expected. A consumer pinned `pin.project` and `pin.repository_id` from a release it accepted earlier, and now asks for `requested`. The release's statement names `release.project`, and its signing certificate records the Source Repository URI, Source Repository Identifier, and the owner's URI and ID as `release.certificate` (`owner_uri` and `owner_id` are omitted when the certificate carries none). `release.signer` is the workflow, without its ref, that signed; it may be a reusable workflow of another repository, since the certificate's Source Repository URI, not the signer, binds the release to the repository. `expect.outcome` is `same` (accept it under the requested name), `renamed` (accept it and report the name it was signed under: the repository was renamed or transferred to another owner), or `refuse`, with `expect.reason` `different-repository` (the certificate's repository ID is not the pinned one) or `project-mismatch` (the statement names another project and the certificate gives no repository ID to show it is the same one). The owner never changes an outcome: only a repository's current owner can transfer it. A case with `previous_signer` also says whether that workflow, recorded for the pin before, continues as `release.signer`, as `expect.signer_continues`: the workflow's path inside the repository is compared when the repository ID matches, and a reusable workflow of another repository continues only the same path in that same repository: it and the project's own workflow at that path never continue each other.",
   "cases": [
     {
       "name": "the pinned repository under its own name",
@@ -147,6 +147,44 @@
       },
       "previous_signer": "https://github.com/jdx/hk/.github/workflows/release.yml",
       "expect": { "outcome": "renamed", "signer_continues": false }
+    },
+    {
+      "name": "a reusable workflow of another repository",
+      "comment": "The certificate's Source Repository URI and ID are the project's, so the release is the project's. Moving from the project's own workflow to a shared one at the same path is still a signer change.",
+      "pin": { "project": "github.com/jdx/hk", "repository_id": "922514152" },
+      "requested": "github.com/jdx/hk",
+      "release": {
+        "project": "github.com/jdx/hk",
+        "signer": "https://github.com/jdx/shared/.github/workflows/release.yml",
+        "certificate": { "uri": "https://github.com/jdx/hk", "id": "922514152", "owner_uri": "https://github.com/jdx", "owner_id": "216188" }
+      },
+      "previous_signer": "https://github.com/jdx/hk/.github/workflows/release.yml",
+      "expect": { "outcome": "same", "signer_continues": false }
+    },
+    {
+      "name": "the same reusable workflow of another repository again",
+      "pin": { "project": "github.com/jdx/hk", "repository_id": "922514152" },
+      "requested": "github.com/jdx/hk",
+      "release": {
+        "project": "github.com/jdx/hk",
+        "signer": "https://github.com/jdx/shared/.github/workflows/release.yml",
+        "certificate": { "uri": "https://github.com/jdx/hk", "id": "922514152", "owner_uri": "https://github.com/jdx", "owner_id": "216188" }
+      },
+      "previous_signer": "https://github.com/jdx/shared/.github/workflows/release.yml",
+      "expect": { "outcome": "same", "signer_continues": true }
+    },
+    {
+      "name": "the project's own workflow after a reusable workflow of another repository",
+      "comment": "Moving back from a shared workflow to the project's own at the same path is a signer change too.",
+      "pin": { "project": "github.com/jdx/hk", "repository_id": "922514152" },
+      "requested": "github.com/jdx/hk",
+      "release": {
+        "project": "github.com/jdx/hk",
+        "signer": "https://github.com/jdx/hk/.github/workflows/release.yml",
+        "certificate": { "uri": "https://github.com/jdx/hk", "id": "922514152", "owner_uri": "https://github.com/jdx", "owner_id": "216188" }
+      },
+      "previous_signer": "https://github.com/jdx/shared/.github/workflows/release.yml",
+      "expect": { "outcome": "same", "signer_continues": false }
     },
     {
       "name": "a monorepo tool keeps its subpath across a transfer",

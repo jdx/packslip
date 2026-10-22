@@ -316,9 +316,15 @@ pub struct Policy {
 }
 
 impl Policy {
-    /// The policy a project name implies on a forge the tooling knows:
-    /// `github.com/owner/repo` must be signed by a workflow of that
+    /// An identity-prefix policy for a project on a forge the tooling
+    /// knows: `github.com/owner/repo` must be signed by a workflow of that
     /// repository through GitHub's issuer, and likewise for gitlab.com.
+    /// That is narrower than what the name implies, which also accepts a
+    /// reusable workflow of another repository when the certificate's
+    /// source repository is the project's: verify under
+    /// [`crate::forge::policy`] and then apply
+    /// [`crate::forge::check_source`] for that, as
+    /// [`crate::verify::verify_forge`] does.
     pub fn for_project(project: &str) -> Option<Policy> {
         // A GitHub project may name a tool inside a monorepo
         // (`github.com/owner/repo/tool`); the workflow that signs it

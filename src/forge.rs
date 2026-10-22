@@ -8,11 +8,14 @@
 //! repository under the old name with a workflow at the same path. Fulcio
 //! records the forge's repository ID in every GitHub Actions and GitLab CI
 //! certificate ([`SourceRepository`]), and it does not change on a rename
-//! or a transfer. [`check`] classifies a verified release against what the
-//! consumer expected, so a rename or a transfer keeps working and a
-//! recreated name is refused. Only a repository's current owner can
-//! transfer it, and that owner already signs its releases, so the owner is
-//! not part of the identity. [`crate::verify::verify_forge`] verifies a
+//! or a transfer. [`check_source`] classifies a verified release against
+//! what the consumer expected, so a rename or a transfer keeps working and
+//! a recreated name is refused; the certificate's source repository binds
+//! the release to the project, so a reusable workflow of another
+//! repository may sign. [`check`] also requires the signer to be a
+//! workflow of the project's repository. Only a repository's current owner
+//! can transfer it, and that owner already signs its releases, so the owner
+//! is not part of the identity. [`crate::verify::verify_forge`] verifies a
 //! bundle and runs it.
 //!
 //! A consumer can hold several pins for a project, such as its own and a
@@ -439,6 +442,8 @@ pub struct Check {
     /// repository is the one expected.
     by_id: bool,
     pin_workflow: bool,
+    /// The project the consumer asked for.
+    requested: String,
     /// The names of the projects the consumer's pins recorded, which a
     /// renamed project's earlier signers were workflows of.
     previous_projects: Vec<String>,
@@ -455,6 +460,14 @@ impl Check {
     /// When the name was all there was to go on, the identity must be the
     /// same apart from its ref. [`same_workflow`] compares two signers a
     /// consumer stored.
+    ///
+    /// A reusable workflow of another repository and the project's own
+    /// workflow never continue each other, whatever their paths: a shared
+    /// workflow continues only a workflow of that same repository, and the
+    /// project's own workflow continues only one recorded under a name the
+    /// repository ID showed is the project's (the name the release was
+    /// signed under, the requested name, or a name one of the consumer's
+    /// pins recorded). [`same_workflow`] holds the same rule.
     ///
     /// A release that declares `pin_workflow: false` (see
     /// [`Check::pins_workflow`]) is held to the repository alone: any
@@ -474,31 +487,23 @@ impl Check {
             };
             return before.0 == now.0 && (self.by_id || before == now);
         }
-        // A release signed through a shared workflow needs `previous` to be a
-        // workflow of that repository. One signed by the project's own
-        // workflow needs `previous` to be the project's too, under the name
-        // of any pin the consumer holds, since a rename is not a shared
-        // workflow. Without a pin to name the project's earlier names,
-        // nothing tells the two apart, so only the first direction is held.
+        // `previous` was the project's own workflow when it is a workflow of
+        // a name the repository ID showed is the project's; any other
+        // repository's was a shared one. A release signed through a shared
+        // workflow continues only a workflow of that same repository, and
+        // one signed by the project's own workflow only the project's own.
         if let (Some(pin), Some(before)) = (pin, repository_of(previous)) {
-            match external_signer(&self.identity, pin) {
-                Some(shared) => {
-                    if before != shared {
-                        return false;
-                    }
-                }
-                None => {
-                    let own = |name: &str| {
-                        ForgeName::parse(name)
-                            .is_some_and(|name| (name.host, name.repository) == before)
-                    };
-                    if !self.previous_projects.is_empty()
-                        && !own(&pin.project)
-                        && !self.previous_projects.iter().any(|name| own(name))
-                    {
-                        return false;
-                    }
-                }
+            let own = std::iter::once(pin.project.as_str())
+                .chain(std::iter::once(self.requested.as_str()))
+                .chain(self.previous_projects.iter().map(String::as_str))
+                .filter_map(ForgeName::parse)
+                .any(|name| (name.host, name.repository) == before);
+            let continues = match external_signer(&self.identity, pin) {
+                Some(shared) => before == shared && !own,
+                None => own,
+            };
+            if !continues {
+                return false;
             }
         }
         same_path(previous, pin, &self.identity, pin)
@@ -790,6 +795,7 @@ fn check_inner(
         identity: identity.to_string(),
         by_id,
         pin_workflow: true,
+        requested: requested.to_string(),
         previous_projects: pins.iter().map(|(pin, _)| pin.project.clone()).collect(),
     })
 }
@@ -1278,6 +1284,62 @@ mod tests {
         assert!(!renamed.continues_signer(
             "https://github.com/jdx/shared/.github/workflows/release.yml@refs/tags/v1"
         ));
+
+        // A repository that took the project's old name is another
+        // repository: its shared workflow does not continue the project's
+        // own, recorded under that name.
+        let squatter = "https://github.com/jdx/old-hk/.github/workflows/release.yml@refs/tags/v2";
+        let taken = check_source(
+            &Expected::new("github.com/jdx/hk").pinned(Some(&old)),
+            "github.com/jdx/hk",
+            squatter,
+            Some(GITHUB_ISSUER),
+            Some(&hk()),
+        )
+        .unwrap();
+        assert!(!taken.continues_signer(
+            "https://github.com/jdx/old-hk/.github/workflows/release.yml@refs/tags/v1"
+        ));
+    }
+
+    #[test]
+    fn without_a_pin_a_shared_workflow_and_the_projects_own_still_differ() {
+        // Only the forge's lookup gives the repository ID, so the names the
+        // project is known under are the requested one and the one the
+        // release was signed under.
+        let expected = Expected::new("github.com/jdx/hk").resolved(Some("922514152"));
+        let shared = "https://github.com/jdx/shared/.github/workflows/release.yml@refs/tags/v2";
+        let own = "https://github.com/jdx/hk/.github/workflows/release.yml@refs/tags/v2";
+        let signed = |signer: &str| {
+            check_source(
+                &expected,
+                "github.com/jdx/hk",
+                signer,
+                Some(GITHUB_ISSUER),
+                Some(&hk()),
+            )
+            .unwrap()
+        };
+        let shared_before =
+            "https://github.com/jdx/shared/.github/workflows/release.yml@refs/tags/v1";
+        let own_before = "https://github.com/jdx/hk/.github/workflows/release.yml@refs/tags/v1";
+        assert!(signed(shared).continues_signer(shared_before));
+        assert!(!signed(shared).continues_signer(own_before));
+        assert!(signed(own).continues_signer(own_before));
+        assert!(!signed(own).continues_signer(shared_before));
+
+        // After a transfer, a workflow under the requested name is the
+        // project's own, and a shared one still is not.
+        let moved = check_source(
+            &expected,
+            "github.com/acme/hk",
+            "https://github.com/acme/hk/.github/workflows/release.yml@refs/tags/v2",
+            Some(GITHUB_ISSUER),
+            Some(&transferred()),
+        )
+        .unwrap();
+        assert!(moved.continues_signer(own_before));
+        assert!(!moved.continues_signer(shared_before));
     }
 
     #[test]

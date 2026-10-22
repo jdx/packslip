@@ -77,6 +77,87 @@ fn pin_prints_the_signer_fingerprint_of_a_verified_release() {
 
 const GITHUB_ISSUER: &str = "https://token.actions.githubusercontent.com";
 
+const MKGHTAG_BUNDLE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/mkghtag-v0.1.14-10.sigstore.json"
+);
+const MKGHTAG_SIGNER: &str = "https://github.com/suzuki-shunsuke/go-release-workflow/.github/workflows/release.yaml@refs/heads/add-packslip";
+const MKGHTAG_PIN: &str = "ps1_xfjx4bjm6cpir2jd2yovxlyqxm";
+
+#[test]
+fn a_release_signed_through_another_repositorys_reusable_workflow_verifies_without_flags() {
+    // A run of mkghtag signed this release through go-release-workflow's
+    // reusable workflow. The certificate's source repository, not the
+    // workflow, binds it to github.com/suzuki-shunsuke/mkghtag.
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let (code, out, err) = packslip(d, &["verify", MKGHTAG_BUNDLE]);
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.starts_with(&format!(
+            "ok: github.com/suzuki-shunsuke/mkghtag 0.1.14-10 (prerelease) published 2026-10-11T22:25:09.421283212Z signed by {MKGHTAG_SIGNER} "
+        )),
+        "{out}"
+    );
+    assert!(
+        out.contains("\n  repository https://github.com/suzuki-shunsuke/mkghtag (id 701940692), "),
+        "{out}"
+    );
+
+    let (code, out, err) = packslip(d, &["pin", MKGHTAG_BUNDLE]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out, format!("{MKGHTAG_PIN}\n"), "the pin and nothing else");
+
+    for flags in [
+        &["--pin", MKGHTAG_PIN][..],
+        &["--issuer", GITHUB_ISSUER],
+        &[
+            "--issuer",
+            GITHUB_ISSUER,
+            "--source-repository",
+            "https://github.com/suzuki-shunsuke/mkghtag",
+        ],
+    ] {
+        let mut args = vec!["verify", MKGHTAG_BUNDLE];
+        args.extend_from_slice(flags);
+        let (code, _, err) = packslip(d, &args);
+        assert_eq!(code, 0, "{flags:?}: {err}");
+    }
+
+    // Flags still narrow the policy: a prefix for the project's own
+    // workflows does not match the shared one, and another source
+    // repository is not this one.
+    let (code, _, err) = packslip(
+        d,
+        &[
+            "verify",
+            MKGHTAG_BUNDLE,
+            "--issuer",
+            GITHUB_ISSUER,
+            "--identity-prefix",
+            "https://github.com/suzuki-shunsuke/mkghtag/",
+        ],
+    );
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("expected an identity starting with"), "{err}");
+    let (code, _, err) = packslip(
+        d,
+        &[
+            "verify",
+            MKGHTAG_BUNDLE,
+            "--issuer",
+            GITHUB_ISSUER,
+            "--source-repository",
+            "https://github.com/suzuki-shunsuke/go-release-workflow",
+        ],
+    );
+    assert_eq!(code, 1, "{err}");
+    assert!(
+        err.contains("source repository is https://github.com/suzuki-shunsuke/mkghtag"),
+        "{err}"
+    );
+}
+
 #[test]
 fn verify_source_repository_goes_by_the_certificates_repository_not_its_workflow() {
     let dir = tempfile::tempdir().unwrap();

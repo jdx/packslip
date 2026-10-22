@@ -653,10 +653,10 @@ struct Create {
     /// file that signs this one
     ///
     /// For a vendor whose releases are signed by more than one workflow of
-    /// its repository. The signer must still be a workflow of that
-    /// repository. A consumer that last accepted a release without the flag
-    /// refuses the first one with it until a person approves it. See
-    /// https://packslip.dev/release/v1/#workflow-pinning
+    /// its repository. The signing certificate must still record that
+    /// repository as its source. A consumer that last accepted a release
+    /// without the flag refuses the first one with it until a person
+    /// approves it. See https://packslip.dev/release/v1/#workflow-pinning
     #[usage(long, help_heading = "Signing")]
     no_pin_workflow: bool,
 }
@@ -1424,15 +1424,18 @@ fn parse_duration(s: &str) -> Result<std::time::Duration> {
 ///
 /// Choose what to trust. By default, the identity policy comes from the
 /// project the document claims, if it is on github.com or gitlab.com: that
-/// forge's issuer and any workflow of that repository. Any other project
-/// needs --pubkey or an identity flag. For a keyless release, --issuer with
+/// forge's issuer and a certificate that records that repository as its
+/// source, whichever workflow signed, so a reusable workflow of another
+/// repository may sign (a certificate that records no source must come
+/// from a workflow of that repository). Any other project needs --pubkey
+/// or an identity flag. For a keyless release, --issuer with
 /// --identity-prefix (any workflow of a repository, such as
 /// https://github.com/owner/repo/) or --identity (one exact certificate
-/// identity, including its ref) pins the signer. For a release signed
-/// through another repository's reusable workflow, --issuer with
-/// --source-repository requires the certificate to record that repository
-/// as its source, whichever workflow signed. For a key-signed release, pass
-/// --pubkey. --pin adds a check on top of the identity policy: the signing
+/// identity, including its ref) pins the signer. --issuer with
+/// --source-repository instead pins the repository the certificate must
+/// record as its source, whichever workflow signed: unlike an identity
+/// prefix of that repository, it also matches a reusable workflow of
+/// another repository. For a key-signed release, pass --pubkey. --pin adds a check on top of the identity policy: the signing
 /// repository must have that signer fingerprint.
 ///
 /// For a GitHub or GitLab project, the identity flags narrow what the
@@ -1493,10 +1496,10 @@ struct Verify {
     #[usage(long, help_heading = "Trust")]
     issuer: Option<String>,
     /// The repository the signing certificate must record as its source,
-    /// such as https://github.com/owner/repo, whichever workflow signed;
-    /// for a release signed through another repository's reusable
-    /// workflow. Needs --issuer, and replaces --identity and
-    /// --identity-prefix
+    /// such as https://github.com/owner/repo, whichever workflow signed, so
+    /// it also matches a reusable workflow of another repository, which an
+    /// identity prefix of the repository does not. Needs --issuer, and
+    /// replaces --identity and --identity-prefix
     #[usage(long, help_heading = "Trust")]
     source_repository: Option<String>,
     /// The signer fingerprint (ps1_...) the certificate's repository must
@@ -1891,6 +1894,14 @@ fn signed_from_project(
 /// The certificate policy for `project`: the identity flags, or else the
 /// one its GitHub or GitLab name implies. `missing` builds the error for a
 /// project that is on neither, so each command can name the flags it has.
+///
+/// The policy a forge name implies is the forge's issuer alone, the one
+/// `packslip install` verifies under ([`packslip::forge::policy`]): the
+/// certificate's source repository, not the workflow that signed, binds a
+/// release to the project, so a reusable workflow of another repository
+/// may sign. That policy accepts any signer the issuer vouches for, so the
+/// caller must then bind the release to the project with
+/// [`bound_to_project`], as `verify` and `pin` do for every keyless signer.
 fn identity_policy(
     identity: &Option<String>,
     identity_prefix: &Option<String>,
@@ -1904,7 +1915,12 @@ fn identity_policy(
         identity_prefix: identity_prefix.clone(),
     };
     if explicit.is_empty() {
-        Ok(Policy::for_project(project).ok_or_else(|| missing(project.into()))?)
+        // `Policy::for_project` decides which names are forge projects, as
+        // it does for install.
+        let derived = Policy::for_project(project)
+            .and_then(|_| packslip::forge::policy(project, project))
+            .ok_or_else(|| missing(project.into()))?;
+        Ok(derived)
     } else {
         Ok(explicit)
     }
@@ -2399,6 +2415,69 @@ mod signer_tests {
     }
 
     #[test]
+    fn without_flags_another_repositorys_certificate_is_refused() {
+        // `packslip verify BUNDLE` and `packslip pin BUNDLE` with no trust
+        // flags verify under the forge's issuer alone, which names no
+        // workflow, so hk's bundle verifies under the policy derived for
+        // github.com/jdx/mise as it would for a statement naming mise. Only
+        // the certificate's source repository can refuse it.
+        let policy = identity_policy(
+            &None,
+            &None,
+            &None,
+            "github.com/jdx/mise",
+            sigstore::Error::NoPolicy,
+        )
+        .unwrap();
+        assert_eq!(
+            policy,
+            Policy {
+                issuer: Some(GITHUB_ISSUER.into()),
+                identity: None,
+                identity_prefix: None,
+            }
+        );
+        let root = sigstore::trusted_root(None).unwrap();
+        let options = Options {
+            require_log: true,
+            trusted_root: &root,
+        };
+        let verified = packslip::verify(HK, &Trust::Identity(&policy), options, &[]).unwrap();
+        let source = sigstore::source_repository(HK).unwrap();
+        let (signer, issuer) = (verified.key_id.as_str(), verified.issuer.as_deref());
+
+        let no_flags = Verify {
+            issuer: None,
+            ..issuer_alone(None, false)
+        };
+        no_flags
+            .check_signer("github.com/jdx/hk", signer, issuer, source.as_ref(), None)
+            .unwrap();
+        let err = no_flags
+            .check_signer("github.com/jdx/mise", signer, issuer, source.as_ref(), None)
+            .unwrap_err();
+        assert!(
+            err.starts_with(&format!(
+                "github.com/jdx/mise must be signed from its repository https://github.com/jdx/mise, but {HK_SIGNER} signed it from https://github.com/jdx/hk. "
+            )),
+            "{err}"
+        );
+
+        assert_eq!(
+            signer_fingerprint("github.com/jdx/hk", signer, issuer, source.as_ref())
+                .unwrap()
+                .to_string(),
+            HK_PIN
+        );
+        let err =
+            signer_fingerprint("github.com/jdx/mise", signer, issuer, source.as_ref()).unwrap_err();
+        assert_eq!(
+            err,
+            "the certificate's source repository is https://github.com/jdx/hk, not https://github.com/jdx/mise"
+        );
+    }
+
+    #[test]
     fn allow_other_repository_lifts_only_the_projects_repository() {
         let (signer, issuer, source) = hk_under_issuer_alone();
         let check = |verify: Verify, pin: Option<&str>| {
@@ -2536,6 +2615,36 @@ mod signer_tests {
             issuer_alone(None, false)
                 .check_signer(project, &signer, issuer.as_deref(), source.as_ref(), None)
                 .unwrap();
+        }
+    }
+
+    #[test]
+    fn without_flags_a_forge_project_is_verified_under_its_issuer_alone() {
+        // The workflow is left to `check_signer`, which binds the release to
+        // the project through the certificate's source repository, as
+        // install does.
+        let derived = |project: &str| {
+            identity_policy(&None, &None, &None, project, sigstore::Error::NoPolicy)
+        };
+        let issuer_alone = |issuer: &str| Policy {
+            issuer: Some(issuer.into()),
+            identity: None,
+            identity_prefix: None,
+        };
+        for project in ["github.com/jdx/hk", "github.com/oxc-project/oxc/oxlint"] {
+            assert_eq!(derived(project).unwrap(), issuer_alone(GITHUB_ISSUER));
+        }
+        assert_eq!(
+            derived("gitlab.com/group/sub/tool").unwrap(),
+            issuer_alone(packslip::sigstore::GITLAB_ISSUER)
+        );
+        // The names that were not forge projects before still are not.
+        for project in ["hk.jdx.dev", "github.com/jdx", "gitlab.com/group"] {
+            let err = derived(project).unwrap_err().to_string();
+            assert!(
+                err.contains("no identity to verify against"),
+                "{project}: {err}"
+            );
         }
     }
 }
