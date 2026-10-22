@@ -222,6 +222,87 @@
       "reason": "identity.pin_workflow is a boolean; a string is not false."
     },
     {
+      "name": "a signing scheme the specification does not define",
+      "expect": "reject",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "github.com/example/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "libc": "gnu",
+              "size": 5,
+              "format": "tar.xz",
+              "bin": [
+                "tool"
+              ]
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-x509",
+            "key_id": "https://github.com/example/tool/.github/workflows/release.yml@refs/tags/v1.0.0",
+            "issuer": "https://token.actions.githubusercontent.com"
+          }
+        }
+      },
+      "reason": "identity.scheme is `sigstore-oidc` or `sigstore-key`. A closed vocabulary: any other value makes the document invalid."
+    },
+    {
+      "name": "an attested_by value the specification does not define",
+      "expect": "reject",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "github.com/example/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "libc": "gnu",
+              "size": 5,
+              "format": "tar.xz",
+              "bin": [
+                "tool"
+              ]
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-oidc",
+            "key_id": "https://github.com/example/tool/.github/workflows/release.yml@refs/tags/v1.0.0",
+            "issuer": "https://token.actions.githubusercontent.com"
+          },
+          "attested_by": "mirror"
+        }
+      },
+      "reason": "attested_by is `vendor` or `repackager`. A closed vocabulary: any other value makes the document invalid."
+    },
+    {
       "name": "a keyless identity with an empty key_id",
       "expect": "reject",
       "statement": {
@@ -1123,6 +1204,95 @@
         }
       },
       "reason": "`bin` names go on PATH; a name cannot contain a separator."
+    },
+    {
+      "name": "an executable name, resource bin, or exec program ending in .exe, in any letter case, names the command without it",
+      "expect": "accept",
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "tool-linux-x64.tar.xz",
+            "digest": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          },
+          {
+            "name": "tool-windows-x64.zip",
+            "digest": {
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }
+          },
+          {
+            "name": "tool.usage.kdl",
+            "digest": {
+              "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            }
+          }
+        ],
+        "predicateType": "https://packslip.dev/release/v1",
+        "predicate": {
+          "project": "github.com/example/tool",
+          "version": "1.0.0",
+          "published_at": "2026-09-01T00:00:00Z",
+          "artifacts": [
+            {
+              "name": "tool-linux-x64.tar.xz",
+              "os": "linux",
+              "arch": "x86_64",
+              "libc": "gnu",
+              "size": 5,
+              "format": "tar.xz",
+              "bin": [
+                "tool"
+              ]
+            },
+            {
+              "name": "tool-windows-x64.zip",
+              "os": "windows",
+              "arch": "x86_64",
+              "size": 5,
+              "format": "zip",
+              "bin": [
+                {
+                  "path": "tool.exe",
+                  "name": "tool.exe"
+                }
+              ]
+            }
+          ],
+          "identity": {
+            "scheme": "sigstore-oidc",
+            "key_id": "https://github.com/example/tool/.github/workflows/release.yml@refs/tags/v1.0.0",
+            "issuer": "https://token.actions.githubusercontent.com"
+          },
+          "resources": [
+            {
+              "kind": "completion",
+              "shell": "bash",
+              "archive": "share/tool.bash"
+            },
+            {
+              "kind": "completion",
+              "shells": [
+                "zsh"
+              ],
+              "exec": [
+                "tool.EXE",
+                "completion",
+                "{shell}"
+              ]
+            },
+            {
+              "kind": "cli-spec",
+              "format": "usage",
+              "bin": "tool.EXE",
+              "asset": "tool.usage.kdl"
+            }
+          ]
+        }
+      },
+      "reason": "A consumer reads an artifact `bin` entry's `name`, a resource's `bin`, or the first element of a resource's `exec` that ends in `.exe` in any letter case as the name without it. Both artifacts therefore name the one command `tool`, so the completions need no `bin`, the exec completion's `tool.EXE` runs a declared `bin` name, and the cli-spec's `tool.EXE` names `tool`."
     },
     {
       "name": "a required command minimum that does not start with a digit",

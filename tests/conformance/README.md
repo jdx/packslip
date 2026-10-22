@@ -5,11 +5,12 @@ Use these JSON test vectors to check an implementation against the
 any language can run the cases to test parsing, artifact and resource
 selection, repository identity, and signer fingerprints.
 
-An implementation that disagrees with a vector disagrees with the
-specification. If you believe a vector is wrong, open an
+The specification's text governs: a vector that contradicts the text is
+a bug to fix. Otherwise, an implementation that disagrees with a vector
+disagrees with the specification. If you believe a vector is wrong, open an
 [issue](https://github.com/jdx/packslip/issues) instead of working around
-it: either the specification needs to change, or the vector requires
-something the specification does not.
+it: either the specification needs to change, or the vector contradicts
+it.
 
 | File | Rule |
 | --- | --- |

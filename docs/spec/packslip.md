@@ -738,8 +738,12 @@ so a string entry's path ends in a file name rather than `/`. A Windows
 path keeps its extension, such as `bin/tool.exe`, and the consumer places
 it on PATH as `name.exe`. Names in `requires.bin` and a resource's `bin`
 follow the same convention, so consumers compare them without adding or
-stripping an extension. For compatibility, the reference implementation
-reads an older document whose `name` includes `.exe` as if it did not.
+stripping an extension. For compatibility with older documents, every
+consumer nonetheless reads an artifact `bin` entry's `name`, a resource's
+`bin`, or the first element of a resource's `exec` that ends in `.exe`,
+in any letter case, as the name without it:
+`{ "path": "tool.exe", "name": "tool.exe" }` names the command `tool`,
+as does an `exec` whose first element is `tool.EXE`.
 
 ### Requirements, resources, and provenance
 
@@ -915,11 +919,11 @@ Paths beginning with `artifacts[]` or `resources[]` below are relative to
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
 | `predicate.identity` | object | required | How the document is signed and by whom. See [Signing](#signing). |
-| `predicate.identity.scheme` | string | required | `sigstore-oidc` or `sigstore-key`. |
+| `predicate.identity.scheme` | string | required | `sigstore-oidc` or `sigstore-key`. A closed vocabulary: any other value makes the document invalid. |
 | `predicate.identity.key_id` | string | required | The certificate identity, or the minisign key ID in uppercase hex. See [Key signing](#key-signing). |
 | `predicate.identity.issuer` | string | conditional | The OIDC issuer, for `sigstore-oidc`, where it is required. |
 | `predicate.identity.pin_workflow` | boolean | optional | For `sigstore-oidc`: `false` asks consumers to hold later releases to the signing repository, not to the workflow that signed this one. `true` when absent. See [Workflow pinning](#workflow-pinning). |
-| `predicate.attested_by` | string | optional | `vendor` (default) or `repackager`. See [Repackager attestation](#repackager-attestation). |
+| `predicate.attested_by` | string | optional | `vendor` (default) or `repackager`. A closed vocabulary: any other value makes the document invalid. See [Repackager attestation](#repackager-attestation). |
 | `predicate.evidence[]` | array of object | optional | What a repackager checked: `{ kind, detail? }`. |
 | `extensions` | object | optional | Vendor- or consumer-defined data, keyed by who defines it, on the release, each artifact, each resource, the release list, and each list entry. See [Extensions](#extensions). |
 
@@ -1357,8 +1361,11 @@ their bundles. Projects on their own domains publish a
 [signed release list](#the-signed-list). GitHub projects use the
 [repository's releases endpoint](#github) and may add a signed list to
 withdraw releases, mark security fixes, map tags to versions, or recommend
-a default. Discovery does not replace verification of the selected
-release.
+a default. This version defines no discovery for `gitlab.com`: a consumer
+finds a GitLab project's packslips only through a
+[trusted publisher's list](#lists-from-other-publishers) or its own
+configuration, and otherwise refuses the project. Discovery does not
+replace verification of the selected release.
 
 ### The signed list
 
@@ -1444,7 +1451,7 @@ a meaningful name, with the SHA-256 of empty input.
 | `releases[].tag` | string | optional | The packslip's `source.tag`. |
 | `releases[].published_at` | string | required | RFC 3339, copied from the packslip and written in UTC. |
 | `releases[].packslip` | string | required | URL of the release's bundle. The subject of that name carries its digest. |
-| `releases[].status` | string | optional | `yanked` when the release was withdrawn. |
+| `releases[].status` | string | optional | `yanked` when the release was withdrawn. A closed vocabulary: any other value makes the list invalid. |
 | `releases[].status_reason` | string | optional | Why it was withdrawn. |
 | `releases[].security` | boolean | optional | The release fixes a vulnerability. |
 | `releases[].evidence[]` | array of object | optional | On a list from someone other than the vendor, what the publisher checked: `{ kind, detail? }`, with the kinds [Repackager attestation](#repackager-attestation) documents. |
@@ -1488,10 +1495,10 @@ of its name. A bare host instead uses
 | `github.com/jdx/mise` | `https://github.com/.well-known/packslip/jdx/mise.json` |
 
 GitHub does not serve the last URL; [GitHub](#github) defines its discovery
-path instead. A forge that serves its well-known list needs no additional
-discovery mechanism. A project on its own domain must publish the list:
-if none exists, the consumer refuses the project rather than guessing
-download URLs.
+path instead. A forge that this version does not name and that serves
+its well-known list needs no additional discovery mechanism. A project
+on its own domain must publish the list: if none exists, the consumer
+refuses the project rather than guessing download URLs.
 
 The project's domain anchors its identity, while the list and release
 bundles point to wherever the bytes are hosted. A vendor with only a git
@@ -1602,10 +1609,10 @@ configured to trust stamping hosts applies these admission rules:
   For that project, accept the vendor's document under the vendor's pin
   without requiring a stamp.
 
-A stamping host can use any signing scheme that fits its operation. For
-example, a continuous scanning service can hold a key, while a registry
-publishing from a repository can sign keylessly. In either case, the
-consumer pins the host.
+A stamping host can use either signing scheme, whichever fits its
+operation. For example, a continuous scanning service can hold a key,
+while a registry publishing from a repository can sign keylessly. In
+either case, the consumer pins the host.
 
 ## Versions
 
@@ -1934,7 +1941,10 @@ their linked sections use this remembered state:
    the consumer chose to accept.
 5. **Use the project's discovery metadata.**
    - For GitHub projects, read the releases endpoint and any supplementary
-     signed list. For other projects, read the signed list at the
+     signed list. This version defines no discovery for `gitlab.com`: find
+     a GitLab project's packslips only through a trusted publisher's list
+     or the consumer's own configuration, and otherwise refuse the
+     project. For other projects, read the signed list at the
      well-known URL. Refuse a project with neither discovery source, and
      refuse when a previously accepted signed list is now missing, as
      [GitHub](#github) describes.
@@ -2011,7 +2021,10 @@ accepting expired metadata or overriding a security rejection.
   consumer reads an older one.
 - Add a vocabulary member, such as a resource kind, evidence kind, format,
   OS token, or architecture token. Consumers ignore unfamiliar members
-  except where a rule here says otherwise.
+  except where a rule here says otherwise. `identity.scheme`,
+  `attested_by`, and `releases[].status` are closed vocabularies in
+  version 1 and gain no members: a value this specification does not
+  define makes the document invalid.
 - Clarify ambiguous wording where implementations already agreed on its
   meaning, or add examples and guidance.
 
@@ -2026,8 +2039,10 @@ not required to migrate.
 
 The predicate types version the format. Separately, the reference Rust
 crate, CLI, and two GitHub Actions share an implementation semver
-version. The implementation may reach version 2 while the format remains
-at version 1.
+version. The `packslip` npm package and the Go module
+`github.com/jdx/packslip/go`, tagged `go/vX.Y.Z`, are released at that
+same version. The implementation may reach version 2 while the format
+remains at version 1.
 
 ### Conformance coverage
 
@@ -2035,8 +2050,9 @@ The
 [conformance vectors](https://github.com/jdx/packslip/tree/main/tests/conformance)
 express the covered rules as executable examples: artifact and resource
 selection, tag versions, statement validity, forge identity, and signer
-fingerprints. An implementation that disagrees with a vector disagrees
-with this specification.
+fingerprints. The text of this specification governs: a vector that
+contradicts the text is a bug to fix. Otherwise, an implementation that
+disagrees with a vector disagrees with this specification.
 
 The forge identity vectors include a remembered pin in each case. The
 other vectors do not cover rules that depend on state retained between
