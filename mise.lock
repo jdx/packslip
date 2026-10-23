@@ -73,39 +73,39 @@ url = "https://github.com/jdx/hk/releases/download/v2.8.0/hk-x86_64-pc-windows-m
 signer = "sigstore-oidc:https://github.com/jdx/hk/.github/workflows/release.yml"
 
 [[tools.hugo]]
-version = "0.167.0"
+version = "0.168.0"
 backend = "aqua:gohugoio/hugo"
-specifiers = ["0.167.0"]
+specifiers = ["0.168.0"]
 
 [tools.hugo."platforms.linux-arm64"]
-checksum = "sha256:d0dd0d1ed249842525a93413e10ca1ef6f3b63311ee1695b16a0ce488142cec1"
-url = "https://github.com/gohugoio/hugo/releases/download/v0.167.0/hugo_0.167.0_linux-arm64.tar.gz"
-url_api = "https://api.github.com/repos/gohugoio/hugo/releases/assets/595700428"
+checksum = "sha256:91ce984e998a955a3dc1b5852eb4e65d0ed0f6d12a5c51690df97a548e1fdeeb"
+url = "https://github.com/gohugoio/hugo/releases/download/v0.168.0/hugo_0.168.0_linux-arm64.tar.gz"
+url_api = "https://api.github.com/repos/gohugoio/hugo/releases/assets/637728524"
 
 [tools.hugo."platforms.linux-arm64-musl"]
-checksum = "sha256:d0dd0d1ed249842525a93413e10ca1ef6f3b63311ee1695b16a0ce488142cec1"
-url = "https://github.com/gohugoio/hugo/releases/download/v0.167.0/hugo_0.167.0_linux-arm64.tar.gz"
-url_api = "https://api.github.com/repos/gohugoio/hugo/releases/assets/595700428"
+checksum = "sha256:91ce984e998a955a3dc1b5852eb4e65d0ed0f6d12a5c51690df97a548e1fdeeb"
+url = "https://github.com/gohugoio/hugo/releases/download/v0.168.0/hugo_0.168.0_linux-arm64.tar.gz"
+url_api = "https://api.github.com/repos/gohugoio/hugo/releases/assets/637728524"
 
 [tools.hugo."platforms.linux-x64"]
-checksum = "sha256:4d84519b9f619e6d4c3fb45a50157abeabeb724f859c60605f44c23def6e1169"
-url = "https://github.com/gohugoio/hugo/releases/download/v0.167.0/hugo_0.167.0_linux-amd64.tar.gz"
-url_api = "https://api.github.com/repos/gohugoio/hugo/releases/assets/595700433"
+checksum = "sha256:fada83ad56bb27ed4cb7dd81590303bdac16140f944ac4e66fc248117e2d5594"
+url = "https://github.com/gohugoio/hugo/releases/download/v0.168.0/hugo_0.168.0_linux-amd64.tar.gz"
+url_api = "https://api.github.com/repos/gohugoio/hugo/releases/assets/637728522"
 
 [tools.hugo."platforms.linux-x64-musl"]
-checksum = "sha256:4d84519b9f619e6d4c3fb45a50157abeabeb724f859c60605f44c23def6e1169"
-url = "https://github.com/gohugoio/hugo/releases/download/v0.167.0/hugo_0.167.0_linux-amd64.tar.gz"
-url_api = "https://api.github.com/repos/gohugoio/hugo/releases/assets/595700433"
+checksum = "sha256:fada83ad56bb27ed4cb7dd81590303bdac16140f944ac4e66fc248117e2d5594"
+url = "https://github.com/gohugoio/hugo/releases/download/v0.168.0/hugo_0.168.0_linux-amd64.tar.gz"
+url_api = "https://api.github.com/repos/gohugoio/hugo/releases/assets/637728522"
 
 [tools.hugo."platforms.macos-arm64"]
-checksum = "sha256:175d03751f836ddf9097053e85f970371c7e6231921f73f6ad79e2a86ed9248c"
-url = "https://github.com/gohugoio/hugo/releases/download/v0.167.0/hugo_0.167.0_darwin-universal.pkg"
-url_api = "https://api.github.com/repos/gohugoio/hugo/releases/assets/595700588"
+checksum = "sha256:01b2f0abc453242225a9bfac2c91c66a078135a28f12222a475649a299a20281"
+url = "https://github.com/gohugoio/hugo/releases/download/v0.168.0/hugo_0.168.0_darwin-universal.pkg"
+url_api = "https://api.github.com/repos/gohugoio/hugo/releases/assets/637728680"
 
 [tools.hugo."platforms.windows-x64"]
-checksum = "sha256:f5ed1983b4373e719434cd721bf931907dec8ad33a891a6912903e93cfdcce98"
-url = "https://github.com/gohugoio/hugo/releases/download/v0.167.0/hugo_0.167.0_windows-amd64.zip"
-url_api = "https://api.github.com/repos/gohugoio/hugo/releases/assets/595700601"
+checksum = "sha256:f6cf760426de305cdd85c6eaa7e203a4d623e74cc6ad8fea61228caf1e59f243"
+url = "https://github.com/gohugoio/hugo/releases/download/v0.168.0/hugo_0.168.0_windows-amd64.zip"
+url_api = "https://api.github.com/repos/gohugoio/hugo/releases/assets/637728720"
 
 [[tools.jactionlint]]
 version = "2.2.0"
@@ -219,36 +219,36 @@ url = "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellche
 url_api = "https://api.github.com/repos/koalaman/shellcheck/releases/assets/279056944"
 
 [[tools.usage]]
-version = "7.0.2"
+version = "7.1.1"
 backend = "packslip:github.com/jdx/usage"
 specifiers = ["latest"]
 
 [tools.usage."platforms.linux-arm64"]
-checksum = "sha256:2950ac2fffc9be15b24991a785b5474745e14df8e7fffa8aa8715c4bd9c8cb58"
-url = "https://github.com/jdx/usage/releases/download/v7.0.2/usage-aarch64-unknown-linux-gnu.tar.gz"
+checksum = "sha256:596a2a7a2d460d6a80ef4328ffb7c56e4577fe2e4dba942d036f90d14354534d"
+url = "https://github.com/jdx/usage/releases/download/v7.1.1/usage-aarch64-unknown-linux-gnu.tar.gz"
 signer = "sigstore-oidc:https://github.com/jdx/usage/.github/workflows/publish-cli.yml"
 
 [tools.usage."platforms.linux-arm64-musl"]
-checksum = "sha256:49f414e6c41ba37ba9ad2fd31e2ad50263ff7332e3ffe9fa1bc2ef5673f553d3"
-url = "https://github.com/jdx/usage/releases/download/v7.0.2/usage-aarch64-unknown-linux-musl.tar.gz"
+checksum = "sha256:5f5d8ed6295130fb82df9a5ee0fabb226c80a7085eda849c18edb561b76f4d97"
+url = "https://github.com/jdx/usage/releases/download/v7.1.1/usage-aarch64-unknown-linux-musl.tar.gz"
 signer = "sigstore-oidc:https://github.com/jdx/usage/.github/workflows/publish-cli.yml"
 
 [tools.usage."platforms.linux-x64"]
-checksum = "sha256:1006d9659fb0c9620525a8e750b3853177a3bf772454d5984c4d78c4aa130aaa"
-url = "https://github.com/jdx/usage/releases/download/v7.0.2/usage-x86_64-unknown-linux-gnu.tar.gz"
+checksum = "sha256:dcc37cb5fb59088bab82e6f5f752c002a526dd9b35909be76d8459f46b4c30ca"
+url = "https://github.com/jdx/usage/releases/download/v7.1.1/usage-x86_64-unknown-linux-gnu.tar.gz"
 signer = "sigstore-oidc:https://github.com/jdx/usage/.github/workflows/publish-cli.yml"
 
 [tools.usage."platforms.linux-x64-musl"]
-checksum = "sha256:a79a88c35175d4697188c43dac6e0bbea5943f4f1631a750c0f9d5b2149ef381"
-url = "https://github.com/jdx/usage/releases/download/v7.0.2/usage-x86_64-unknown-linux-musl.tar.gz"
+checksum = "sha256:afea9fb0636305e011860ce2f3de26b5702c7bc8ffce8eb32aa9c95ff7f5804f"
+url = "https://github.com/jdx/usage/releases/download/v7.1.1/usage-x86_64-unknown-linux-musl.tar.gz"
 signer = "sigstore-oidc:https://github.com/jdx/usage/.github/workflows/publish-cli.yml"
 
 [tools.usage."platforms.macos-arm64"]
-checksum = "sha256:13fad4f828a7cb2ddc298f1dea38a3389d2144f63584134b9c3c7489944c3de3"
-url = "https://github.com/jdx/usage/releases/download/v7.0.2/usage-universal-apple-darwin.tar.gz"
+checksum = "sha256:50234db60947885bf87cda5ce28ee9c13924b6694528737bf6a7327e980f3bcd"
+url = "https://github.com/jdx/usage/releases/download/v7.1.1/usage-universal-apple-darwin.tar.gz"
 signer = "sigstore-oidc:https://github.com/jdx/usage/.github/workflows/publish-cli.yml"
 
 [tools.usage."platforms.windows-x64"]
-checksum = "sha256:91586495a99681b405c62a5c7c8f60dffca0d006834d3526520ced8527818cb5"
-url = "https://github.com/jdx/usage/releases/download/v7.0.2/usage-x86_64-pc-windows-msvc.zip"
+checksum = "sha256:75659545f16f84474c32cebb6ee3e304aedf63286c31ec73c3cab695fb56a6aa"
+url = "https://github.com/jdx/usage/releases/download/v7.1.1/usage-x86_64-pc-windows-msvc.zip"
 signer = "sigstore-oidc:https://github.com/jdx/usage/.github/workflows/publish-cli.yml"
