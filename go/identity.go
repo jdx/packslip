@@ -20,6 +20,7 @@ const (
 	TokenEnv = "SIGSTORE_ID_TOKEN"
 
 	githubIssuer     = "https://token.actions.githubusercontent.com"
+	gitlabIssuer     = "https://gitlab.com"
 	sigstoreAudience = "sigstore"
 )
 
@@ -84,24 +85,9 @@ func AmbientIDToken(ctx context.Context) (string, error) {
 // and SignKeyless refuses a certificate whose identity differs from the
 // statement's, so a wrong guess fails before anything is logged.
 func IdentityFromToken(token string) (Identity, error) {
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		return Identity{}, errors.New("packslip: the OIDC token is not a JWT")
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	claims, err := decodeClaims(token)
 	if err != nil {
-		return Identity{}, fmt.Errorf("packslip: decode the OIDC token: %w", err)
-	}
-	var claims struct {
-		Issuer         string `json:"iss"`
-		Subject        string `json:"sub"`
-		Email          string `json:"email"`
-		EmailVerified  bool   `json:"email_verified"`
-		JobWorkflowRef string `json:"job_workflow_ref"`
-		CIConfigRefURI string `json:"ci_config_ref_uri"`
-	}
-	if err := json.Unmarshal(payload, &claims); err != nil {
-		return Identity{}, fmt.Errorf("packslip: decode the OIDC token: %w", err)
+		return Identity{}, err
 	}
 	if claims.Issuer == "" {
 		return Identity{}, errors.New("packslip: the OIDC token has no issuer")
@@ -120,6 +106,81 @@ func IdentityFromToken(token string) (Identity, error) {
 		return Identity{}, errors.New("packslip: the OIDC token has no usable identity claim")
 	}
 	return Identity{Scheme: "sigstore-oidc", KeyID: keyID, Issuer: claims.Issuer}, nil
+}
+
+// tokenClaims holds the OIDC token claims this module reads.
+type tokenClaims struct {
+	Issuer         string `json:"iss"`
+	Subject        string `json:"sub"`
+	Email          string `json:"email"`
+	EmailVerified  bool   `json:"email_verified"`
+	JobWorkflowRef string `json:"job_workflow_ref"`
+	CIConfigRefURI string `json:"ci_config_ref_uri"`
+	Repository     string `json:"repository"`
+	ProjectPath    string `json:"project_path"`
+}
+
+// decodeClaims reads a token's claims without verifying it.
+func decodeClaims(token string) (tokenClaims, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return tokenClaims{}, errors.New("packslip: the OIDC token is not a JWT")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return tokenClaims{}, fmt.Errorf("packslip: decode the OIDC token: %w", err)
+	}
+	var claims tokenClaims
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return tokenClaims{}, fmt.Errorf("packslip: decode the OIDC token: %w", err)
+	}
+	return claims, nil
+}
+
+// CheckProjectSigner reports whether an OIDC token can sign a statement for
+// project, before anything is signed or logged. A github.com project needs a
+// GitHub Actions token whose repository is the project's repository, and a
+// gitlab.com project needs a GitLab CI token whose project path is the
+// project. That is the certificate's Source Repository URI, so a reusable
+// workflow of another repository is fine, as the specification allows
+// ([Repository identity and renames]). The repository is compared without
+// regard to case, and a monorepo subpath is not checked. Any other project is
+// a domain project, whose signer its vendor pins, so it always passes.
+//
+// The token is not verified, and the check is not verification: Fulcio
+// certifies the token, and consumers verify the bundle. A project that
+// follows a repository rename passes verification but fails this check.
+//
+// [Repository identity and renames]: https://packslip.dev/release/v1/#repository-identity-and-renames
+func CheckProjectSigner(project, token string) error {
+	claims, err := decodeClaims(token)
+	if err != nil {
+		return err
+	}
+	switch {
+	case strings.HasPrefix(project, "github.com/"):
+		if claims.Issuer != githubIssuer {
+			return fmt.Errorf("packslip: project %q is signed from GitHub Actions, but the OIDC token is from %q", project, claims.Issuer)
+		}
+		if strings.Count(claims.Repository, "/") != 1 {
+			return errors.New("packslip: the GitHub Actions OIDC token has no repository claim")
+		}
+		repo := "github.com/" + claims.Repository
+		if len(project) < len(repo) || !strings.EqualFold(project[:len(repo)], repo) || (len(project) > len(repo) && project[len(repo)] != '/') {
+			return fmt.Errorf("packslip: project %q does not belong to the GitHub Actions repository %q that signs", project, repo)
+		}
+	case strings.HasPrefix(project, "gitlab.com/"):
+		if claims.Issuer != gitlabIssuer {
+			return fmt.Errorf("packslip: project %q is signed from GitLab CI, but the OIDC token is from %q", project, claims.Issuer)
+		}
+		if claims.ProjectPath == "" {
+			return errors.New("packslip: the GitLab CI OIDC token has no project_path claim")
+		}
+		if !strings.EqualFold(project, "gitlab.com/"+claims.ProjectPath) {
+			return fmt.Errorf("packslip: project %q is not the GitLab CI project %q that signs", project, "gitlab.com/"+claims.ProjectPath)
+		}
+	}
+	return nil
 }
 
 // tokenClient bounds the whole token request, including reading the body.

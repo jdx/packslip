@@ -92,3 +92,56 @@ func TestNewBareBin(t *testing.T) {
 		}
 	}
 }
+
+func TestGoTarget(t *testing.T) {
+	for _, tc := range []struct {
+		target        GoTarget
+		arch, variant string
+	}{
+		{GoTarget{GOARCH: "amd64", GOAMD64: "v3"}, "x86_64", "v3"},
+		{GoTarget{GOARCH: "amd64", GOAMD64: "v1"}, "x86_64", ""},
+		{GoTarget{GOARCH: "amd64", GOARM64: "v8.2"}, "x86_64", ""},
+		{GoTarget{GOARCH: "386", GO386: "softfloat"}, "i686", "softfloat"},
+		{GoTarget{GOARCH: "arm64", GOARM64: "v8.2,lse"}, "aarch64", "v8.2-lse"},
+		{GoTarget{GOARCH: "mipsle", GOMIPS: "softfloat"}, "mipsel", "softfloat"},
+		{GoTarget{GOARCH: "ppc64le", GOPPC64: "power9"}, "powerpc64le", "power9"},
+		{GoTarget{GOARCH: "riscv64", GORISCV64: "rva23u64"}, "riscv64", "rva23u64"},
+		{GoTarget{GOARCH: "arm", GOARM: "7"}, "armv7", ""},
+		{GoTarget{GOARCH: "arm", GOARM: "7,softfloat"}, "armv7", "softfloat"},
+		{GoTarget{GOARCH: "arm", GOARM: "7", FloatABI: "softfloat"}, "armv7", "softfloat"},
+		{GoTarget{GOARCH: "arm", GOARM: "7", FloatABI: "hardfloat"}, "armv7", ""},
+		{GoTarget{GOARCH: "arm", GOARM: "5", FloatABI: "hardfloat"}, "armv5", "5-hardfloat"},
+		{GoTarget{GOARCH: "arm", GOARM: "5", FloatABI: "gnueabi"}, "armv5", ""},
+		{GoTarget{GOARCH: "arm", GOARM: "7", FloatABI: "gnueabi"}, "armv7", "softfloat"},
+		{GoTarget{GOARCH: "arm", GOARM: "7", FloatABI: "gnueabihf"}, "armv7", ""},
+		{GoTarget{GOARCH: "arm", GOARM: "7,hardfloat", FloatABI: "gnueabi"}, "armv7", "softfloat"},
+		{GoTarget{GOARCH: "arm", GOARM: "7,softfloat", FloatABI: "gnueabihf"}, "armv7", ""},
+		{GoTarget{GOARCH: "all"}, "", ""},
+	} {
+		if got := tc.target.Arch(); got != tc.arch {
+			t.Errorf("%+v.Arch() = %q, want %q", tc.target, got, tc.arch)
+		}
+		if got := tc.target.Variant(); got != tc.variant {
+			t.Errorf("%+v.Variant() = %q, want %q", tc.target, got, tc.variant)
+		}
+	}
+}
+
+func TestBundleName(t *testing.T) {
+	for _, tc := range []struct{ project, repo, want string }{
+		{"github.com/acme/tools", "github.com/acme/tools", "packslip.sigstore.json"},
+		{"github.com/acme/tools/oxlint", "github.com/acme/tools", "packslip.oxlint.sigstore.json"},
+		{"github.com/acme/tools/crates/cli", "github.com/acme/tools", "packslip.crates-cli.sigstore.json"},
+		{"github.com/Acme/Tools/oxlint", "github.com/acme/tools", "packslip.oxlint.sigstore.json"},
+		{"github.com/acme/Tools/Crates/CLI", "github.com/acme/tools", "packslip.Crates-CLI.sigstore.json"},
+		{"github.com/acme/tools/", "github.com/acme/tools", "packslip.sigstore.json"},
+		{"github.com/acme/toolsmith", "github.com/acme/tools", "packslip.sigstore.json"},
+		{"github.com/other/tools/oxlint", "github.com/acme/tools", "packslip.sigstore.json"},
+		{"mytool.example.com", "github.com/acme/tools", "packslip.sigstore.json"},
+		{"github.com/acme/tools/oxlint", "", "packslip.sigstore.json"},
+	} {
+		if got := BundleName(tc.project, tc.repo); got != tc.want {
+			t.Errorf("BundleName(%q, %q) = %q, want %q", tc.project, tc.repo, got, tc.want)
+		}
+	}
+}
