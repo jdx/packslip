@@ -126,7 +126,8 @@ pub fn entries(path: &Path, format: &str) -> Result<Vec<String>, Error> {
                     .by_index_raw(i)
                     .map_err(|e| undecodable(e.to_string()))?;
                 if entry.is_file() {
-                    names.push(zip_path(entry.name()));
+                    let name = entry.name().map_err(|e| undecodable(e.to_string()))?;
+                    names.push(zip_path(&name));
                 }
             }
             names
