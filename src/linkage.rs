@@ -503,7 +503,10 @@ fn read_zip(path: &Path, wanted: &[String]) -> std::io::Result<Option<Executable
             if entry.is_dir() {
                 continue;
             }
-            let member_path = archive::normalize(&archive::zip_path(entry.name()));
+            let Ok(name) = entry.name() else {
+                return Ok(None);
+            };
+            let member_path = archive::normalize(&archive::zip_path(&name));
             let mut bytes = None;
             let mut link = None;
             if entry.is_symlink() {

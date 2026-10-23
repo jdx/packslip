@@ -709,7 +709,9 @@ pub fn extract(
                 .map_err(|e| Error::Unsafe(e.to_string()))?;
             // `create` reads `\` in a zip entry name as `/`, so extraction
             // does too; `path` still refuses `..\`, `\abs`, and `C:\` names.
-            let file_path = path(&crate::archive::zip_path(file.name()))?;
+            let file_path = path(&crate::archive::zip_path(
+                &file.name().map_err(|e| Error::Unsafe(e.to_string()))?,
+            ))?;
             let file_mode = file.unix_mode().unwrap_or(0o100644);
             let file_type = file_mode & 0o170000;
             let size = if file.is_dir() { 0 } else { file.size() };
