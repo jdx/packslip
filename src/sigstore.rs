@@ -275,18 +275,20 @@ pub fn sign(signer: Signer, statement: &[u8]) -> Result<String, Error> {
                 SignatureContent::DsseEnvelope(envelope.clone()),
             );
             if log {
-                let entry = DsseEntry {
-                    api_version: "0.0.1".into(),
-                    kind: "dsse".into(),
-                    spec: sigstore_rekor::entry::DsseEntrySpec {
-                        proposed_content: Some(sigstore_rekor::entry::DsseProposedContent {
-                            envelope: serde_json::to_string(&envelope)
+                // sigstore-rekor builds a DSSE entry only from a certificate,
+                // so a key-signed one is deserialized from its wire form.
+                let entry: DsseEntry = serde_json::from_value(serde_json::json!({
+                    "apiVersion": "0.0.1",
+                    "kind": "dsse",
+                    "spec": {
+                        "proposedContent": {
+                            "envelope": serde_json::to_string(&envelope)
                                 .map_err(|e| Error::Sign(e.to_string()))?,
-                            verifiers: vec![BASE64.encode(spki_pem(&public))],
-                        }),
-                        signatures: Vec::new(),
+                            "verifiers": [BASE64.encode(spki_pem(&public))],
+                        },
                     },
-                };
+                }))
+                .map_err(|e| Error::Sign(e.to_string()))?;
                 let rekor =
                     RekorClient::new(PUBLIC_REKOR_URL).map_err(|e| Error::Log(e.to_string()))?;
                 let log_entry = rt
@@ -663,11 +665,10 @@ pub fn verify(
             // consistency with the envelope, by sigstore's verifier.
             let integrated_time = if logged {
                 let der = DerPublicKey::from_bytes(&spki_der(key));
-                let result = sigstore_verify::verify_with_key(
+                let result = sigstore_verify::verify(
                     artifact,
                     &bundle,
-                    &der,
-                    &sigstore_verify::PublicKeyVerificationPolicy::default(),
+                    &sigstore_verify::PublicKeyVerificationPolicy::new(der),
                     trusted_root,
                 )
                 .map_err(|e| Error::Verification(e.to_string()))?;

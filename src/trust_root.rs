@@ -40,8 +40,8 @@ fn parse_root(bytes: &[u8]) -> Result<TrustedRoot, Error> {
 #[derive(Clone, Default)]
 struct Snapshot(Arc<Mutex<BTreeMap<String, Vec<u8>>>>);
 impl MetadataStore for Snapshot {
-    fn load(&self, name: &str) -> Option<Vec<u8>> {
-        self.0.lock().unwrap().get(name).cloned()
+    fn load(&self, name: &str) -> sigstore_tuf::Result<Option<Vec<u8>>> {
+        Ok(self.0.lock().unwrap().get(name).cloned())
     }
     fn store(&self, name: &str, bytes: &[u8]) -> sigstore_tuf::Result<()> {
         self.0
@@ -75,7 +75,7 @@ fn validate_cache(cache: &Snapshot, bootstrap: &[u8]) -> Result<BTreeMap<String,
     let mut trusted = TrustedMetadataSet::from_root(bootstrap)?;
     loop {
         let next = trusted.root().version + 1;
-        match cache.load(&format!("root_history/{next}.root.json")) {
+        match cache.load(&format!("root_history/{next}.root.json"))? {
             Some(bytes) => trusted.update_root(&bytes)?,
             None => break,
         }
@@ -101,7 +101,7 @@ fn validate_cache(cache: &Snapshot, bootstrap: &[u8]) -> Result<BTreeMap<String,
             );
         }
     }
-    if let Some(root) = cache.load("root.json")
+    if let Some(root) = cache.load("root.json")?
         && root != trusted.root_bytes()
     {
         return Err(sigstore_tuf::Error::Malformed(
@@ -112,7 +112,7 @@ fn validate_cache(cache: &Snapshot, bootstrap: &[u8]) -> Result<BTreeMap<String,
     let epoch = jiff::Timestamp::UNIX_EPOCH;
     let required = |name| {
         cache
-            .load(name)
+            .load(name)?
             .ok_or_else(|| sigstore_tuf::Error::Malformed(format!("cache is missing {name}")))
     };
     trusted.update_timestamp(&required("timestamp.json")?, epoch)?;
@@ -247,7 +247,7 @@ pub async fn refresh<R: Repository + 'static>(
         Ok(bytes) => bytes,
         Err(e)
             if network_failed.load(Ordering::SeqCst)
-                && matches!(e, sigstore_tuf::Error::Transport(_)) =>
+                && matches!(e, sigstore_tuf::Error::Transport { .. }) =>
         {
             return parse_root(
                 &replay(previous.ok_or(Error::MissingCache)?, bootstrap, now).await?,
@@ -282,9 +282,7 @@ impl HttpRepository {
             .redirect(reqwest::redirect::Policy::limited(10))
             .timeout(std::time::Duration::from_secs(60))
             .build()
-            .map_err(|_| {
-                sigstore_tuf::Error::Transport("cannot initialize TUF HTTPS client".into())
-            })?;
+            .map_err(|_| sigstore_tuf::Error::transport("cannot initialize TUF HTTPS client"))?;
         Ok((
             Self {
                 client,
@@ -297,7 +295,7 @@ impl HttpRepository {
         if e.is_connect() || e.is_timeout() || e.is_body() {
             self.network_failed.store(true, Ordering::SeqCst);
         }
-        sigstore_tuf::Error::Transport(format!("TUF HTTPS request failed: {}", e.without_url()))
+        sigstore_tuf::Error::transport(format!("TUF HTTPS request failed: {}", e.without_url()))
     }
     fn fetch<'a>(&'a self, path: String, limit: u64) -> FetchFuture<'a> {
         Box::pin(async move {
@@ -357,7 +355,7 @@ mod tests {
             Box::pin(async move {
                 if let Some(failure) = &self.failure {
                     failure.store(true, Ordering::SeqCst);
-                    return Err(sigstore_tuf::Error::Transport("disconnected".into()));
+                    return Err(sigstore_tuf::Error::transport("disconnected"));
                 }
                 Ok(self.metadata.get(name).cloned())
             })
