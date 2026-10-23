@@ -114,6 +114,8 @@ func TestGoTarget(t *testing.T) {
 		{GoTarget{GOARCH: "arm", GOARM: "5", FloatABI: "gnueabi"}, "armv5", ""},
 		{GoTarget{GOARCH: "arm", GOARM: "7", FloatABI: "gnueabi"}, "armv7", "softfloat"},
 		{GoTarget{GOARCH: "arm", GOARM: "7", FloatABI: "gnueabihf"}, "armv7", ""},
+		{GoTarget{GOARCH: "arm", GOARM: "7,hardfloat", FloatABI: "gnueabi"}, "armv7", "softfloat"},
+		{GoTarget{GOARCH: "arm", GOARM: "7,softfloat", FloatABI: "gnueabihf"}, "armv7", ""},
 		{GoTarget{GOARCH: "all"}, "", ""},
 	} {
 		if got := tc.target.Arch(); got != tc.arch {

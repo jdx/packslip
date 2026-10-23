@@ -155,16 +155,19 @@ func (t GoTarget) Variant() string {
 		level = t.GORISCV64
 	case "arm":
 		goarm, float, _ := strings.Cut(t.GOARM, ",")
-		if t.FloatABI == "softfloat" || t.FloatABI == "hardfloat" {
+		switch t.FloatABI {
+		case "":
+		case "softfloat", "hardfloat":
 			float = t.FloatABI
+		default:
+			// A Rust or Zig ABI replaces any float option in GOARM. A
+			// GOARM=5 build is soft-float already, so it has no variant.
+			if goarm == "5" {
+				return ""
+			}
+			return VariantFromRustABI(t.FloatABI)
 		}
-		if float != "" {
-			return VariantFromGo("arm", goarm+","+float)
-		}
-		if goarm == "5" {
-			return ""
-		}
-		return VariantFromRustABI(t.FloatABI)
+		return VariantFromGo("arm", goarm+","+float)
 	}
 	return VariantFromGo(t.GOARCH, level)
 }
