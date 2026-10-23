@@ -44,7 +44,7 @@ jobs:
           # token starts no workflow, so CI would never run on the
           # release PR.
           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
-      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           cache: false
       # No rust-cache here: `mise run render` builds through mbx, which turns
@@ -52,7 +52,7 @@ jobs:
       # symlink, and restoring it made `release-plz update` fail copying the
       # project ("cannot strip prefix ... prefix not found").
       # cargo-semver-checks backs `semver_check = true` in release-plz.toml.
-      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
           tool: release-plz@0.3.160,cargo-semver-checks@0.48.0
       - name: Bump the version and changelog
@@ -166,7 +166,7 @@ jobs:
       - uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
         if: steps.gate.outputs.publish == 'true'
         id: crates-io-auth
-      - uses: release-plz/action@b8d6b54b02889ff2ae2bb82e8b57c3a8fc1683a5 # v0.5.139
+      - uses: release-plz/action@8921286633dfa0c4020f7f30bd1c14fe19cbb10e # v0.5.142
         if: steps.gate.outputs.publish == 'true'
         with:
           command: release
