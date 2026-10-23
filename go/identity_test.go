@@ -109,3 +109,40 @@ func TestAmbientIDTokenGitHubFailure(t *testing.T) {
 		t.Fatal("expected an error")
 	}
 }
+
+func TestCheckProjectSigner(t *testing.T) {
+	github := func(repo string) string {
+		return fakeJWT(t, map[string]any{"iss": githubIssuer, "repository": repo, "job_workflow_ref": "shared/ci/.github/workflows/release.yml@refs/heads/main"})
+	}
+	gitlab := fakeJWT(t, map[string]any{"iss": gitlabIssuer, "project_path": "acme/group/tool"})
+	other := fakeJWT(t, map[string]any{"iss": "https://accounts.example.com", "email": "me@example.com", "email_verified": true})
+	for name, tc := range map[string]struct {
+		project, token string
+		ok             bool
+	}{
+		"github repository":            {"github.com/acme/tool", github("acme/tool"), true},
+		"github reusable workflow":     {"github.com/acme/tool", github("acme/tool"), true},
+		"github monorepo subpath":      {"github.com/acme/tool/crates/cli", github("acme/tool"), true},
+		"github letter case":           {"github.com/ACME/Tool/cli", github("acme/tool"), true},
+		"github other repository":      {"github.com/acme/other", github("acme/tool"), false},
+		"github repository prefix":     {"github.com/acme/toolbox", github("acme/tool"), false},
+		"github no repository claim":   {"github.com/acme/tool", fakeJWT(t, map[string]any{"iss": githubIssuer}), false},
+		"github project, gitlab token": {"github.com/acme/tool", gitlab, false},
+		"github project, other token":  {"github.com/acme/tool", other, false},
+		"gitlab project":               {"gitlab.com/acme/group/tool", gitlab, true},
+		"gitlab letter case":           {"gitlab.com/Acme/Group/Tool", gitlab, true},
+		"gitlab other project":         {"gitlab.com/acme/group/other", gitlab, false},
+		"gitlab project, github token": {"gitlab.com/acme/group/tool", github("acme/tool"), false},
+		"domain project":               {"mytool.example.com", other, true},
+		"domain project, ci token":     {"mytool.example.com", github("acme/tool"), true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := CheckProjectSigner(tc.project, tc.token); (err == nil) != tc.ok {
+				t.Fatalf("CheckProjectSigner(%q) = %v, want ok=%v", tc.project, err, tc.ok)
+			}
+		})
+	}
+	if err := CheckProjectSigner("github.com/acme/tool", "not-a-jwt"); err == nil {
+		t.Fatal("a malformed token passed")
+	}
+}

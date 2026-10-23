@@ -154,6 +154,19 @@ Upload the bundle beside the artifacts as `packslip.sigstore.json`. When
 several tools of a monorepo share one GitHub release, name each bundle
 after its tool's subpath, such as `packslip.mytool.sigstore.json` for
 `github.com/owner/repo/mytool` ([Monorepos](/release/v1/#monorepos)).
+`BundleName(project, repo)` gives the name. With `repo` set to
+`github.com/owner/repo`, the project `github.com/owner/repo/mytool` is
+`packslip.mytool.sigstore.json`. The repository itself, or a project outside
+it, gets `packslip.sigstore.json`.
+
+To catch a wrong `Project` before anything is signed, call
+`CheckProjectSigner(project, oidcToken)` after `AmbientIDToken`. A
+`github.com` project must belong to the GitHub Actions repository that runs
+the job, and a `gitlab.com` project must be the GitLab CI project. A reusable
+workflow of another repository is fine. Otherwise consumers refuse the bundle
+after it is in the transparency log. A domain project always passes, because
+its vendor pins the signer. The check reads the token without verifying it, and
+it also fails for a project that names a repository's old name.
 
 ## Map a Go build matrix
 
@@ -171,6 +184,19 @@ means 6, GoReleaser's default. A plain Go cross-build with `GOARM` unset
 builds for 7, so pass the value your build used. A floating-point option
 is ignored, so `7,softfloat` counts as 7. Values other than 6 and 7 fall
 outside the vocabulary.
+
+A `GoTarget` holds one build's settings (`GOARCH`, `GOARM`, `GOAMD64`,
+`GO386`, `GOARM64`, `GOMIPS`, `GOPPC64`, `GORISCV64`, and `FloatABI`), so a
+tool that stores them apart does not pick the right one itself. `Arch()` calls
+`ArchFromGo`. `Variant()` calls `VariantFromGo` with the setting for `GOARCH`.
+For `arm` it reads `FloatABI`, either Go's `softfloat` or `hardfloat` or a
+Rust or Zig target ABI such as `gnueabi`, through `VariantFromRustABI`:
+
+```go
+target := packslip.GoTarget{GOARCH: "amd64", GOAMD64: "v3"}
+artifact.Arch = target.Arch()       // "x86_64"
+artifact.Variant = target.Variant() // "v3"
+```
 
 `VariantFromGo(goarch, level)` returns the `variant` that distinguishes
 non-default CPU-level and floating-point builds of one platform. Pass the Go
