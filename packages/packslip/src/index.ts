@@ -59,6 +59,27 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/** A release bundle carries one log entry; this leaves room for a few. */
+const MAX_BUNDLE_TIMESTAMPS = 8;
+
+/** A log signs a checkpoint with a few keys; sigstore verifies every signature naming the log's key. */
+const MAX_CHECKPOINT_SIGNATURES = 16;
+
+/** Whether a checkpoint note holds more signature lines than a log writes, counted without collecting them. */
+function hasTooManySignatures(envelope: unknown): boolean {
+  if (typeof envelope !== 'string') return false;
+  const split = envelope.indexOf('\n\n');
+  if (split < 0) return false;
+  let count = 0;
+  for (let at = split + 2; at < envelope.length; ) {
+    if (envelope.startsWith('— ', at) && ++count > MAX_CHECKPOINT_SIGNATURES) return true;
+    const end = envelope.indexOf('\n', at);
+    if (end < 0) break;
+    at = end + 1;
+  }
+  return false;
+}
+
 function parseBundle(bundleJson: string | Uint8Array | object): Bundle & {
   dsseEnvelope: { payload: string; payloadType: string };
 } {
@@ -80,6 +101,28 @@ function parseBundle(bundleJson: string | Uint8Array | object): Bundle & {
   const envelope = value['dsseEnvelope'];
   if (envelope['payloadType'] !== DSSE_PAYLOAD_TYPE || typeof envelope['payload'] !== 'string') {
     throw new BundleError(`the DSSE payload type must be ${DSSE_PAYLOAD_TYPE}`);
+  }
+  // sigstore compares every pair of log entries and timestamps before it
+  // authenticates any of them, so a hostile bundle sets the work it does.
+  const material = value['verificationMaterial'];
+  if (isObject(material)) {
+    const timestamps = material['timestampVerificationData'];
+    for (const list of [
+      material['tlogEntries'],
+      isObject(timestamps) ? timestamps['rfc3161Timestamps'] : undefined,
+    ]) {
+      if (Array.isArray(list) && list.length > MAX_BUNDLE_TIMESTAMPS) {
+        throw new BundleError('the bundle carries too many log entries or timestamps');
+      }
+    }
+    const entries = material['tlogEntries'];
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      const proof = isObject(entry) ? entry['inclusionProof'] : undefined;
+      const checkpoint = isObject(proof) ? proof['checkpoint'] : undefined;
+      if (isObject(checkpoint) && hasTooManySignatures(checkpoint['envelope'])) {
+        throw new BundleError('the bundle has a checkpoint with too many signatures');
+      }
+    }
   }
   return value as never;
 }

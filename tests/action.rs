@@ -512,6 +512,16 @@ fn run_releases_verify(
     inputs: &[(&str, &str)],
     knows_opt_out: bool,
 ) -> Result<Vec<Vec<String>>, String> {
+    run_releases_verify_under("v1.0.0", project, repository, inputs, knows_opt_out)
+}
+
+fn run_releases_verify_under(
+    tag: &str,
+    project: &str,
+    repository: &str,
+    inputs: &[(&str, &str)],
+    knows_opt_out: bool,
+) -> Result<Vec<Vec<String>>, String> {
     let action: Value = serde_yaml_bw::from_str(include_str!("../releases/action.yml")).unwrap();
     let steps = action["runs"]["steps"].as_sequence().unwrap();
     let step = |name: &str| {
@@ -522,8 +532,12 @@ fn run_releases_verify(
     };
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    fs::create_dir_all(root.join("lists/v1.0.0")).unwrap();
-    fs::write(root.join("lists/v1.0.0/packslip.sigstore.json"), "").unwrap();
+    fs::create_dir_all(root.join("lists").join(tag)).unwrap();
+    fs::write(
+        root.join("lists").join(tag).join("packslip.sigstore.json"),
+        "",
+    )
+    .unwrap();
     let cli = root.join("packslip");
     fs::write(
         &cli,
@@ -572,7 +586,11 @@ esac
                 match input {
                     "project" => project.to_owned(),
                     "dir" => "lists".to_owned(),
-                    "url-base" => "https://lists.example.com".to_owned(),
+                    "url-base" => inputs
+                        .iter()
+                        .find(|(name, _)| *name == input)
+                        .map_or("https://lists.example.com", |(_, value)| *value)
+                        .to_owned(),
                     _ => inputs
                         .iter()
                         .find(|(name, _)| *name == input)
@@ -696,4 +714,23 @@ fn releases_action_passes_allow_other_repository_when_needed() {
             );
         }
     }
+}
+
+#[test]
+fn releases_action_refuses_a_bundle_name_or_url_base_the_release_argument_would_split() {
+    for input in [
+        ("bundle", "foo=bar.json"),
+        ("url-base", "https://example.com/?x=y"),
+    ] {
+        let err =
+            run_releases_verify("github.com/owner/tool", "owner/tool", &[input], true).unwrap_err();
+        assert!(err.contains("cannot contain an ="), "{input:?}: {err}");
+    }
+}
+
+#[test]
+fn releases_action_refuses_a_tag_the_release_argument_would_split() {
+    let err = run_releases_verify_under("v1=x", "github.com/owner/tool", "owner/tool", &[], true)
+        .unwrap_err();
+    assert!(err.contains("a tag with an = in it"), "{err}");
 }

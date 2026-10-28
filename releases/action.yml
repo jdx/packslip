@@ -190,6 +190,14 @@ runs:
         dir="${IN_DIR%/}"
         base="${IN_URL_BASE%/}"
         name="${IN_BUNDLE:-packslip.sigstore.json}"
+        # --release splits at the first =, so one in the URL base or the bundle
+        # name would move part of the URL into the path.
+        case "$base$name" in
+          *=*)
+            echo "url-base and bundle cannot contain an =: $base, $name" >&2
+            exit 1
+            ;;
+        esac
         pin=(--issuer "$IN_ISSUER")
         if [ -n "$IN_IDENTITY" ]; then
           pin+=(--identity "$IN_IDENTITY")
@@ -225,6 +233,13 @@ runs:
         releases=()
         for bundle in "$dir"/*/"$name"; do
           tag="$(basename "$(dirname "$bundle")")"
+          # The same holds for a tag, which names the directory.
+          case "$tag" in
+            *=*)
+              echo "$bundle sits under $tag/, a tag with an = in it" >&2
+              exit 1
+              ;;
+          esac
           packslip verify "$bundle" "${pin[@]}"
           statement="$(packslip show "$bundle")"
           # packslip releases refuses a bundle for another project, with a

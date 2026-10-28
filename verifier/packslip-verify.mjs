@@ -374,10 +374,23 @@ function verifyChain(root, leaf, time) {
 // Rekor: signed entry timestamp, checkpoint and inclusion proof
 // ---------------------------------------------------------------------------
 
+/** A log's indexes and sizes are int64 on the wire; the proof's arithmetic is not safe on more. */
+const MAX_TREE_POSITION = 2n ** 63n - 1n;
+
+function treePosition(value, name) {
+  if (!/^\d{1,19}$/.test(String(value)) || BigInt(value) > MAX_TREE_POSITION) {
+    fail('signature', `the inclusion proof's ${name} is not a log position`);
+  }
+  return BigInt(value);
+}
+
+/** A log signs a checkpoint with a few keys; a note names no more signatures than this. */
+const MAX_CHECKPOINT_SIGNATURES = 16;
+
 /** RFC 6962 / RFC 9162 inclusion proof. Tree sizes pass 2^32, so this uses BigInt. */
 function inclusionProofHolds(leafHash, index, size, hashes, root) {
-  let fn = BigInt(index);
-  let sn = BigInt(size) - 1n;
+  let fn = treePosition(index, 'logIndex');
+  let sn = treePosition(size, 'treeSize') - 1n;
   if (fn > sn) return false;
   let hash = leafHash;
   for (const sibling of hashes) {
@@ -406,11 +419,22 @@ function verifyCheckpoint(proof, key) {
   if (lines[1] !== String(proof.treeSize) || !b64(lines[2] ?? '').equals(b64(proof.rootHash))) {
     fail('signature', 'the checkpoint does not match the inclusion proof');
   }
-  for (const line of text.slice(split + 2).split('\n')) {
-    if (!line.startsWith('— ')) continue;
+  const signed = Buffer.from(note, 'utf8');
+  // Scan the lines one by one: a hostile note may hold millions of them.
+  const signatureLines = [];
+  for (let at = split + 2; at < text.length; ) {
+    const end = text.indexOf('\n', at);
+    const line = text.slice(at, end < 0 ? text.length : end);
+    if (line.startsWith('— ') && signatureLines.push(line) > MAX_CHECKPOINT_SIGNATURES) {
+      fail('signature', 'the checkpoint has too many signatures');
+    }
+    if (end < 0) break;
+    at = end + 1;
+  }
+  for (const line of signatureLines) {
     const signature = b64(line.split(' ')[2] ?? '');
     // The first four bytes are a key hint; the rest is the signature.
-    if (signature.length > 4 && checkSignature(key, Buffer.from(note, 'utf8'), signature.subarray(4))) return;
+    if (signature.length > 4 && checkSignature(key, signed, signature.subarray(4))) return;
   }
   fail('signature', 'no valid log signature on the checkpoint');
 }

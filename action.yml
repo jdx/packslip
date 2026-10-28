@@ -393,7 +393,8 @@ runs:
             specs+=("$f")
           fi
         done
-        packslip "${args[@]}" "${specs[@]}"
+        # After --, a file named like an option stays an artifact.
+        packslip "${args[@]}" -- "${specs[@]}"
         # The file name follows the project: packslip.sigstore.json, or
         # packslip.<subpath>.sigstore.json for a tool in a monorepo.
         repo_path="${project#github.com/}"

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -218,5 +219,26 @@ func TestRequiredBinRefusesAnExplicitEmptyMin(t *testing.T) {
 		if err := json.Unmarshal([]byte(text), &got); err != nil || got != want {
 			t.Fatalf("%s: got %#v, %v", text, got, err)
 		}
+	}
+}
+
+func TestValidateRejectsArtifactsWithTheSameSelectors(t *testing.T) {
+	digest := Digest{SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+	statement := Statement{Type: StatementType, PredicateType: ReleasePredicateType,
+		Subject: []Subject{{Name: "a.tar.xz", Digest: digest}, {Name: "b.tar.xz", Digest: digest}, {Name: "c.tar.xz", Digest: digest}},
+		Predicate: Predicate{Project: "github.com/example/tool", Version: "0.1.0", PublishedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+			Artifacts: []Artifact{
+				{Name: "a.tar.xz", Size: 1, Format: "tar.xz", OS: "linux", Arch: "x86_64"},
+				{Name: "b.tar.xz", Size: 1, Format: "tar.xz", OS: "linux", Arch: "aarch64"},
+				{Name: "c.tar.xz", Size: 1, Format: "tar.xz", OS: "linux", Arch: "x86_64", Variant: "musl"},
+			},
+			Identity: Identity{Scheme: "sigstore-oidc", KeyID: "https://example.test/workflow", Issuer: "https://issuer.test"}}}
+	if err := statement.Validate(); err != nil {
+		t.Fatalf("artifacts that differ in a selector rejected: %v", err)
+	}
+	statement.Predicate.Artifacts[2].Variant = ""
+	err := statement.Validate()
+	if err == nil || !strings.Contains(err.Error(), `ambiguous artifacts "c.tar.xz" and "a.tar.xz"`) {
+		t.Fatalf("artifacts with the same selectors: %v", err)
 	}
 }

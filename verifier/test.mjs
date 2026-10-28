@@ -196,6 +196,22 @@ describe('verifyRelease', () => {
       const text = tamper(mise, (_, e) => (e.inclusionProof.treeSize = String(Number(e.inclusionProof.treeSize) + 1)));
       assert.throws(() => verifyRelease(text, policy), (error) => error.code === 'signature');
     });
+    it('has a proof position beyond int64', () => {
+      const huge = '1' + '0'.repeat(200000);
+      for (const field of ['logIndex', 'treeSize']) {
+        const text = tamper(mise, (_, e) => (e.inclusionProof[field] = huge));
+        refuses(text, policy, 'signature', /not a log position/);
+      }
+    });
+    it('has a negative proof position', () => {
+      refuses(tamper(mise, (_, e) => (e.inclusionProof.logIndex = '-1')), policy, 'signature', /not a log position/);
+    });
+    it('has a checkpoint with too many signatures', () => {
+      const text = tamper(mise, (_, e) => {
+        e.inclusionProof.checkpoint.envelope += '— rekor.invalid AAAAAAAAAAAA\n'.repeat(16);
+      });
+      refuses(text, policy, 'signature', /too many signatures/);
+    });
   });
 });
 
