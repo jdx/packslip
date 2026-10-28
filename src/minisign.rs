@@ -102,6 +102,16 @@ impl PublicKey {
         Ok(PublicKey { key_id, key })
     }
 
+    /// A short name for the whole key. The key id is only text in the key
+    /// file, so two different keys can carry the same one.
+    pub fn fingerprint(&self) -> String {
+        use sha2::Digest as _;
+        let mut hash = sha2::Sha256::new();
+        hash.update(self.key_id);
+        hash.update(self.key.as_bytes());
+        hex::encode(&hash.finalize()[..16])
+    }
+
     /// The public key file's text.
     pub fn to_file(&self) -> String {
         let mut bytes = Vec::with_capacity(42);

@@ -423,6 +423,7 @@ async fn install_in(
     drop(lookup_session);
     let session = install_fs::Session::open_for(&scope.state, &tree, &bin, &key)?;
     let mut history = session.history(&key)?;
+    history.name_remembered_key();
     // Only a warning needs this, and the commit reads the receipt again and
     // refuses one it cannot use, so an unreadable receipt is not an error here.
     let installed = session.receipt(&key).ok().flatten().map(|r| r.version);
