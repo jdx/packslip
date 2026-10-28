@@ -321,14 +321,7 @@ func validateResource(r Resource, arts map[string]Artifact, subjects map[string]
 		return errors.New("must specify exactly one of archive, asset, repo, exec")
 	}
 	if r.Artifact != "" {
-		fitting := false
-		for _, a := range arts {
-			if fits(r, a) {
-				fitting = true
-				break
-			}
-		}
-		if !fitting {
+		if a, ok := arts[r.Artifact]; !ok || !fits(r, a) {
 			return fmt.Errorf("unknown or incompatible artifact %q", r.Artifact)
 		}
 	}

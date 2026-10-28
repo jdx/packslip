@@ -130,6 +130,12 @@ describe('verifyRelease (public-good sigstore)', () => {
     await assert.rejects(verifyRelease('{}', { identity: IDENTITY, issuer: ISSUER }), BundleError);
   });
 
+  it('rejects a bundle whose checkpoint names more signatures than a log writes', async () => {
+    const bundle = JSON.parse(bundleText);
+    bundle.verificationMaterial.tlogEntries[0].inclusionProof.checkpoint.envelope += '— rekor.invalid AAAAAAAAAAAA\n'.repeat(16);
+    await assert.rejects(verifyRelease(bundle, { identity: IDENTITY, issuer: ISSUER }), BundleError);
+  });
+
   it('rejects a bundle with more log entries than a release carries', async () => {
     const bundle = JSON.parse(bundleText);
     const [entry] = bundle.verificationMaterial.tlogEntries;

@@ -62,6 +62,24 @@ function isObject(value: unknown): value is Record<string, unknown> {
 /** A release bundle carries one log entry; this leaves room for a few. */
 const MAX_BUNDLE_TIMESTAMPS = 8;
 
+/** A log signs a checkpoint with a few keys; sigstore verifies every signature naming the log's key. */
+const MAX_CHECKPOINT_SIGNATURES = 16;
+
+/** Whether a checkpoint note holds more signature lines than a log writes, counted without collecting them. */
+function hasTooManySignatures(envelope: unknown): boolean {
+  if (typeof envelope !== 'string') return false;
+  const split = envelope.indexOf('\n\n');
+  if (split < 0) return false;
+  let count = 0;
+  for (let at = split + 2; at < envelope.length; ) {
+    if (envelope.startsWith('— ', at) && ++count > MAX_CHECKPOINT_SIGNATURES) return true;
+    const end = envelope.indexOf('\n', at);
+    if (end < 0) break;
+    at = end + 1;
+  }
+  return false;
+}
+
 function parseBundle(bundleJson: string | Uint8Array | object): Bundle & {
   dsseEnvelope: { payload: string; payloadType: string };
 } {
@@ -95,6 +113,14 @@ function parseBundle(bundleJson: string | Uint8Array | object): Bundle & {
     ]) {
       if (Array.isArray(list) && list.length > MAX_BUNDLE_TIMESTAMPS) {
         throw new BundleError('the bundle carries too many log entries or timestamps');
+      }
+    }
+    const entries = material['tlogEntries'];
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      const proof = isObject(entry) ? entry['inclusionProof'] : undefined;
+      const checkpoint = isObject(proof) ? proof['checkpoint'] : undefined;
+      if (isObject(checkpoint) && hasTooManySignatures(checkpoint['envelope'])) {
+        throw new BundleError('the bundle has a checkpoint with too many signatures');
       }
     }
   }

@@ -586,7 +586,11 @@ esac
                 match input {
                     "project" => project.to_owned(),
                     "dir" => "lists".to_owned(),
-                    "url-base" => "https://lists.example.com".to_owned(),
+                    "url-base" => inputs
+                        .iter()
+                        .find(|(name, _)| *name == input)
+                        .map_or("https://lists.example.com", |(_, value)| *value)
+                        .to_owned(),
                     _ => inputs
                         .iter()
                         .find(|(name, _)| *name == input)
@@ -709,6 +713,18 @@ fn releases_action_passes_allow_other_repository_when_needed() {
                 "{call:?}"
             );
         }
+    }
+}
+
+#[test]
+fn releases_action_refuses_a_bundle_name_or_url_base_the_release_argument_would_split() {
+    for input in [
+        ("bundle", "foo=bar.json"),
+        ("url-base", "https://example.com/?x=y"),
+    ] {
+        let err =
+            run_releases_verify("github.com/owner/tool", "owner/tool", &[input], true).unwrap_err();
+        assert!(err.contains("cannot contain an ="), "{input:?}: {err}");
     }
 }
 

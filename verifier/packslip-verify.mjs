@@ -420,11 +420,17 @@ function verifyCheckpoint(proof, key) {
     fail('signature', 'the checkpoint does not match the inclusion proof');
   }
   const signed = Buffer.from(note, 'utf8');
-  const signatureLines = text
-    .slice(split + 2)
-    .split('\n')
-    .filter((line) => line.startsWith('— '));
-  if (signatureLines.length > MAX_CHECKPOINT_SIGNATURES) fail('signature', 'the checkpoint has too many signatures');
+  // Scan the lines one by one: a hostile note may hold millions of them.
+  const signatureLines = [];
+  for (let at = split + 2; at < text.length; ) {
+    const end = text.indexOf('\n', at);
+    const line = text.slice(at, end < 0 ? text.length : end);
+    if (line.startsWith('— ') && signatureLines.push(line) > MAX_CHECKPOINT_SIGNATURES) {
+      fail('signature', 'the checkpoint has too many signatures');
+    }
+    if (end < 0) break;
+    at = end + 1;
+  }
   for (const line of signatureLines) {
     const signature = b64(line.split(' ')[2] ?? '');
     // The first four bytes are a key hint; the rest is the signature.
