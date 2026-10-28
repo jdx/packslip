@@ -40,6 +40,26 @@ pub struct History {
     pub pubkey: Option<String>,
 }
 
+impl History {
+    /// Give a key-signed record from before records kept their key the
+    /// fingerprint of the key this history remembers, so a replacement key
+    /// that carries the same id is compared with it rather than adopted.
+    pub fn name_remembered_key(&mut self) {
+        let Some(key) = self
+            .pubkey
+            .as_deref()
+            .and_then(|text| crate::minisign::PublicKey::parse(text).ok())
+        else {
+            return;
+        };
+        for record in [&mut self.release, &mut self.list].into_iter().flatten() {
+            if record.scheme == crate::model::Scheme::SigstoreKey && record.key.is_none() {
+                record.key = Some(key.fingerprint());
+            }
+        }
+    }
+}
+
 /// A command is owned only while its current entry matches this identity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1228,6 +1248,39 @@ mod tests {
         builder.create(path)
     }
     use super::*;
+
+    #[test]
+    fn a_record_without_a_key_takes_the_key_the_history_remembers() {
+        use crate::install_policy::{Record, Role};
+        let public = crate::minisign::SecretKey::from_seed([1u8; 32]).public_key();
+        let record = |scheme| Record {
+            project: "example.test".into(),
+            role: Role::Release,
+            scheme,
+            signer: crate::minisign::key_id_hex(&public.key_id),
+            issuer: None,
+            repository: None,
+            pin_workflow: false,
+            attested_by: crate::model::Attestor::Vendor,
+            key: None,
+            provenance: vec![],
+        };
+        let mut history = History {
+            release: Some(record(crate::model::Scheme::SigstoreKey)),
+            list: Some(record(crate::model::Scheme::SigstoreOidc)),
+            sequence: None,
+            pubkey: Some(public.to_file()),
+        };
+        history.name_remembered_key();
+        assert_eq!(history.release.unwrap().key, Some(public.fingerprint()));
+        assert_eq!(history.list.unwrap().key, None);
+        let mut forgotten = History {
+            release: Some(record(crate::model::Scheme::SigstoreKey)),
+            ..History::default()
+        };
+        forgotten.name_remembered_key();
+        assert_eq!(forgotten.release.unwrap().key, None);
+    }
 
     #[cfg(unix)]
     #[test]

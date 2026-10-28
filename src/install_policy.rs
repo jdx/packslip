@@ -104,6 +104,13 @@ pub struct Record {
     pub repository: Option<ForgePin>,
     pub pin_workflow: bool,
     pub attested_by: Attestor,
+    /// For a key-signed project, the fingerprint of the whole public key
+    /// that verified the document, since `signer` is only the id the key
+    /// file carries. None for a record from before it was kept, which the
+    /// history's remembered key stands in for (see
+    /// [`crate::install_fs::History::name_remembered_key`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
     /// One entry per artifact. An entry without links only records that the
     /// release offers its build. It matters only while this is the next
     /// record, so remembered state and approval IDs omit it and keep the form
@@ -239,6 +246,17 @@ fn changes(previous: &Record, next: &Record) -> Vec<String> {
     let mut changes = Vec::new();
     if previous.scheme == Scheme::SigstoreOidc && next.scheme == Scheme::SigstoreKey {
         changes.push("OIDC identity replaced by a long-lived key".into());
+    }
+    if previous.scheme == Scheme::SigstoreKey && next.scheme == Scheme::SigstoreKey {
+        match (&previous.key, &next.key) {
+            (Some(before), Some(now)) if before != now => {
+                changes.push(format!("public key changed from {before} to {now}"));
+            }
+            (Some(before), None) => {
+                changes.push(format!("public key {before} no longer identified"));
+            }
+            _ => {}
+        }
     }
     let signer_continues = previous.scheme == next.scheme
         && previous.issuer == next.issuer
@@ -581,6 +599,7 @@ fn release_under(
         repository,
         pin_workflow: verified.pin_workflow,
         attested_by: verified.attested_by,
+        key: key.as_ref().map(crate::minisign::PublicKey::fingerprint),
         provenance: scopes(&statement),
     };
     check_constraints(constraints, &record, bundle)?;
@@ -667,6 +686,7 @@ fn list_under(
         repository,
         pin_workflow: verified.pin_workflow,
         attested_by: Attestor::Vendor,
+        key: key.as_ref().map(crate::minisign::PublicKey::fingerprint),
         provenance: vec![],
     };
     check_constraints(constraints, &record, bundle)?;
@@ -686,6 +706,7 @@ mod tests {
             repository: Some(ForgePin::of("github.com/jdx/tool", "123")),
             pin_workflow,
             attested_by: Attestor::Vendor,
+            key: None,
             provenance: vec![Provenance {
                 scope: "linux/x86_64/gnu/default".into(),
                 links: 1,
@@ -732,6 +753,65 @@ mod tests {
             ),
             Err(Error::Constraint(_))
         ));
+    }
+    fn keyed(public: &crate::minisign::PublicKey) -> Record {
+        Record {
+            project: "example.test".into(),
+            role: Role::Release,
+            scheme: Scheme::SigstoreKey,
+            signer: crate::minisign::key_id_hex(&public.key_id),
+            issuer: None,
+            repository: None,
+            pin_workflow: false,
+            attested_by: Attestor::Vendor,
+            key: Some(public.fingerprint()),
+            provenance: vec![],
+        }
+    }
+    #[test]
+    fn a_replacement_key_with_the_same_id_is_a_trust_change() {
+        let old = crate::minisign::SecretKey::from_seed([1u8; 32]).public_key();
+        let mut replacement = crate::minisign::SecretKey::from_seed([2u8; 32]).public_key();
+        replacement.key_id = old.key_id;
+        let (before, after) = (keyed(&old), keyed(&replacement));
+        assert_eq!(before.signer, after.signer);
+        assert!(changes(&before, &before).is_empty());
+        let reasons = changes(&before, &after);
+        assert_eq!(reasons.len(), 1, "{reasons:?}");
+        assert!(
+            reasons[0].starts_with("public key changed from "),
+            "{reasons:?}"
+        );
+        let Err(Error::Change { id, .. }) = continuity(
+            "example.test",
+            "release",
+            "bundle",
+            Some(&before),
+            &after,
+            &[],
+            &[],
+        ) else {
+            panic!("a different key with the old id continued the signer");
+        };
+        continuity(
+            "example.test",
+            "release",
+            "bundle",
+            Some(&before),
+            &after,
+            &[],
+            &[id],
+        )
+        .unwrap();
+    }
+    #[test]
+    fn a_record_without_a_key_adopts_the_key_it_meets() {
+        let public = crate::minisign::SecretKey::from_seed([1u8; 32]).public_key();
+        let mut legacy = keyed(&public);
+        legacy.key = None;
+        assert!(changes(&legacy, &keyed(&public)).is_empty());
+        let reasons = changes(&keyed(&public), &legacy);
+        assert_eq!(reasons.len(), 1, "{reasons:?}");
     }
     #[test]
     fn refs_continue_but_workflows_require_approval() {
@@ -785,6 +865,7 @@ mod tests {
             repository: source.map(|(name, id)| ForgePin::of(name, id)),
             pin_workflow: true,
             attested_by: Attestor::Vendor,
+            key: None,
             provenance: vec![],
         }
     }
