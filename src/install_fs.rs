@@ -1272,6 +1272,19 @@ mod tests {
             pubkey: Some(public.to_file()),
         };
         history.name_remembered_key();
+        assert_eq!(
+            history.release.as_ref().unwrap().key,
+            Some(public.fingerprint())
+        );
+        assert_eq!(history.list.as_ref().unwrap().key, None);
+        // Accepting a replacement for one role later changes the remembered
+        // key, but a record that already names its key keeps it.
+        history.pubkey = Some(
+            crate::minisign::SecretKey::from_seed([2u8; 32])
+                .public_key()
+                .to_file(),
+        );
+        history.name_remembered_key();
         assert_eq!(history.release.unwrap().key, Some(public.fingerprint()));
         assert_eq!(history.list.unwrap().key, None);
         let mut forgotten = History {
