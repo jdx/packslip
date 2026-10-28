@@ -129,6 +129,13 @@ describe('verifyRelease (public-good sigstore)', () => {
     await assert.rejects(verifyRelease('not json', { identity: IDENTITY, issuer: ISSUER }), BundleError);
     await assert.rejects(verifyRelease('{}', { identity: IDENTITY, issuer: ISSUER }), BundleError);
   });
+
+  it('rejects a bundle with more log entries than a release carries', async () => {
+    const bundle = JSON.parse(bundleText);
+    const [entry] = bundle.verificationMaterial.tlogEntries;
+    bundle.verificationMaterial.tlogEntries = Array.from({ length: 9 }, () => entry);
+    await assert.rejects(verifyRelease(bundle, { identity: IDENTITY, issuer: ISSUER }), BundleError);
+  });
 });
 
 describe('sameIdentity', () => {

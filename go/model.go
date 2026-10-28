@@ -210,6 +210,7 @@ func (s Statement) Validate() error {
 		subjects[x.Name] = x.Digest
 	}
 	artifacts := map[string]Artifact{}
+	selectors := map[selector]string{}
 	binNames := map[string]bool{}
 	for _, a := range p.Artifacts {
 		if _, ok := artifacts[a.Name]; ok {
@@ -247,11 +248,11 @@ func (s Statement) Validate() error {
 				return err
 			}
 		}
-		for _, other := range artifacts {
-			if selectorsEqual(a, other) {
-				return fmt.Errorf("packslip: ambiguous artifacts %q and %q", a.Name, other.Name)
-			}
+		key := selectorOf(a)
+		if other, ok := selectors[key]; ok {
+			return fmt.Errorf("packslip: ambiguous artifacts %q and %q", a.Name, other)
 		}
+		selectors[key] = a.Name
 		artifacts[a.Name] = a
 	}
 	for _, a := range p.Artifacts {
@@ -319,23 +320,21 @@ func validateResource(r Resource, arts map[string]Artifact, subjects map[string]
 	if sources != 1 {
 		return errors.New("must specify exactly one of archive, asset, repo, exec")
 	}
-	var selected []Artifact
-	for _, a := range arts {
-		if fits(r, a) {
-			selected = append(selected, a)
+	if r.Artifact != "" {
+		fitting := false
+		for _, a := range arts {
+			if fits(r, a) {
+				fitting = true
+				break
+			}
 		}
-	}
-	if r.Artifact != "" && len(selected) == 0 {
-		return fmt.Errorf("unknown or incompatible artifact %q", r.Artifact)
+		if !fitting {
+			return fmt.Errorf("unknown or incompatible artifact %q", r.Artifact)
+		}
 	}
 	if r.Archive != "" {
 		if !validRelativePath(r.Archive) {
 			return errors.New("invalid archive path")
-		}
-		for _, a := range selected {
-			if bareFormat(a.Format) {
-				return errors.New("archive path in bare artifact")
-			}
 		}
 	}
 	if r.Asset != "" {
@@ -414,8 +413,12 @@ func extensions(owner string, e map[string]json.RawMessage) error {
 	}
 	return nil
 }
-func selectorsEqual(a, b Artifact) bool {
-	return a.OS == b.OS && a.Arch == b.Arch && a.Libc == b.Libc && a.Variant == b.Variant && a.Format == b.Format
+
+// selector is the tuple that tells two artifacts apart.
+type selector struct{ os, arch, libc, variant, format string }
+
+func selectorOf(a Artifact) selector {
+	return selector{a.OS, a.Arch, a.Libc, a.Variant, a.Format}
 }
 func fits(r Resource, a Artifact) bool {
 	return (r.Artifact == "" || r.Artifact == a.Name) && (r.OS == "" || r.OS == a.OS) && (r.Arch == "" || r.Arch == a.Arch) && (r.Libc == "" || r.Libc == a.Libc) && !(r.Archive != "" && bareFormat(a.Format))

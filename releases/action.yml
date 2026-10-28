@@ -225,6 +225,14 @@ runs:
         releases=()
         for bundle in "$dir"/*/"$name"; do
           tag="$(basename "$(dirname "$bundle")")"
+          # --release splits at the first =, so a tag holding one would move
+          # the rest of the URL into the path.
+          case "$tag" in
+            *=*)
+              echo "$bundle sits under $tag/, a tag with an = in it" >&2
+              exit 1
+              ;;
+          esac
           packslip verify "$bundle" "${pin[@]}"
           statement="$(packslip show "$bundle")"
           # packslip releases refuses a bundle for another project, with a
