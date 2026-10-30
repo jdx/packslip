@@ -143,7 +143,7 @@ jobs:
       # The runner image ships a stable toolchain; only the cross-compiled
       # targets have to be added to it.
       - run: rustup target add ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           lookup-only: true
           key: ${{ matrix.target }}
@@ -380,7 +380,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/release-candidate.py download
-      - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
         if: env.CANDIDATE_PUBLISHED != 'true'
         continue-on-error: true
         with:
