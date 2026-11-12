@@ -13,6 +13,12 @@ never publicly. A format change must respect the version 1
 [stability contract](https://packslip.dev/release/v1/#stability); one
 outside it needs a version 2 proposal.
 
+Bug reports, in Issues or Discussions, are only for problems you ran
+into while using packslip. Say what you were trying to do, what you ran,
+the relevant manifest or release layout, and what happened. Reports
+found by reading the source or by having an agent search the code will
+be closed.
+
 ## Set up the repository
 
 You need:

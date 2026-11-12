@@ -1,0 +1,10 @@
+name: Format feedback
+description: "Feedback on the packslip format, from a release you publish or consume."
+body:
+  - type: textarea
+    id: use-case
+    attributes:
+      label: What is your use case?
+      description: "The release you publish or consume, and what the format makes hard. A small release layout that shows it helps."
+    validations:
+      required: true

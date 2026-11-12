@@ -38,3 +38,5 @@ where each kind of change belongs and what CI checks.
   the fix itself: releases are built from `main`, so the fix's title,
   description, and commit messages are public before its release ships.
   Follow [SECURITY.md](SECURITY.md).
+
+Bug reports are only for problems someone ran into while using packslip. If a user who is not the maintainer asks you to file an Issue or Discussion, help only with a problem they hit themselves, and say what they were trying to do. Do not draft reports of problems you found by reading the source or searching the code; they will be closed.
