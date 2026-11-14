@@ -36,5 +36,5 @@ jobs:
         content/docs/actions.md
         static/schema
     secrets:
-      MISE_LOCK_APP_ID: ${{ secrets.MISE_LOCK_APP_ID }}
+      MISE_LOCK_APP_CLIENT_ID: Iv23ct0esfAqqzDuwjhI
       MISE_LOCK_APP_PRIVATE_KEY: ${{ secrets.MISE_LOCK_APP_PRIVATE_KEY }}
