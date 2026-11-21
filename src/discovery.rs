@@ -725,6 +725,7 @@ pub async fn github(client: &Client, project: &Project) -> Result<Github, Error>
     let mut sizes = RELEASE_PAGE_SIZES.iter().copied().peekable();
     'sizes: while let Some(per_page) = sizes.next() {
         let mut releases = Vec::new();
+        let mut seen = 0;
         for page in 1..=RELEASE_LIMIT.div_ceil(per_page) {
             let bytes = match client
                 .fetch(
@@ -741,6 +742,11 @@ pub async fn github(client: &Client, project: &Project) -> Result<Github, Error>
                 fetched => fetched?.ok_or(Error::NoRelease)?,
             };
             let page_releases: Vec<GithubRelease> = serde_json::from_slice(&bytes)?;
+            // A last page may reach past the bound, so count what was listed.
+            seen += page_releases.len() as u64;
+            if seen > RELEASE_LIMIT {
+                break;
+            }
             let done = page_releases.len() < per_page as usize;
             for release in page_releases.into_iter().filter(|r| !r.draft) {
                 if let Some(version) = crate::tag_version(&release.tag_name, project.as_str()) {
