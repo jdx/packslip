@@ -684,6 +684,11 @@ fn describe(release: &Release, role: Option<&str>, shared: bool) -> String {
     text
 }
 
+/// Releases per page to request, largest first.
+const RELEASE_PAGE_SIZES: [u64; 3] = [100, 30, 10];
+const RELEASE_PAGE_LIMIT: u64 = 8 * 1024 * 1024;
+const RELEASE_LIMIT: u64 = 10_000;
+
 pub async fn github(client: &Client, project: &Project) -> Result<Github, Error> {
     let repo = project
         .github_repo()
@@ -710,52 +715,75 @@ pub async fn github(client: &Client, project: &Project) -> Result<Github, Error>
         );
     }
     list_url.query_pairs_mut().append_pair("ref", branch);
-    let mut releases = Vec::new();
     let latest = client
         .fetch(&format!("{url}/releases/latest"), 2 * 1024 * 1024)
         .await?;
     let latest: Option<GithubRelease> = latest.map(|b| serde_json::from_slice(&b)).transpose()?;
-    for page in 1..=100 {
-        let bytes = client
-            .fetch(
-                &format!("{url}/releases?per_page=100&page={page}"),
-                8 * 1024 * 1024,
-            )
-            .await?
-            .ok_or(Error::NoRelease)?;
-        let page_releases: Vec<GithubRelease> = serde_json::from_slice(&bytes)?;
-        let done = page_releases.len() < 100;
-        for release in page_releases.into_iter().filter(|r| !r.draft) {
-            if let Some(version) = crate::tag_version(&release.tag_name, project.as_str()) {
-                let bundles: Vec<_> = release
-                    .assets
-                    .into_iter()
-                    .filter(|a| {
-                        a.name.starts_with("packslip") && a.name.ends_with(".sigstore.json")
-                    })
-                    .map(|a| a.browser_download_url)
-                    .collect();
-                releases.push(Release {
-                    version: version.to_string(),
-                    recommended: latest
-                        .as_ref()
-                        .is_some_and(|l| l.tag_name == release.tag_name),
-                    tag: release.tag_name,
-                    bundles,
+    // A project with many assets per release can push a page of 100 past the
+    // cap, so a page over the cap is retried from the start with a smaller
+    // page rather than failing every install of the project.
+    let mut sizes = RELEASE_PAGE_SIZES.iter().copied().peekable();
+    'sizes: while let Some(per_page) = sizes.next() {
+        let mut releases = Vec::new();
+        let mut seen = 0;
+        // One page past the bound, so a listing of exactly the limit ends on an empty page.
+        for page in 1..=RELEASE_LIMIT.div_ceil(per_page) + 1 {
+            let page_url = format!("{url}/releases?per_page={per_page}&page={page}");
+            let bytes = match client.fetch(&page_url, RELEASE_PAGE_LIMIT).await {
+                // A cached page of this size is out of date, since the page
+                // is now too large; drop it so an offline run cannot take it
+                // for a complete listing over the smaller pages.
+                Err(Error::Limit { .. }) if sizes.peek().is_some() => {
+                    if let Ok(page_url) = parse_url(&page_url) {
+                        let _ = std::fs::remove_file(client.cache_path(&page_url));
+                    }
+                    continue 'sizes;
+                }
+                // An oversized response is never cached, so offline it reads as a
+                // miss; try the smaller pages an earlier online run cached.
+                Err(Error::Offline(_)) if sizes.peek().is_some() => continue 'sizes,
+                fetched => fetched?.ok_or(Error::NoRelease)?,
+            };
+            let page_releases: Vec<GithubRelease> = serde_json::from_slice(&bytes)?;
+            // A last page may reach past the bound, so count what was listed.
+            seen += page_releases.len() as u64;
+            if seen > RELEASE_LIMIT {
+                break;
+            }
+            let done = page_releases.len() < per_page as usize;
+            for release in page_releases.into_iter().filter(|r| !r.draft) {
+                if let Some(version) = crate::tag_version(&release.tag_name, project.as_str()) {
+                    let bundles: Vec<_> = release
+                        .assets
+                        .into_iter()
+                        .filter(|a| {
+                            a.name.starts_with("packslip") && a.name.ends_with(".sigstore.json")
+                        })
+                        .map(|a| a.browser_download_url)
+                        .collect();
+                    releases.push(Release {
+                        version: version.to_string(),
+                        recommended: latest
+                            .as_ref()
+                            .is_some_and(|l| l.tag_name == release.tag_name),
+                        tag: release.tag_name,
+                        bundles,
+                    });
+                }
+            }
+            if done {
+                return Ok(Github {
+                    releases,
+                    list_url: list_url.to_string(),
+                    latest_tag: latest.map(|r| r.tag_name),
+                    repository_id,
                 });
             }
         }
-        if done {
-            return Ok(Github {
-                releases,
-                list_url: list_url.to_string(),
-                latest_tag: latest.map(|r| r.tag_name),
-                repository_id,
-            });
-        }
+        break;
     }
     Err(Error::Limit {
-        limit: 10_000,
+        limit: RELEASE_LIMIT,
         url: format!("{url}/releases"),
     })
 }
@@ -1858,6 +1886,80 @@ mod tests {
         assert_eq!(view.latest_tag.as_deref(), Some("stable"));
         assert_eq!(view.releases.len(), 2);
         assert_eq!(choose(&view.releases, None, None).unwrap().version, "1.0.0");
+    }
+    #[test]
+    fn github_retries_an_oversized_release_page_with_a_smaller_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = Client::new(dir.path().into(), true, HttpConfig::default()).unwrap();
+        let base = "https://api.github.com/repos/jdx/tool";
+        let release = |n: u32| serde_json::json!({"tag_name": format!("v1.0.{n}"), "draft": false, "assets": []});
+        let mut cached = vec![
+            (
+                base.to_string(),
+                serde_json::json!({"id": 123, "default_branch": "main"}),
+            ),
+            (format!("{base}/releases/latest"), release(30)),
+            (
+                format!("{base}/releases?per_page=30&page=1"),
+                serde_json::Value::Array((0..30).map(release).collect()),
+            ),
+            (
+                format!("{base}/releases?per_page=30&page=2"),
+                serde_json::Value::Array(vec![release(30)]),
+            ),
+        ];
+        for (url, value) in cached.drain(..) {
+            std::fs::write(
+                client.cache_path(&parse_url(&url).unwrap()),
+                serde_json::to_vec(&value).unwrap(),
+            )
+            .unwrap();
+        }
+        let oversized = parse_url(&format!("{base}/releases?per_page=100&page=1")).unwrap();
+        std::fs::write(
+            client.cache_path(&oversized),
+            vec![b' '; 8 * 1024 * 1024 + 1],
+        )
+        .unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let view = rt
+            .block_on(github(&client, &Project::parse("jdx/tool").unwrap()))
+            .unwrap();
+        assert_eq!(view.releases.len(), 31);
+        assert_eq!(view.latest_tag.as_deref(), Some("v1.0.30"));
+
+        // The oversized page's cache entry was dropped, so it now reads as a
+        // miss offline, and the cached smaller pages are used.
+        assert!(!client.cache_path(&oversized).exists());
+        let view = rt
+            .block_on(github(&client, &Project::parse("jdx/tool").unwrap()))
+            .unwrap();
+        assert_eq!(view.releases.len(), 31);
+        // A smallest page that is also oversized is the error.
+        let page = |per_page: u32| {
+            client.cache_path(
+                &parse_url(&format!("{base}/releases?per_page={per_page}&page=1")).unwrap(),
+            )
+        };
+        std::fs::write(page(30), vec![b' '; 8 * 1024 * 1024 + 1]).unwrap();
+        std::fs::write(page(10), vec![b' '; 8 * 1024 * 1024 + 1]).unwrap();
+        assert!(matches!(
+            rt.block_on(github(&client, &Project::parse("jdx/tool").unwrap())),
+            Err(Error::Limit { .. })
+        ));
+        // The smallest size serves a project that only it can fetch.
+        std::fs::write(
+            page(10),
+            serde_json::to_vec(&serde_json::Value::Array(vec![release(0)])).unwrap(),
+        )
+        .unwrap();
+        let view = rt
+            .block_on(github(&client, &Project::parse("jdx/tool").unwrap()))
+            .unwrap();
+        assert_eq!(view.releases.len(), 1);
     }
     #[test]
     fn host_transport_authority_cannot_be_claimed_by_another_origin() {
