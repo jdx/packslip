@@ -725,7 +725,7 @@ pub async fn github(client: &Client, project: &Project) -> Result<Github, Error>
     let mut sizes = RELEASE_PAGE_SIZES.iter().copied().peekable();
     'sizes: while let Some(per_page) = sizes.next() {
         let mut releases = Vec::new();
-        for page in 1..=RELEASE_LIMIT / per_page {
+        for page in 1..=RELEASE_LIMIT.div_ceil(per_page) {
             let bytes = match client
                 .fetch(
                     &format!("{url}/releases?per_page={per_page}&page={page}"),
@@ -733,7 +733,11 @@ pub async fn github(client: &Client, project: &Project) -> Result<Github, Error>
                 )
                 .await
             {
-                Err(Error::Limit { .. }) if sizes.peek().is_some() => continue 'sizes,
+                // An oversized response is never cached, so offline it reads as a
+                // miss; try the smaller pages an earlier online run cached.
+                Err(Error::Limit { .. } | Error::Offline(_)) if sizes.peek().is_some() => {
+                    continue 'sizes;
+                }
                 fetched => fetched?.ok_or(Error::NoRelease)?,
             };
             let page_releases: Vec<GithubRelease> = serde_json::from_slice(&bytes)?;
@@ -1918,15 +1922,30 @@ mod tests {
         assert_eq!(view.releases.len(), 31);
         assert_eq!(view.latest_tag.as_deref(), Some("v1.0.30"));
 
-        // With no smaller page cached, the smallest size's failure is reported.
-        std::fs::remove_file(
-            client.cache_path(&parse_url(&format!("{base}/releases?per_page=30&page=1")).unwrap()),
+        // Offline, the uncached oversized page reads as a miss, and the
+        // cached smaller pages are used.
+        // A smallest page that is also oversized is the error.
+        let page = |per_page: u32| {
+            client.cache_path(
+                &parse_url(&format!("{base}/releases?per_page={per_page}&page=1")).unwrap(),
+            )
+        };
+        std::fs::write(page(30), vec![b' '; 8 * 1024 * 1024 + 1]).unwrap();
+        std::fs::write(page(10), vec![b' '; 8 * 1024 * 1024 + 1]).unwrap();
+        assert!(matches!(
+            rt.block_on(github(&client, &Project::parse("jdx/tool").unwrap())),
+            Err(Error::Limit { .. })
+        ));
+        // The smallest size serves a project that only it can fetch.
+        std::fs::write(
+            page(10),
+            serde_json::to_vec(&serde_json::Value::Array(vec![release(0)])).unwrap(),
         )
         .unwrap();
-        assert!(
-            rt.block_on(github(&client, &Project::parse("jdx/tool").unwrap()))
-                .is_err()
-        );
+        let view = rt
+            .block_on(github(&client, &Project::parse("jdx/tool").unwrap()))
+            .unwrap();
+        assert_eq!(view.releases.len(), 1);
     }
     #[test]
     fn host_transport_authority_cannot_be_claimed_by_another_origin() {
