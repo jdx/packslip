@@ -726,19 +726,22 @@ pub async fn github(client: &Client, project: &Project) -> Result<Github, Error>
     'sizes: while let Some(per_page) = sizes.next() {
         let mut releases = Vec::new();
         let mut seen = 0;
-        for page in 1..=RELEASE_LIMIT.div_ceil(per_page) {
-            let bytes = match client
-                .fetch(
-                    &format!("{url}/releases?per_page={per_page}&page={page}"),
-                    RELEASE_PAGE_LIMIT,
-                )
-                .await
-            {
-                // An oversized response is never cached, so offline it reads as a
-                // miss; try the smaller pages an earlier online run cached.
-                Err(Error::Limit { .. } | Error::Offline(_)) if sizes.peek().is_some() => {
+        // One page past the bound, so a listing of exactly the limit ends on an empty page.
+        for page in 1..=RELEASE_LIMIT.div_ceil(per_page) + 1 {
+            let page_url = format!("{url}/releases?per_page={per_page}&page={page}");
+            let bytes = match client.fetch(&page_url, RELEASE_PAGE_LIMIT).await {
+                // A cached page of this size is out of date, since the page
+                // is now too large; drop it so an offline run cannot take it
+                // for a complete listing over the smaller pages.
+                Err(Error::Limit { .. }) if sizes.peek().is_some() => {
+                    if let Ok(page_url) = parse_url(&page_url) {
+                        let _ = std::fs::remove_file(client.cache_path(&page_url));
+                    }
                     continue 'sizes;
                 }
+                // An oversized response is never cached, so offline it reads as a
+                // miss; try the smaller pages an earlier online run cached.
+                Err(Error::Offline(_)) if sizes.peek().is_some() => continue 'sizes,
                 fetched => fetched?.ok_or(Error::NoRelease)?,
             };
             let page_releases: Vec<GithubRelease> = serde_json::from_slice(&bytes)?;
@@ -1928,8 +1931,13 @@ mod tests {
         assert_eq!(view.releases.len(), 31);
         assert_eq!(view.latest_tag.as_deref(), Some("v1.0.30"));
 
-        // Offline, the uncached oversized page reads as a miss, and the
-        // cached smaller pages are used.
+        // The oversized page's cache entry was dropped, so it now reads as a
+        // miss offline, and the cached smaller pages are used.
+        assert!(!client.cache_path(&oversized).exists());
+        let view = rt
+            .block_on(github(&client, &Project::parse("jdx/tool").unwrap()))
+            .unwrap();
+        assert_eq!(view.releases.len(), 31);
         // A smallest page that is also oversized is the error.
         let page = |per_page: u32| {
             client.cache_path(
