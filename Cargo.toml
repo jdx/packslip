@@ -125,7 +125,7 @@ windows-permissions = { version = "0.2.4", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 exacl = { version = "0.13", optional = true }
-nix = { version = "0.31", default-features = false, features = ["user"], optional = true }
+nix = { version = "0.32", default-features = false, features = ["user"], optional = true }
 libc = { version = "0.2", optional = true }
 
 [dev-dependencies]
