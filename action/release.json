@@ -1,0 +1,80 @@
+{
+  "assets": {
+    "install.ps1": {
+      "sha256": "2afda5a6c502395003aa80ec2b14f5899af4215b050b5d0fb448342aedfce922",
+      "size": 4723
+    },
+    "install.sh": {
+      "sha256": "c61b297c8b04177deca03cce12a017810e07e97fc1c74a66ca8df99ae145f2ed",
+      "size": 5411
+    },
+    "packslip-v1.11.6-darwin-arm64": {
+      "sha256": "d7acd2f986043c8dc3fa082349f21135d78e7334a5701ecc5a5a369d1e0dcbf6",
+      "size": 10472560
+    },
+    "packslip-v1.11.6-darwin-arm64.tar.xz": {
+      "sha256": "3481812a9473def540f7020c849a7ba8ac3a01ae2afef8b5e97d987441557173",
+      "size": 3228392
+    },
+    "packslip-v1.11.6-linux-arm64": {
+      "sha256": "69034d6dace1031962a293150a1c448286ad65cfec4db2332fc0923db853062e",
+      "size": 10305200
+    },
+    "packslip-v1.11.6-linux-arm64.tar.xz": {
+      "sha256": "984550df6a5d5607326cb214193e7f0cac0cb95843dc95c7947185b0ff43ef57",
+      "size": 3352460
+    },
+    "packslip-v1.11.6-linux-x64": {
+      "sha256": "62bff9d19ae7e81395b7fba7a55f27e360766b6c36732dc5ebff09a6168b80d6",
+      "size": 12992744
+    },
+    "packslip-v1.11.6-linux-x64.tar.xz": {
+      "sha256": "1cf973e34d3fa0a63f5fdfdd0bf8ad8acd596a240d4b2714f53092a9584ae88a",
+      "size": 3935312
+    },
+    "packslip-v1.11.6-windows-arm64.exe": {
+      "sha256": "65d8d65742f82ad1c90feb6d32482d03df19e337de1a493df085630bd22fad95",
+      "size": 11099648
+    },
+    "packslip-v1.11.6-windows-arm64.zip": {
+      "sha256": "2dab0eb7e20f102e41bd5e1da38bcc0dbae6a4e12535ab99913890c950480ee5",
+      "size": 4908835
+    },
+    "packslip-v1.11.6-windows-x64.exe": {
+      "sha256": "8526e5026aae6933f305e963a6ad13a492744c7729af694cb17892ba6bb5b2b9",
+      "size": 12669440
+    },
+    "packslip-v1.11.6-windows-x64.zip": {
+      "sha256": "9323faa91ea70aa695822e81cda6921109c9df2979bb3cf1b739b6feb3590bd4",
+      "size": 5183621
+    },
+    "packslip.1": {
+      "sha256": "44e45fcf0dc03e102c95eb453ccb1209b47ff993ef7a1345e495900ea8bd22c8",
+      "size": 33067
+    },
+    "packslip.bash": {
+      "sha256": "9936ba979b7d97b0527e3e499134699b88d1bd97118890dd12e508e8b81f6102",
+      "size": 5610
+    },
+    "packslip.fish": {
+      "sha256": "941defabcf9b07af72dca1afe505862148961f4a99ff1c83c434fbf6c1de91e9",
+      "size": 3455
+    },
+    "packslip.powershell": {
+      "sha256": "e84e4058ab2575ed68b5e4c65c62f1acc23b11bd026673a75e42e42202674439",
+      "size": 4766
+    },
+    "packslip.usage.kdl": {
+      "sha256": "684b2294f10d9383aa5199a97c9953e1259feccad016e695c04e9ff7d8c05773",
+      "size": 40222
+    },
+    "packslip.zsh": {
+      "sha256": "cd3221287f7d983689680b5b7e6a4b4f3783517f3e69d76abad598632eea1f15",
+      "size": 5878
+    }
+  },
+  "run_id": 46117350969,
+  "schema": 1,
+  "source_commit": "88c1aa63583c271e63c191ae5e8e8168050bcd33",
+  "version": "1.11.6"
+}
