@@ -395,11 +395,16 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
+          # communique writes the review report before it updates the release,
+          # so add the report to the summary even when that update fails.
+          append_coverage() {
+            if [[ -f "$RUNNER_TEMP/communique-coverage.md" ]]; then
+              cat "$RUNNER_TEMP/communique-coverage.md" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          }
+          trap append_coverage EXIT
           communique generate "$GITHUB_REF_NAME" --github-release \
             --review-report "$RUNNER_TEMP/communique-coverage.md"
-          if [[ -f "$RUNNER_TEMP/communique-coverage.md" ]]; then
-            cat "$RUNNER_TEMP/communique-coverage.md" >> "$GITHUB_STEP_SUMMARY"
-          fi
       # Dogfood: the verified candidate binary signs its release manifest with
       # this job's identity, as the project packslip.dev, and publishes the
       # files and the bundle where that name says they are. The bundle is
